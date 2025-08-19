@@ -1252,7 +1252,7 @@ function checkDailyTasks() {
     } );
 }
 
-/ Obtener favicon como data URL para las notificaciones
+// Obtener favicon como data URL para las notificaciones
 function getFaviconAsDataUrl() {
     // Crear un ícono simple SVG como data URL
     const svg = `
