@@ -465,6 +465,38 @@ async function handleGoogleAuth() {
 }
 
 // Función mejorada para sincronización real
+async function handleGoogleAuth() {
+    try {
+        if ( !isGoogleAuthenticated ) {
+            const authInstance = gapi.auth2.getAuthInstance();
+            const user = await authInstance.signIn();
+
+            if ( user.isSignedIn() ) {
+                isGoogleAuthenticated = true;
+                document.getElementById( 'googleAuthBtn' ).innerHTML = '<i class="fab fa-google mr-2"></i>Desconectar Google';
+                document.getElementById( 'googleAuthBtn' ).className = 'bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition';
+                document.getElementById( 'syncGoogleBtn' ).disabled = false;
+
+                showNotification( 'Conectado a Google Calendar exitosamente' );
+            }
+        } else {
+            const authInstance = gapi.auth2.getAuthInstance();
+            await authInstance.signOut();
+
+            isGoogleAuthenticated = false;
+            document.getElementById( 'googleAuthBtn' ).innerHTML = '<i class="fab fa-google mr-2"></i>Conectar Google';
+            document.getElementById( 'googleAuthBtn' ).className = 'bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition';
+            document.getElementById( 'syncGoogleBtn' ).disabled = true;
+
+            showNotification( 'Desconectado de Google Calendar' );
+        }
+    } catch ( error ) {
+        console.error( 'Error en autenticación de Google:', error );
+        showNotification( 'Error al conectar con Google Calendar', 'error' );
+    }
+}
+
+// Función mejorada para sincronización real
 async function syncWithGoogle() {
     if ( !isGoogleAuthenticated ) {
         showNotification( 'Primero debes conectarte a Google Calendar', 'error' );
@@ -529,6 +561,7 @@ async function syncWithGoogle() {
         syncBtn.disabled = false;
     }
 }
+
 
 // Función mejorada para crear eventos en Google Calendar
 async function syncTaskWithGoogleCalendar( task, dateStr ) {
@@ -606,6 +639,21 @@ async function updateGoogleCalendarEvent( task, dateStr ) {
 
     } catch ( error ) {
         console.error( 'Error actualizando evento en Google Calendar:', error );
+    }
+}
+
+// Función para eliminar eventos de Google Calendar
+async function deleteGoogleCalendarEvent( task ) {
+    if ( !task.googleEventId || !isGoogleAuthenticated ) return;
+
+    try {
+        await gapi.client.calendar.events.delete( {
+            'calendarId': 'primary',
+            'eventId': task.googleEventId
+        } ).execute();
+
+    } catch ( error ) {
+        console.error( 'Error eliminando evento de Google Calendar:', error );
     }
 }
 
@@ -816,8 +864,8 @@ function checkDailyTasks() {
 function showNotification( message, type = 'success' ) {
     const notification = document.createElement( 'div' );
     notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full ${type === 'success' ? 'bg-green-500 text-white' :
-            type === 'error' ? 'bg-red-500 text-white' :
-                'bg-blue-500 text-white'
+        type === 'error' ? 'bg-red-500 text-white' :
+            'bg-blue-500 text-white'
         }`;
     notification.innerHTML = `
         <div class="flex items-center space-x-2">
