@@ -210,7 +210,7 @@ async function syncToFirebase() {
 
         await batch.commit();
         showFirebaseStatus( 'Sincronizado', 'success' );
-        showNotification( 'Tareas sincronizadas con Firebase', 'success' );
+        showNotification( 'Tareas sincronizadas', 'success' );
 
     } catch ( error ) {
         console.error( 'Error syncing to Firebase:', error );
@@ -269,12 +269,12 @@ async function syncFromFirebase() {
         updateProgress();
 
         showFirebaseStatus( 'Descargado', 'success' );
-        showNotification( 'Tareas descargadas de Firebase', 'success' );
+        showNotification( 'Tareas cargadas', 'success' );
 
     } catch ( error ) {
         console.error( 'Error syncing from Firebase:', error );
         showFirebaseStatus( 'Error al descargar', 'error' );
-        showNotification( 'Error al descargar de Firebase', 'error' );
+        showNotification( 'Error al cargar', 'error' );
     } finally {
         syncInProgress = false;
     }
