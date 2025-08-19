@@ -5,8 +5,8 @@ let isGoogleAuthenticated = false;
 let notificationsEnabled = false;
 
 // Google API Configuration
-const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID';
-const GOOGLE_API_KEY = 'YOUR_GOOGLE_API_KEY';
+const GOOGLE_CLIENT_ID = '583249299949-2sfolo5ob7akbj52jiomkcjnl07lapdt.apps.googleusercontent.com';
+const GOOGLE_API_KEY = 'AIzaSyDJxwEdCpVdC6SjOuETQm061C0FTAUyutQ';
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 const SCOPES = 'https://www.googleapis.com/auth/calendar';
 
@@ -432,22 +432,244 @@ function handleGoogleAuth() {
 }
 
 // Sync with Google Calendar (simplified)
-function syncWithGoogle() {
-    if ( !isGoogleAuthenticated ) return;
+// Función mejorada para autenticación real con Google
+async function handleGoogleAuth() {
+    try {
+        if ( !isGoogleAuthenticated ) {
+            const authInstance = gapi.auth2.getAuthInstance();
+            const user = await authInstance.signIn();
 
-    let syncCount = 0;
-    Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
-        dayTasks.forEach( task => {
-            if ( !task.synced ) {
-                // Here you would make actual API calls to Google Calendar
-                task.synced = true;
-                syncCount++;
+            if ( user.isSignedIn() ) {
+                isGoogleAuthenticated = true;
+                document.getElementById( 'googleAuthBtn' ).innerHTML = '<i class="fab fa-google mr-2"></i>Desconectar Google';
+                document.getElementById( 'googleAuthBtn' ).className = 'bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition';
+                document.getElementById( 'syncGoogleBtn' ).disabled = false;
+
+                showNotification( 'Conectado a Google Calendar exitosamente' );
             }
-        } );
-    } );
+        } else {
+            const authInstance = gapi.auth2.getAuthInstance();
+            await authInstance.signOut();
 
-    saveTasks();
-    showNotification( `${syncCount} tareas sincronizadas con Google Calendar` );
+            isGoogleAuthenticated = false;
+            document.getElementById( 'googleAuthBtn' ).innerHTML = '<i class="fab fa-google mr-2"></i>Conectar Google';
+            document.getElementById( 'googleAuthBtn' ).className = 'bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition';
+            document.getElementById( 'syncGoogleBtn' ).disabled = true;
+
+            showNotification( 'Desconectado de Google Calendar' );
+        }
+    } catch ( error ) {
+        console.error( 'Error en autenticación de Google:', error );
+        showNotification( 'Error al conectar con Google Calendar', 'error' );
+    }
+}
+
+// Función mejorada para sincronización real
+async function syncWithGoogle() {
+    if ( !isGoogleAuthenticated ) {
+        showNotification( 'Primero debes conectarte a Google Calendar', 'error' );
+        return;
+    }
+
+    try {
+        let syncCount = 0;
+        let errorCount = 0;
+
+        // Mostrar indicador de carga
+        const syncBtn = document.getElementById( 'syncGoogleBtn' );
+        const originalText = syncBtn.innerHTML;
+        syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sincronizando...';
+        syncBtn.disabled = true;
+
+        for ( const [ dateStr, dayTasks ] of Object.entries( tasks ) ) {
+            for ( const task of dayTasks ) {
+                if ( !task.googleEventId ) { // Solo sincronizar tareas no sincronizadas
+                    try {
+                        const eventId = await syncTaskWithGoogleCalendar( task, dateStr );
+                        if ( eventId ) {
+                            task.googleEventId = eventId;
+                            task.synced = true;
+                            syncCount++;
+                        } else {
+                            errorCount++;
+                        }
+                    } catch ( error ) {
+                        console.error( 'Error sincronizando tarea:', error );
+                        errorCount++;
+                    }
+                }
+            }
+        }
+
+        // Restaurar botón
+        syncBtn.innerHTML = originalText;
+        syncBtn.disabled = false;
+
+        // Guardar cambios
+        saveTasks();
+
+        // Mostrar resultado
+        if ( syncCount > 0 ) {
+            showNotification( `${syncCount} tareas sincronizadas con Google Calendar` );
+        }
+        if ( errorCount > 0 ) {
+            showNotification( `${errorCount} tareas no se pudieron sincronizar`, 'error' );
+        }
+        if ( syncCount === 0 && errorCount === 0 ) {
+            showNotification( 'Todas las tareas ya están sincronizadas' );
+        }
+
+    } catch ( error ) {
+        console.error( 'Error en sincronización:', error );
+        showNotification( 'Error durante la sincronización', 'error' );
+
+        // Restaurar botón en caso de error
+        const syncBtn = document.getElementById( 'syncGoogleBtn' );
+        syncBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Sincronizar con Google';
+        syncBtn.disabled = false;
+    }
+}
+
+// Función mejorada para crear eventos en Google Calendar
+async function syncTaskWithGoogleCalendar( task, dateStr ) {
+    try {
+        const event = {
+            'summary': task.title,
+            'description': task.description || '',
+        };
+
+        if ( task.time ) {
+            // Tarea con hora específica
+            const startDateTime = `${dateStr}T${task.time}:00`;
+            const endTime = new Date( `${dateStr}T${task.time}:00` );
+            endTime.setHours( endTime.getHours() + 1 ); // 1 hora de duración por defecto
+
+            event.start = {
+                'dateTime': startDateTime,
+                'timeZone': Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+            event.end = {
+                'dateTime': endTime.toISOString().slice( 0, 19 ),
+                'timeZone': Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+        } else {
+            // Tarea de día completo
+            event.start = {
+                'date': dateStr,
+            };
+            event.end = {
+                'date': dateStr,
+            };
+        }
+
+        // Agregar color según estado de completado
+        if ( task.completed ) {
+            event.colorId = '10'; // Verde para completadas
+        } else {
+            event.colorId = '9'; // Azul para pendientes
+        }
+
+        const request = gapi.client.calendar.events.insert( {
+            'calendarId': 'primary',
+            'resource': event
+        } );
+
+        const response = await request.execute();
+        return response.id;
+
+    } catch ( error ) {
+        console.error( 'Error creando evento en Google Calendar:', error );
+        return null;
+    }
+}
+
+// Función para actualizar eventos existentes cuando se marca como completado
+async function updateGoogleCalendarEvent( task, dateStr ) {
+    if ( !task.googleEventId || !isGoogleAuthenticated ) return;
+
+    try {
+        const event = await gapi.client.calendar.events.get( {
+            'calendarId': 'primary',
+            'eventId': task.googleEventId
+        } ).execute();
+
+        // Actualizar color según estado
+        event.colorId = task.completed ? '10' : '9';
+
+        const request = gapi.client.calendar.events.update( {
+            'calendarId': 'primary',
+            'eventId': task.googleEventId,
+            'resource': event
+        } );
+
+        await request.execute();
+
+    } catch ( error ) {
+        console.error( 'Error actualizando evento en Google Calendar:', error );
+    }
+}
+
+// Función para eliminar eventos de Google Calendar
+async function deleteGoogleCalendarEvent( task ) {
+    if ( !task.googleEventId || !isGoogleAuthenticated ) return;
+
+    try {
+        await gapi.client.calendar.events.delete( {
+            'calendarId': 'primary',
+            'eventId': task.googleEventId
+        } ).execute();
+
+    } catch ( error ) {
+        console.error( 'Error eliminando evento de Google Calendar:', error );
+    }
+}
+
+// Modificar la función toggleTask para actualizar Google Calendar
+function toggleTask( dateStr, taskId ) {
+    const dayTasks = tasks[ dateStr ];
+    const task = dayTasks.find( t => t.id === taskId );
+    if ( task ) {
+        task.completed = !task.completed;
+
+        // Actualizar en Google Calendar si está sincronizado
+        if ( task.googleEventId ) {
+            updateGoogleCalendarEvent( task, dateStr );
+        }
+
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+        showDayTasks( dateStr, new Date( dateStr ).getDate() );
+    }
+}
+
+// Modificar la función de eliminación para también eliminar de Google Calendar
+async function deleteTaskWithUndo( dateStr, taskId ) {
+    const dayTasks = tasks[ dateStr ];
+    const taskIndex = dayTasks.findIndex( t => t.id === taskId );
+
+    if ( taskIndex !== -1 ) {
+        const task = dayTasks[ taskIndex ];
+        lastDeletedTask = { ...task };
+        lastDeletedDate = dateStr;
+
+        // Eliminar de Google Calendar si está sincronizado
+        if ( task.googleEventId ) {
+            await deleteGoogleCalendarEvent( task );
+        }
+
+        tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+        if ( tasks[ dateStr ].length === 0 ) {
+            delete tasks[ dateStr ];
+        }
+
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+        showDayTasks( dateStr, new Date( dateStr ).getDate() );
+
+        showUndoNotification();
+    }
 }
 
 // Enhanced Google Calendar Integration
@@ -653,9 +875,6 @@ function addSearchAndFilter() {
 function filterTasks() {
     const searchTerm = document.getElementById( 'taskSearch' )?.value.toLowerCase() || '';
     const filterType = document.getElementById( 'taskFilter' )?.value || 'all';
-
-    // This would filter the calendar display based on search and filter criteria
-    // Implementation would involve modifying the renderCalendar function
 }
 
 // Set up periodic notification check
@@ -684,7 +903,7 @@ document.addEventListener( 'keydown', function ( e ) {
 } );
 
 // Initialize Google API when page loads
-// initializeGoogleAPI();
+initializeGoogleAPI();
 
 // Initialize today's progress check on load
 setTimeout( () => {
