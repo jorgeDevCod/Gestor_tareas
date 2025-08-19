@@ -32,7 +32,7 @@ document.addEventListener( 'DOMContentLoaded', function () {
     renderCalendar();
     updateProgress();
     setupEventListeners();
-    requestNotificationPermission(); 
+    requestNotificationPermission();
     initNotifications();
     setupDragAndDrop();
     setupTaskTooltips();
@@ -73,6 +73,12 @@ function initFirebase() {
         showFirebaseStatus( 'Error de conexión', 'error' );
         hideLoadingScreen();
     }
+}
+
+const taskDateInput = document.getElementById( 'taskDate' );
+if ( taskDateInput ) {
+    const today = new Date().toISOString().split( 'T' )[ 0 ];
+    taskDateInput.setAttribute( 'min', today );
 }
 
 // Inicializar notificaciones (agregar al final de la función initFirebase)
