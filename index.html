@@ -281,55 +281,6 @@
             <span id="messageText"></span>
         </div>
     </div>
-    <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
-        <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border-t-4">
-            <div class="flex flex-col md:flex-row justify-between items-center mb-4">
-                <h1 class="text-3xl font-bold text-gray-800 mb-4 md:mb-0">
-                    <i class="fas fa-calendar-check text-blue-500 mr-3"></i>
-                    Gestor de Tareas
-                </h1>
-                <div class="flex gap-3">
-                    <button id="exportExcelBtn" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition duration-300">
-                        <i class="fas fa-file-excel mr-2"></i>Exportar Excel
-                    </button>
-                    <button id="notificationsBtn" class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition duration-300">
-                        <i class="fas fa-bell mr-2"></i>Notificaciones
-                    </button>
-                </div>
-            </div>
-            <!-- Progress Bar -->
-            <div class="mb-4">
-                <div class="flex justify-between text-sm text-gray-600 mb-2">
-                    <span>Progreso del día</span>
-                    <span id="progressText">0%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-3">
-                    <div id="progressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Task Modal -->
-        <div id="taskModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 transition-opacity duration-300 opacity-0">
-            <div class="flex items-center justify-center min-h-screen p-4">
-                <div id="modal-content-wrapper" class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 transform scale-95 transition-transform duration-300">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold">Tareas del día</h3>
-                        <button id="closeModal" class="text-gray-500 hover:text-gray-700">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                    <div id="modalContent" class="space-y-4"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Message/Info Box -->
-        <div id="messageBox" class="fixed bottom-4 right-4 bg-blue-600 text-white px-6 py-3 rounded-lg shadow-xl hidden transition-all duration-300 transform translate-y-full opacity-0">
-            <span id="messageText"></span>
-        </div>
-    </div>
 </body>
 
 <script src="app.js"></script>
