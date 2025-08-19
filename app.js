@@ -24,6 +24,7 @@ let db = null;
 let auth = null;
 let syncInProgress = false;
 let selectedDateForPanel = null;
+let notificationInterval = null;
 
 // Inicialización
 document.addEventListener( 'DOMContentLoaded', function () {
@@ -32,7 +33,7 @@ document.addEventListener( 'DOMContentLoaded', function () {
     renderCalendar();
     updateProgress();
     setupEventListeners();
-    requestNotificationPermission();
+    requestNotificationPermission(); 
     initNotifications();
     setupDragAndDrop();
     setupTaskTooltips();
@@ -46,11 +47,18 @@ function initFirebase() {
         db = firebase.firestore();
         auth = firebase.auth();
 
-        // Configurar persistencia offline
-        db.enablePersistence()
-            .catch( error => {
-                console.warn( 'Firebase persistence failed:', error );
-            } );
+        // Configurar persistencia offline con mejor manejo de errores
+        db.enablePersistence( {
+            synchronizeTabs: true
+        } ).catch( error => {
+            if ( error.code == 'failed-precondition' ) {
+                console.warn( 'Persistencia falló: múltiples tabs abiertas' );
+            } else if ( error.code == 'unimplemented' ) {
+                console.warn( 'Persistencia no soportada en este navegador' );
+            } else {
+                console.warn( 'Error en persistencia de Firebase:', error );
+            }
+        } );
 
         // Escuchar cambios de autenticación
         auth.onAuthStateChanged( user => {
@@ -59,13 +67,17 @@ function initFirebase() {
 
             if ( user ) {
                 showFirebaseStatus( 'Conectado', 'success' );
-                syncFromFirebase();
+                // Delay para evitar múltiples sincronizaciones simultáneas
+                setTimeout( () => {
+                    if ( isOnline && !syncInProgress ) {
+                        syncFromFirebase();
+                    }
+                }, 1000 );
             } else {
                 showFirebaseStatus( 'Desconectado', 'offline' );
             }
         } );
 
-        // Ocultar loading screen
         hideLoadingScreen();
 
     } catch ( error ) {
@@ -75,13 +87,13 @@ function initFirebase() {
     }
 }
 
-const taskDateInput = document.getElementById( 'taskDate' );
-if ( taskDateInput ) {
-    const today = new Date().toISOString().split( 'T' )[ 0 ];
-    taskDateInput.setAttribute( 'min', today );
+const taskDateInput = document.getElementById('taskDate');
+if (taskDateInput) {
+    const today = new Date().toISOString().split('T')[0];
+    taskDateInput.setAttribute('min', today);
 }
 
-// Inicializar notificaciones (agregar al final de la función initFirebase)
+
 function initNotifications() {
     // Verificar si el navegador soporta notificaciones
     if ( !( 'Notification' in window ) ) {
@@ -95,8 +107,10 @@ function initNotifications() {
         updateNotificationButton();
         startNotificationService();
     }
-}
 
+    // Actualizar el botón independientemente del estado
+    updateNotificationButton();
+}
 // Configurar listeners de red
 function setupNetworkListeners() {
     window.addEventListener( 'online', () => {
@@ -1361,6 +1375,13 @@ function requestNotificationPermission() {
         return Promise.resolve( 'denied' );
     }
 
+    if ( Notification.permission === 'granted' ) {
+        notificationsEnabled = true;
+        updateNotificationButton();
+        startNotificationService();
+        return Promise.resolve( 'granted' );
+    }
+
     return Notification.requestPermission().then( permission => {
         if ( permission === 'granted' ) {
             notificationsEnabled = true;
@@ -1401,17 +1422,35 @@ function toggleNotifications() {
 
 // Iniciar servicio de notificaciones
 function startNotificationService() {
+    // Limpiar intervalo anterior si existe
     if ( notificationInterval ) {
         clearInterval( notificationInterval );
+        notificationInterval = null;
     }
 
+    // Verificar que las notificaciones estén habilitadas y tengamos permisos
+    if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
+        console.log( 'Notificaciones no habilitadas o sin permisos' );
+        return;
+    }
+
+    console.log( 'Iniciando servicio de notificaciones' );
+
     // Verificar inmediatamente
-    checkDailyTasks();
+    try {
+        checkDailyTasks();
+    } catch ( error ) {
+        console.error( 'Error en checkDailyTasks inicial:', error );
+    }
 
     // Verificar cada minuto
     notificationInterval = setInterval( () => {
-        if ( notificationsEnabled && Notification.permission === 'granted' ) {
-            checkDailyTasks();
+        try {
+            if ( notificationsEnabled && Notification.permission === 'granted' ) {
+                checkDailyTasks();
+            }
+        } catch ( error ) {
+            console.error( 'Error en intervalo de notificaciones:', error );
         }
     }, 60000 ); // 1 minuto
 }
@@ -1421,8 +1460,10 @@ function stopNotificationService() {
     if ( notificationInterval ) {
         clearInterval( notificationInterval );
         notificationInterval = null;
+        console.log( 'Servicio de notificaciones detenido' );
     }
 }
+
 
 // Actualizar botón de notificaciones
 function updateNotificationButton() {
