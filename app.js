@@ -323,6 +323,17 @@ function setupEventListeners() {
             element.addEventListener( element.tagName === 'FORM' ? 'submit' : 'click', handler );
         }
     } );
+
+    const closePanelBtn = document.getElementById( 'closePanelBtn' );
+    const addQuickTaskBtn = document.getElementById( 'addQuickTaskBtn' );
+
+    if ( closePanelBtn ) {
+        closePanelBtn.addEventListener( 'click', closeDailyTaskPanel );
+    }
+
+    if ( addQuickTaskBtn ) {
+        addQuickTaskBtn.addEventListener( 'click', addQuickTaskToSelectedDay );
+    }
 }
 
 // Mostrar/cerrar modal de login
@@ -366,6 +377,18 @@ function addTask( e ) {
 
     if ( !formData.title ) return;
 
+    // Validar que no sea una fecha pasada
+    if ( formData.date ) {
+        const selectedDate = new Date( formData.date );
+        const today = new Date();
+        today.setHours( 0, 0, 0, 0 );
+
+        if ( selectedDate < today ) {
+            showNotification( 'No puedes agregar tareas a fechas anteriores. Por favor selecciona hoy o una fecha futura.', 'error' );
+            return;
+        }
+    }
+
     const task = {
         id: Date.now().toString(),
         title: formData.title,
@@ -392,6 +415,7 @@ function addTask( e ) {
         setTimeout( () => syncToFirebase(), 1000 );
     }
 }
+
 
 // Agregar tarea a fecha específica
 function addTaskToDate( dateStr, task ) {
@@ -484,35 +508,129 @@ function renderCalendar() {
 function createDayElement( day, dateStr, dayTasks ) {
     const dayElement = document.createElement( 'div' );
     const isToday = dateStr === new Date().toISOString().split( 'T' )[ 0 ];
+    const isPastDate = new Date( dateStr ) < new Date().setHours( 0, 0, 0, 0 );
 
-    dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? 'bg-blue-100 border-blue-300' : ''}`;
+    dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? 'bg-blue-100 border-blue-300' : ''} ${isPastDate ? 'opacity-75' : ''}`;
     dayElement.dataset.date = dateStr;
 
     dayElement.innerHTML = `
-                <div class="font-semibold text-sm mb-1">${day}</div>
-                <div class="space-y-1">
-                    ${dayTasks.slice( 0, 2 ).map( task => createTaskElement( task, dateStr ) ).join( '' )}
-                    ${dayTasks.length > 2 ? `
-                        <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
-                             onclick="showDayTasks('${dateStr}', ${day})">
-                            +${dayTasks.length - 2} más
-                        </div>
-                    ` : ''}
+        <div class="font-semibold text-sm mb-1">${day}</div>
+        <div class="space-y-1">
+            ${dayTasks.slice( 0, 2 ).map( task => createTaskElement( task, dateStr ) ).join( '' )}
+            ${dayTasks.length > 2 ? `
+                <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
+                     onclick="showDailyTaskPanel('${dateStr}', ${day})">
+                    +${dayTasks.length - 2} más
                 </div>
-                <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
-                        class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
-                        title="Agregar tarea rápida">
-                    <i class="fas fa-plus"></i>
-                </button>
-            `;
+            ` : ''}
+        </div>
+        ${!isPastDate ? `
+            <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
+                    class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
+                    title="Agregar tarea rápida">
+                <i class="fas fa-plus"></i>
+            </button>
+        ` : ''}
+    `;
 
     dayElement.addEventListener( 'click', ( e ) => {
         if ( !e.target.closest( '.task-item' ) && !e.target.closest( 'button' ) ) {
-            showDayTasks( dateStr, day );
+            showDailyTaskPanel( dateStr, day );
         }
     } );
 
     return dayElement;
+}
+
+function showDailyTaskPanel( dateStr, day ) {
+    const panel = document.getElementById( 'dailyTaskPanel' );
+    const panelDate = document.getElementById( 'panelDate' );
+    const taskList = document.getElementById( 'panelTaskList' );
+
+    if ( !panel || !panelDate || !taskList ) return;
+
+    selectedDateForPanel = dateStr;
+    const dayTasks = tasks[ dateStr ] || [];
+    const date = new Date( dateStr );
+    const isPastDate = date < new Date().setHours( 0, 0, 0, 0 );
+
+    // Actualizar título del panel
+    panelDate.innerHTML = `
+        <i class="fas fa-tasks text-indigo-600 mr-2"></i>
+        Tareas del ${day} - ${date.toLocaleDateString( 'es-ES', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric'
+    } )}
+    `;
+
+    // Actualizar lista de tareas
+    if ( dayTasks.length === 0 ) {
+        taskList.innerHTML = `
+            <div class="text-center py-8 text-gray-500">
+                <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+                <p>No hay tareas para este día</p>
+                ${!isPastDate ? '<p class="text-sm mt-2">¡Agrega tu primera tarea!</p>' : ''}
+            </div>
+        `;
+    } else {
+        taskList.innerHTML = dayTasks.map( task => createPanelTaskElement( task, dateStr ) ).join( '' );
+    }
+
+    // Actualizar progreso del día
+    updatePanelProgress( dayTasks );
+
+    // Mostrar/ocultar botón de agregar tarea según si es fecha pasada
+    const addQuickTaskBtn = document.getElementById( 'addQuickTaskBtn' );
+    if ( addQuickTaskBtn ) {
+        if ( isPastDate ) {
+            addQuickTaskBtn.style.display = 'none';
+        } else {
+            addQuickTaskBtn.style.display = 'flex';
+        }
+    }
+
+    // Mostrar el panel
+    panel.classList.remove( 'hidden' );
+
+    // Scroll suave hacia el panel en dispositivos móviles
+    if ( window.innerWidth < 768 ) {
+        setTimeout( () => {
+            panel.scrollIntoView( { behavior: 'smooth', block: 'start' } );
+        }, 100 );
+    }
+}
+
+// Crear elemento de tarea para el panel
+function createPanelTaskElement( task, dateStr ) {
+    const isPastDate = new Date( dateStr ) < new Date().setHours( 0, 0, 0, 0 );
+
+    return `
+        <div class="flex items-center justify-between p-4 border rounded-lg ${task.completed ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'} hover:shadow-md transition-shadow">
+            <div class="flex items-center space-x-3 flex-1">
+                <input type="checkbox" ${task.completed ? 'checked' : ''}
+                       onchange="toggleTaskFromPanel('${dateStr}', '${task.id}')"
+                       class="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                <div class="flex-1">
+                    <div class="font-medium ${task.completed ? 'line-through text-green-600' : 'text-gray-800'}">${task.title}</div>
+                    ${task.description ? `<div class="text-sm text-gray-600 mt-1">${task.description}</div>` : ''}
+                    ${task.time ? `<div class="text-xs text-indigo-600 mt-1"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                </div>
+            </div>
+            ${!isPastDate ? `
+                <div class="flex space-x-2">
+                    <button onclick="showEditTaskModal('${dateStr}', '${task.id}')"
+                            class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition">
+                        <i class="fas fa-edit text-sm"></i>
+                    </button>
+                    <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
+                            class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition">
+                        <i class="fas fa-trash text-sm"></i>
+                    </button>
+                </div>
+            ` : ''}
+        </div>
+    `;
 }
 
 // Crear elemento de tarea
@@ -541,6 +659,141 @@ function createTaskElement( task, dateStr ) {
                     </div>
                 </div>
             `;
+}
+
+// Actualizar progreso del panel
+function updatePanelProgress( dayTasks ) {
+    const progressBar = document.getElementById( 'panelProgressBar' );
+    const progressText = document.getElementById( 'panelProgressText' );
+
+    if ( !progressBar || !progressText ) return;
+
+    const completedTasks = dayTasks.filter( task => task.completed ).length;
+    const progress = dayTasks.length === 0 ? 0 : Math.round( ( completedTasks / dayTasks.length ) * 100 );
+
+    progressBar.style.width = `${progress}%`;
+    progressText.textContent = `${progress}% (${completedTasks}/${dayTasks.length})`;
+}
+
+// Toggle task desde el panel
+function toggleTaskFromPanel( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( task ) {
+        task.completed = !task.completed;
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+
+        // Actualizar el panel
+        if ( selectedDateForPanel === dateStr ) {
+            const dayTasks = tasks[ dateStr ] || [];
+            updatePanelProgress( dayTasks );
+
+            // Actualizar el elemento específico
+            const taskElement = document.querySelector( `input[onchange="toggleTaskFromPanel('${dateStr}', '${taskId}')"]` );
+            if ( taskElement ) {
+                const container = taskElement.closest( 'div.border' );
+                if ( container ) {
+                    container.className = container.className.replace(
+                        task.completed ? 'bg-gray-50 border-gray-200' : 'bg-green-50 border-green-200',
+                        task.completed ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'
+                    );
+
+                    const titleElement = container.querySelector( '.font-medium' );
+                    if ( titleElement ) {
+                        titleElement.className = `font-medium ${task.completed ? 'line-through text-green-600' : 'text-gray-800'}`;
+                    }
+                }
+            }
+        }
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
+    }
+}
+
+// Eliminar tarea desde el panel
+function deleteTaskFromPanel( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
+        deleteTaskWithUndo( dateStr, taskId );
+
+        // Actualizar el panel
+        if ( selectedDateForPanel === dateStr ) {
+            const day = new Date( dateStr ).getDate();
+            showDailyTaskPanel( dateStr, day );
+        }
+    }
+}
+
+// Eliminar tarea desde el panel
+function deleteTaskFromPanel( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
+        deleteTaskWithUndo( dateStr, taskId );
+
+        // Actualizar el panel
+        if ( selectedDateForPanel === dateStr ) {
+            const day = new Date( dateStr ).getDate();
+            showDailyTaskPanel( dateStr, day );
+        }
+    }
+}
+
+// Agregar tarea rápida al día seleccionado
+function addQuickTaskToSelectedDay() {
+    if ( !selectedDateForPanel ) return;
+
+    const date = new Date( selectedDateForPanel );
+    const today = new Date();
+    today.setHours( 0, 0, 0, 0 );
+
+    if ( date < today ) {
+        showNotification( 'No puedes agregar tareas a fechas anteriores', 'error' );
+        return;
+    }
+
+    const title = prompt( `Nueva tarea para ${date.toLocaleDateString( 'es-ES' )}:` );
+    if ( title?.trim() ) {
+        const task = {
+            id: `${selectedDateForPanel}-${Date.now()}`,
+            title: title.trim(),
+            description: '',
+            time: '',
+            completed: false
+        };
+
+        addTaskToDate( selectedDateForPanel, task );
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+
+        // Actualizar el panel
+        const day = date.getDate();
+        showDailyTaskPanel( selectedDateForPanel, day );
+
+        showNotification( 'Tarea agregada exitosamente', 'success' );
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
+    }
+}
+
+// Cerrar panel de tareas diarias
+function closeDailyTaskPanel() {
+    const panel = document.getElementById( 'dailyTaskPanel' );
+    if ( panel ) {
+        panel.classList.add( 'hidden' );
+        selectedDateForPanel = null;
+    }
 }
 
 // Edición rápida
@@ -574,7 +827,16 @@ function quickDeleteTask( dateStr, taskId ) {
 
 // Agregar tarea rápida
 function showQuickAddTask( dateStr ) {
-    const title = prompt( 'Nueva tarea para ' + new Date( dateStr ).toLocaleDateString( 'es-ES' ) + ':' );
+    const date = new Date( dateStr );
+    const today = new Date();
+    today.setHours( 0, 0, 0, 0 );
+
+    if ( date < today ) {
+        showNotification( 'No puedes agregar tareas a fechas anteriores', 'error' );
+        return;
+    }
+
+    const title = prompt( 'Nueva tarea para ' + date.toLocaleDateString( 'es-ES' ) + ':' );
     if ( title?.trim() ) {
         const task = {
             id: `${dateStr}-${Date.now()}`,
