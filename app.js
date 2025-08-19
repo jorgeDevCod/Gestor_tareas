@@ -1,4 +1,14 @@
-// Variables globales optimizadas
+// Configuración de Firebase (DEBES REEMPLAZAR CON TUS CREDENCIALES)
+const firebaseConfig = {
+    apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
+    authDomain: "calendario-tareas-app.firebaseapp.com",
+    projectId: "calendario-tareas-app",
+    storageBucket: "calendario-tareas-app.firebasestorage.app",
+    messagingSenderId: "646091363424",
+    appId: "1:646091363424:web:d923bbcc0224bd1bed5f05"
+};
+
+// Variables globales
 let tasks = {};
 let currentDate = new Date();
 let notificationsEnabled = false;
@@ -8,9 +18,15 @@ let currentEditingTask = null;
 let currentEditingDate = null;
 let lastDeletedTask = null;
 let lastDeletedDate = null;
+let isOnline = navigator.onLine;
+let currentUser = null;
+let db = null;
+let auth = null;
+let syncInProgress = false;
 
 // Inicialización
 document.addEventListener( 'DOMContentLoaded', function () {
+    initFirebase();
     loadTasks();
     renderCalendar();
     updateProgress();
@@ -18,16 +34,249 @@ document.addEventListener( 'DOMContentLoaded', function () {
     requestNotificationPermission();
     setupDragAndDrop();
     setupTaskTooltips();
+    setupNetworkListeners();
 } );
 
-// Cargar tareas desde localStorage (compatible con el antiguo)
-function loadTasks() {
+// Inicializar Firebase
+function initFirebase() {
     try {
-        const storedTasks = localStorage.getItem( 'tasks' );
-        tasks = storedTasks ? JSON.parse( storedTasks ) : {};
+        firebase.initializeApp( firebaseConfig );
+        db = firebase.firestore();
+        auth = firebase.auth();
+
+        // Configurar persistencia offline
+        db.enablePersistence()
+            .catch( error => {
+                console.warn( 'Firebase persistence failed:', error );
+            } );
+
+        // Escuchar cambios de autenticación
+        auth.onAuthStateChanged( user => {
+            currentUser = user;
+            updateUI();
+
+            if ( user ) {
+                showFirebaseStatus( 'Conectado', 'success' );
+                syncFromFirebase();
+            } else {
+                showFirebaseStatus( 'Desconectado', 'offline' );
+            }
+        } );
+
+        // Ocultar loading screen
+        hideLoadingScreen();
+
     } catch ( error ) {
-        tasks = {};
-        console.warn( 'Error loading tasks from localStorage:', error );
+        console.error( 'Error initializing Firebase:', error );
+        showFirebaseStatus( 'Error de conexión', 'error' );
+        hideLoadingScreen();
+    }
+}
+
+// Configurar listeners de red
+function setupNetworkListeners() {
+    window.addEventListener( 'online', () => {
+        isOnline = true;
+        showFirebaseStatus( 'En línea', 'success' );
+        if ( currentUser ) {
+            syncFromFirebase();
+        }
+    } );
+
+    window.addEventListener( 'offline', () => {
+        isOnline = false;
+        showFirebaseStatus( 'Sin conexión', 'offline' );
+    } );
+}
+
+// Mostrar/ocultar loading screen
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById( 'loadingScreen' );
+    loadingScreen.style.opacity = '0';
+    setTimeout( () => {
+        loadingScreen.style.display = 'none';
+    }, 300 );
+}
+
+// Mostrar estado de Firebase
+function showFirebaseStatus( text, type ) {
+    const statusEl = document.getElementById( 'firebaseStatus' );
+    const iconEl = document.getElementById( 'statusIcon' );
+    const textEl = document.getElementById( 'statusText' );
+
+    const statusConfig = {
+        success: { class: 'bg-green-500 text-white', icon: 'fa-check-circle' },
+        error: { class: 'bg-red-500 text-white', icon: 'fa-exclamation-triangle' },
+        offline: { class: 'bg-gray-500 text-white', icon: 'fa-wifi' },
+        syncing: { class: 'bg-blue-500 text-white', icon: 'fa-sync-alt fa-spin' }
+    };
+
+    const config = statusConfig[ type ] || statusConfig.offline;
+
+    statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
+    iconEl.className = `fas ${config.icon} mr-2`;
+    textEl.textContent = text;
+    statusEl.classList.remove( 'hidden' );
+
+    // Auto-hide después de 3 segundos (excepto para offline)
+    if ( type !== 'offline' ) {
+        setTimeout( () => {
+            if ( type !== 'syncing' ) {
+                statusEl.classList.add( 'hidden' );
+            }
+        }, 3000 );
+    }
+}
+
+// Actualizar UI según estado de autenticación
+function updateUI() {
+    const loginBtn = document.getElementById( 'loginBtn' );
+    const userInfo = document.getElementById( 'userInfo' );
+    const syncBtn = document.getElementById( 'syncBtn' );
+
+    if ( currentUser ) {
+        loginBtn.classList.add( 'hidden' );
+        userInfo.classList.remove( 'hidden' );
+        syncBtn.disabled = false;
+
+        document.getElementById( 'userName' ).textContent = currentUser.displayName || 'Usuario';
+        document.getElementById( 'userEmail' ).textContent = currentUser.email;
+        document.getElementById( 'userPhoto' ).src = currentUser.photoURL || 'https://via.placeholder.com/32';
+    } else {
+        loginBtn.classList.remove( 'hidden' );
+        userInfo.classList.add( 'hidden' );
+        syncBtn.disabled = true;
+    }
+}
+
+// Iniciar sesión con Google
+function signInWithGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope( 'profile' );
+    provider.addScope( 'email' );
+
+    auth.signInWithPopup( provider )
+        .then( result => {
+            showNotification( 'Sesión iniciada correctamente', 'success' );
+            closeLoginModal();
+        } )
+        .catch( error => {
+            console.error( 'Error signing in:', error );
+            showNotification( 'Error al iniciar sesión', 'error' );
+        } );
+}
+
+// Cerrar sesión
+function signOut() {
+    if ( confirm( '¿Estás seguro de que quieres cerrar sesión?' ) ) {
+        auth.signOut()
+            .then( () => {
+                showNotification( 'Sesión cerrada', 'info' );
+            } )
+            .catch( error => {
+                console.error( 'Error signing out:', error );
+            } );
+    }
+}
+
+// Sincronizar tareas a Firebase
+async function syncToFirebase() {
+    if ( !currentUser || !isOnline || syncInProgress ) return;
+
+    syncInProgress = true;
+    showFirebaseStatus( 'Sincronizando...', 'syncing' );
+
+    try {
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+
+        // Obtener todas las tareas locales
+        const allLocalTasks = [];
+        Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+            dayTasks.forEach( task => {
+                allLocalTasks.push( {
+                    ...task,
+                    date,
+                    lastModified: new Date()
+                } );
+            } );
+        } );
+
+        // Subir tareas en lotes
+        const batch = db.batch();
+        allLocalTasks.forEach( task => {
+            const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
+            batch.set( taskRef, task, { merge: true } );
+        } );
+
+        await batch.commit();
+        showFirebaseStatus( 'Sincronizado', 'success' );
+        showNotification( 'Tareas sincronizadas con Firebase', 'success' );
+
+    } catch ( error ) {
+        console.error( 'Error syncing to Firebase:', error );
+        showFirebaseStatus( 'Error al sincronizar', 'error' );
+        showNotification( 'Error al sincronizar con Firebase', 'error' );
+    } finally {
+        syncInProgress = false;
+    }
+}
+
+// Sincronizar tareas desde Firebase
+async function syncFromFirebase() {
+    if ( !currentUser || !isOnline || syncInProgress ) return;
+
+    syncInProgress = true;
+    showFirebaseStatus( 'Descargando...', 'syncing' );
+
+    try {
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+        const snapshot = await userTasksRef.get();
+
+        const firebaseTasks = {};
+        snapshot.forEach( doc => {
+            const task = doc.data();
+            const date = task.date;
+
+            if ( !firebaseTasks[ date ] ) {
+                firebaseTasks[ date ] = [];
+            }
+
+            firebaseTasks[ date ].push( {
+                id: task.id,
+                title: task.title,
+                description: task.description || '',
+                time: task.time || '',
+                completed: task.completed || false
+            } );
+        } );
+
+        // Mergear con tareas locales (prioridad a las más recientes)
+        Object.keys( firebaseTasks ).forEach( date => {
+            if ( !tasks[ date ] ) {
+                tasks[ date ] = [];
+            }
+
+            firebaseTasks[ date ].forEach( firebaseTask => {
+                const existingTaskIndex = tasks[ date ].findIndex( t => t.id === firebaseTask.id );
+                if ( existingTaskIndex === -1 ) {
+                    tasks[ date ].push( firebaseTask );
+                }
+            } );
+        } );
+
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+
+        showFirebaseStatus( 'Descargado', 'success' );
+        showNotification( 'Tareas descargadas de Firebase', 'success' );
+
+    } catch ( error ) {
+        console.error( 'Error syncing from Firebase:', error );
+        showFirebaseStatus( 'Error al descargar', 'error' );
+        showNotification( 'Error al descargar de Firebase', 'error' );
+    } finally {
+        syncInProgress = false;
     }
 }
 
@@ -42,7 +291,12 @@ function setupEventListeners() {
         'clearWeekBtn': clearWeek,
         'clearMonthBtn': clearMonth,
         'exportExcelBtn': exportToExcel,
-        'notificationsBtn': toggleNotifications
+        'notificationsBtn': toggleNotifications,
+        'syncBtn': syncToFirebase,
+        'loginBtn': showLoginModal,
+        'logoutBtn': signOut,
+        'googleSignInBtn': signInWithGoogle,
+        'closeLoginModal': closeLoginModal
     };
 
     Object.entries( elements ).forEach( ( [ id, handler ] ) => {
@@ -51,6 +305,26 @@ function setupEventListeners() {
             element.addEventListener( element.tagName === 'FORM' ? 'submit' : 'click', handler );
         }
     } );
+}
+
+// Mostrar/cerrar modal de login
+function showLoginModal() {
+    document.getElementById( 'loginModal' ).classList.remove( 'hidden' );
+}
+
+function closeLoginModal() {
+    document.getElementById( 'loginModal' ).classList.add( 'hidden' );
+}
+
+// Cargar tareas desde localStorage
+function loadTasks() {
+    try {
+        const storedTasks = localStorage.getItem( 'tasks' );
+        tasks = storedTasks ? JSON.parse( storedTasks ) : {};
+    } catch ( error ) {
+        tasks = {};
+        console.warn( 'Error loading tasks from localStorage:', error );
+    }
 }
 
 // Mostrar/ocultar días personalizados
@@ -94,6 +368,11 @@ function addTask( e ) {
     updateProgress();
     document.getElementById( 'taskForm' ).reset();
     showNotification( 'Tarea agregada exitosamente' );
+
+    // Sincronizar automáticamente si el usuario está logueado
+    if ( currentUser && isOnline ) {
+        setTimeout( () => syncToFirebase(), 1000 );
+    }
 }
 
 // Agregar tarea a fecha específica
@@ -192,22 +471,22 @@ function createDayElement( day, dateStr, dayTasks ) {
     dayElement.dataset.date = dateStr;
 
     dayElement.innerHTML = `
-        <div class="font-semibold text-sm mb-1">${day}</div>
-        <div class="space-y-1">
-            ${dayTasks.slice( 0, 2 ).map( task => createTaskElement( task, dateStr ) ).join( '' )}
-            ${dayTasks.length > 2 ? `
-                <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
-                     onclick="showDayTasks('${dateStr}', ${day})">
-                    +${dayTasks.length - 2} más
+                <div class="font-semibold text-sm mb-1">${day}</div>
+                <div class="space-y-1">
+                    ${dayTasks.slice( 0, 2 ).map( task => createTaskElement( task, dateStr ) ).join( '' )}
+                    ${dayTasks.length > 2 ? `
+                        <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
+                             onclick="showDayTasks('${dateStr}', ${day})">
+                            +${dayTasks.length - 2} más
+                        </div>
+                    ` : ''}
                 </div>
-            ` : ''}
-        </div>
-        <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
-                class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
-                title="Agregar tarea rápida">
-            <i class="fas fa-plus"></i>
-        </button>
-    `;
+                <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
+                        class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
+                        title="Agregar tarea rápida">
+                    <i class="fas fa-plus"></i>
+                </button>
+            `;
 
     dayElement.addEventListener( 'click', ( e ) => {
         if ( !e.target.closest( '.task-item' ) && !e.target.closest( 'button' ) ) {
@@ -221,29 +500,29 @@ function createDayElement( day, dateStr, dayTasks ) {
 // Crear elemento de tarea
 function createTaskElement( task, dateStr ) {
     return `
-        <div class="task-item-wrapper relative group/task">
-            <div class="text-xs p-1 rounded ${task.completed ? 'bg-green-200 text-green-800 line-through' : 'bg-blue-200 text-blue-800'} truncate task-item cursor-move pr-8"
-                 data-task-id="${task.id}"
-                 data-date="${dateStr}"
-                 draggable="true"
-                 title="${task.title}${task.time ? ' - ' + task.time : ''}">
-                <i class="fas fa-grip-lines mr-1 opacity-50"></i>
-                ${task.title}
-            </div>
-            <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
-                <button onclick="event.stopPropagation(); quickEditTask('${dateStr}', '${task.id}')"
-                        class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
-                        title="Editar tarea">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
-                        class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
-                        title="Eliminar tarea">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `;
+                <div class="task-item-wrapper relative group/task">
+                    <div class="text-xs p-1 rounded ${task.completed ? 'bg-green-200 text-green-800 line-through' : 'bg-blue-200 text-blue-800'} truncate task-item cursor-move pr-8"
+                         data-task-id="${task.id}"
+                         data-date="${dateStr}"
+                         draggable="true"
+                         title="${task.title}${task.time ? ' - ' + task.time : ''}">
+                        <i class="fas fa-grip-lines mr-1 opacity-50"></i>
+                        ${task.title}
+                    </div>
+                    <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
+                        <button onclick="event.stopPropagation(); quickEditTask('${dateStr}', '${task.id}')"
+                                class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
+                                title="Editar tarea">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
+                                class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
+                                title="Eliminar tarea">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
 }
 
 // Edición rápida
@@ -257,6 +536,11 @@ function quickEditTask( dateStr, taskId ) {
         saveTasks();
         renderCalendar();
         showNotification( 'Tarea actualizada', 'success' );
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -287,6 +571,11 @@ function showQuickAddTask( dateStr ) {
         renderCalendar();
         updateProgress();
         showNotification( 'Tarea agregada rápidamente', 'success' );
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -326,13 +615,13 @@ function createTaskTooltip() {
 function showTooltip( tooltip, target, task ) {
     const rect = target.getBoundingClientRect();
     tooltip.innerHTML = `
-        <div class="font-semibold">${task.title}</div>
-        ${task.description ? `<div class="text-gray-300">${task.description}</div>` : ''}
-        ${task.time ? `<div class="text-blue-300"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
-        <div class="text-gray-400 text-xs mt-1">
-            ${task.completed ? '✓ Completada' : 'Pendiente'} • Arrastra para mover
-        </div>
-    `;
+                <div class="font-semibold">${task.title}</div>
+                ${task.description ? `<div class="text-gray-300">${task.description}</div>` : ''}
+                ${task.time ? `<div class="text-blue-300"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                <div class="text-gray-400 text-xs mt-1">
+                    ${task.completed ? '✓ Completada' : 'Pendiente'} • Arrastra para mover
+                </div>
+            `;
 
     tooltip.style.left = Math.min( rect.left, window.innerWidth - tooltip.offsetWidth - 10 ) + 'px';
     tooltip.style.top = ( rect.top - tooltip.offsetHeight - 5 ) + 'px';
@@ -421,6 +710,11 @@ function moveTask( fromDate, toDate, taskId ) {
         saveTasks();
         renderCalendar();
         updateProgress();
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -433,19 +727,19 @@ function showDayTasks( dateStr, day ) {
     if ( !modal || !content ) return;
 
     content.innerHTML = `
-        <div class="mb-4">
-            <h4 class="font-medium text-gray-800">Día ${day}</h4>
-            <p class="text-sm text-gray-600">${new Date( dateStr ).toLocaleDateString( 'es-ES', {
+                <div class="mb-4">
+                    <h4 class="font-medium text-gray-800">Día ${day}</h4>
+                    <p class="text-sm text-gray-600">${new Date( dateStr ).toLocaleDateString( 'es-ES', {
         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     } )}</p>
-        </div>
-        <div class="space-y-2 max-h-60 overflow-y-auto">
-            ${dayTasks.length === 0 ?
+                </div>
+                <div class="space-y-2 max-h-60 overflow-y-auto">
+                    ${dayTasks.length === 0 ?
             '<p class="text-gray-500">No hay tareas para este día</p>' :
             dayTasks.map( task => createModalTaskElement( task, dateStr ) ).join( '' )
         }
-        </div>
-    `;
+                </div>
+            `;
 
     modal.classList.remove( 'hidden' );
     setTimeout( () => {
@@ -457,29 +751,29 @@ function showDayTasks( dateStr, day ) {
 // Crear elemento de tarea para modal
 function createModalTaskElement( task, dateStr ) {
     return `
-        <div class="flex items-center justify-between p-3 border rounded-lg ${task.completed ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}">
-            <div class="flex items-center space-x-3">
-                <input type="checkbox" ${task.completed ? 'checked' : ''}
-                       onchange="toggleTask('${dateStr}', '${task.id}')"
-                       class="rounded border-gray-300">
-                <div>
-                    <div class="font-medium ${task.completed ? 'line-through text-green-600' : ''}">${task.title}</div>
-                    ${task.description ? `<div class="text-sm text-gray-600">${task.description}</div>` : ''}
-                    ${task.time ? `<div class="text-xs text-blue-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                <div class="flex items-center justify-between p-3 border rounded-lg ${task.completed ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}">
+                    <div class="flex items-center space-x-3">
+                        <input type="checkbox" ${task.completed ? 'checked' : ''}
+                               onchange="toggleTask('${dateStr}', '${task.id}')"
+                               class="rounded border-gray-300">
+                        <div>
+                            <div class="font-medium ${task.completed ? 'line-through text-green-600' : ''}">${task.title}</div>
+                            ${task.description ? `<div class="text-sm text-gray-600">${task.description}</div>` : ''}
+                            ${task.time ? `<div class="text-xs text-blue-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button onclick="showEditTaskModal('${dateStr}', '${task.id}')"
+                                class="text-blue-500 hover:text-blue-700">
+                            <i class="fas fa-edit text-sm"></i>
+                        </button>
+                        <button onclick="deleteTask('${dateStr}', '${task.id}')"
+                                class="text-red-500 hover:text-red-700">
+                            <i class="fas fa-trash text-sm"></i>
+                        </button>
+                    </div>
                 </div>
-            </div>
-            <div class="flex space-x-2">
-                <button onclick="showEditTaskModal('${dateStr}', '${task.id}')"
-                        class="text-blue-500 hover:text-blue-700">
-                    <i class="fas fa-edit text-sm"></i>
-                </button>
-                <button onclick="deleteTask('${dateStr}', '${task.id}')"
-                        class="text-red-500 hover:text-red-700">
-                    <i class="fas fa-trash text-sm"></i>
-                </button>
-            </div>
-        </div>
-    `;
+            `;
 }
 
 // Modal de edición
@@ -495,43 +789,43 @@ function showEditTaskModal( dateStr, taskId ) {
     modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
 
     modal.innerHTML = `
-        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-semibold text-gray-800">
-                    <i class="fas fa-edit text-blue-500 mr-2"></i>Editar Tarea
-                </h3>
-                <button onclick="closeEditModal()" class="text-gray-500 hover:text-gray-700">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            
-            <form id="editTaskForm" class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Título</label>
-                    <input type="text" id="editTaskTitle" value="${task.title}" required 
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">
+                            <i class="fas fa-edit text-blue-500 mr-2"></i>Editar Tarea
+                        </h3>
+                        <button onclick="closeEditModal()" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <form id="editTaskForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Título</label>
+                            <input type="text" id="editTaskTitle" value="${task.title}" required 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
+                            <textarea id="editTaskDescription" rows="3" 
+                                      class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ''}</textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
+                            <input type="time" id="editTaskTime" value="${task.time || ''}" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div class="flex space-x-3">
+                            <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+                                <i class="fas fa-save mr-2"></i>Guardar
+                            </button>
+                            <button type="button" onclick="closeEditModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                                Cancelar
+                            </button>
+                        </div>
+                    </form>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                    <textarea id="editTaskDescription" rows="3" 
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ''}</textarea>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
-                    <input type="time" id="editTaskTime" value="${task.time || ''}" 
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                </div>
-                <div class="flex space-x-3">
-                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
-                        <i class="fas fa-save mr-2"></i>Guardar
-                    </button>
-                    <button type="button" onclick="closeEditModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
-                        Cancelar
-                    </button>
-                </div>
-            </form>
-        </div>
-    `;
+            `;
 
     document.body.appendChild( modal );
     document.getElementById( 'editTaskForm' ).addEventListener( 'submit', updateTask );
@@ -557,6 +851,11 @@ function updateTask( e ) {
         closeEditModal();
         showDayTasks( currentEditingDate, new Date( currentEditingDate ).getDate() );
         showNotification( 'Tarea actualizada exitosamente', 'success' );
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -587,6 +886,11 @@ function toggleTask( dateStr, taskId ) {
         renderCalendar();
         updateProgress();
         showDayTasks( dateStr, new Date( dateStr ).getDate() );
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -609,6 +913,11 @@ function deleteTaskWithUndo( dateStr, taskId ) {
         updateProgress();
         showDayTasks( dateStr, new Date( dateStr ).getDate() );
         showUndoNotification();
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -617,14 +926,14 @@ function showUndoNotification() {
     const notification = document.createElement( 'div' );
     notification.className = 'fixed bottom-4 left-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center space-x-3';
     notification.innerHTML = `
-        <span>Tarea eliminada</span>
-        <button onclick="undoDelete()" class="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition">
-            Deshacer
-        </button>
-        <button onclick="this.parentElement.remove()" class="text-gray-400 hover:text-white">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
+                <span>Tarea eliminada</span>
+                <button onclick="undoDelete()" class="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition">
+                    Deshacer
+                </button>
+                <button onclick="this.parentElement.remove()" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
 
     document.body.appendChild( notification );
     setTimeout( () => notification.remove(), 5000 );
@@ -645,6 +954,11 @@ function undoDelete() {
 
         showNotification( 'Tarea restaurada' );
         document.querySelector( '.fixed.bottom-4.left-4' )?.remove();
+
+        // Sincronizar si está logueado
+        if ( currentUser && isOnline ) {
+            setTimeout( () => syncToFirebase(), 500 );
+        }
     }
 }
 
@@ -679,6 +993,11 @@ function clearWeek() {
     renderCalendar();
     updateProgress();
     showNotification( 'Semana limpiada exitosamente' );
+
+    // Sincronizar si está logueado
+    if ( currentUser && isOnline ) {
+        setTimeout( () => syncToFirebase(), 500 );
+    }
 }
 
 // Limpiar mes
@@ -699,6 +1018,11 @@ function clearMonth() {
     renderCalendar();
     updateProgress();
     showNotification( 'Mes limpiado exitosamente' );
+
+    // Sincronizar si está logueado
+    if ( currentUser && isOnline ) {
+        setTimeout( () => syncToFirebase(), 500 );
+    }
 }
 
 // Actualizar progreso
@@ -841,11 +1165,11 @@ function showNotification( message, type = 'success' ) {
 
     notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full ${className}`;
     notification.innerHTML = `
-        <div class="flex items-center space-x-2">
-            <i class="fas ${icon}"></i>
-            <span>${message}</span>
-        </div>
-    `;
+                <div class="flex items-center space-x-2">
+                    <i class="fas ${icon}"></i>
+                    <span>${message}</span>
+                </div>
+            `;
 
     document.body.appendChild( notification );
 
@@ -871,3 +1195,10 @@ function saveTasks() {
 
 // Verificar tareas cada minuto
 setInterval( checkDailyTasks, 60000 );
+
+// Auto-sincronización cada 5 minutos si está logueado y online
+setInterval( () => {
+    if ( currentUser && isOnline && !syncInProgress ) {
+        syncFromFirebase();
+    }
+}, 5 * 60 * 1000 );
