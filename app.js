@@ -23,6 +23,7 @@ let currentUser = null;
 let db = null;
 let auth = null;
 let syncInProgress = false;
+let selectedDateForPanel = null;
 
 // Inicialización
 document.addEventListener( 'DOMContentLoaded', function () {
@@ -31,7 +32,8 @@ document.addEventListener( 'DOMContentLoaded', function () {
     renderCalendar();
     updateProgress();
     setupEventListeners();
-    requestNotificationPermission();
+    requestNotificationPermission(); 
+    initNotifications();
     setupDragAndDrop();
     setupTaskTooltips();
     setupNetworkListeners();
@@ -70,6 +72,22 @@ function initFirebase() {
         console.error( 'Error initializing Firebase:', error );
         showFirebaseStatus( 'Error de conexión', 'error' );
         hideLoadingScreen();
+    }
+}
+
+// Inicializar notificaciones (agregar al final de la función initFirebase)
+function initNotifications() {
+    // Verificar si el navegador soporta notificaciones
+    if ( !( 'Notification' in window ) ) {
+        console.warn( 'Este navegador no soporta notificaciones' );
+        return;
+    }
+
+    // Si ya tiene permisos, activar notificaciones
+    if ( Notification.permission === 'granted' ) {
+        notificationsEnabled = true;
+        updateNotificationButton();
+        startNotificationService();
     }
 }
 
@@ -1070,35 +1088,71 @@ function exportToExcel() {
 
 // Solicitar permisos de notificación
 function requestNotificationPermission() {
-    if ( 'Notification' in window ) {
-        Notification.requestPermission().then( permission => {
-            if ( permission === 'granted' ) {
-                notificationsEnabled = true;
-                checkDailyTasks();
-            }
-        } );
+    if ( !( 'Notification' in window ) ) {
+        showNotification( 'Este navegador no soporta notificaciones', 'error' );
+        return Promise.resolve( 'denied' );
     }
+
+    return Notification.requestPermission().then( permission => {
+        if ( permission === 'granted' ) {
+            notificationsEnabled = true;
+            updateNotificationButton();
+            startNotificationService();
+            showNotification( 'Notificaciones activadas correctamente', 'success' );
+        } else {
+            showNotification( 'Permisos de notificación denegados', 'error' );
+        }
+        return permission;
+    } );
 }
 
 // Alternar notificaciones
 function toggleNotifications() {
     if ( !( 'Notification' in window ) ) {
-        alert( 'Este navegador no soporta notificaciones' );
+        showNotification( 'Este navegador no soporta notificaciones', 'error' );
         return;
     }
 
     if ( Notification.permission === 'granted' ) {
         notificationsEnabled = !notificationsEnabled;
         updateNotificationButton();
-        if ( notificationsEnabled ) checkDailyTasks();
+
+        if ( notificationsEnabled ) {
+            startNotificationService();
+            showNotification( 'Notificaciones activadas', 'success' );
+        } else {
+            stopNotificationService();
+            showNotification( 'Notificaciones desactivadas', 'info' );
+        }
+    } else if ( Notification.permission === 'default' ) {
+        requestNotificationPermission();
     } else {
-        Notification.requestPermission().then( permission => {
-            if ( permission === 'granted' ) {
-                notificationsEnabled = true;
-                updateNotificationButton();
-                checkDailyTasks();
-            }
-        } );
+        showNotification( 'Los permisos de notificación fueron denegados. Actívalos en la configuración del navegador.', 'error' );
+    }
+}
+
+// Iniciar servicio de notificaciones
+function startNotificationService() {
+    if ( notificationInterval ) {
+        clearInterval( notificationInterval );
+    }
+
+    // Verificar inmediatamente
+    checkDailyTasks();
+
+    // Verificar cada minuto
+    notificationInterval = setInterval( () => {
+        if ( notificationsEnabled && Notification.permission === 'granted' ) {
+            checkDailyTasks();
+        }
+    }, 60000 ); // 1 minuto
+}
+
+// Detener servicio de notificaciones
+function stopNotificationService() {
+    if ( notificationInterval ) {
+        clearInterval( notificationInterval );
+        notificationInterval = null;
     }
 }
 
@@ -1107,47 +1161,108 @@ function updateNotificationButton() {
     const btn = document.getElementById( 'notificationsBtn' );
     if ( !btn ) return;
 
-    if ( notificationsEnabled ) {
-        btn.className = 'bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition';
+    const hasPermission = Notification.permission === 'granted';
+
+    if ( notificationsEnabled && hasPermission ) {
+        btn.className = 'bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition duration-300';
         btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
+        btn.title = 'Notificaciones activadas - Click para desactivar';
+    } else if ( hasPermission ) {
+        btn.className = 'bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition duration-300';
+        btn.innerHTML = '<i class="fas fa-bell-slash mr-2"></i>Notificaciones OFF';
+        btn.title = 'Notificaciones desactivadas - Click para activar';
     } else {
-        btn.className = 'bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition';
-        btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones OFF';
+        btn.className = 'bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition duration-300';
+        btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Permitir Notificaciones';
+        btn.title = 'Click para solicitar permisos de notificación';
     }
 }
 
 // Verificar tareas diarias
 function checkDailyTasks() {
-    if ( !notificationsEnabled ) return;
+    if ( !notificationsEnabled || Notification.permission !== 'granted' ) return;
 
-    const today = new Date().toISOString().split( 'T' )[ 0 ];
+    const now = new Date();
+    const today = now.toISOString().split( 'T' )[ 0 ];
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // Minutos desde medianoche
+
     const todayTasks = tasks[ today ] || [];
     const pendingTasks = todayTasks.filter( task => !task.completed );
 
-    // Notificación general de tareas pendientes
-    if ( pendingTasks.length > 0 ) {
-        new Notification( 'Recordatorio de Tareas', {
-            body: `Tienes ${pendingTasks.length} tareas pendientes para hoy`,
-            icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHg9IjMiIHk9IjQiIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgcng9IjIiIHJ5PSIyIj48L3JlY3Q+PGxpbmUgeDE9IjE2IiB5MT0iMiIgeDI9IjE2IiB5Mj0iNiI+PC9saW5lPjxsaW5lIHgxPSI4IiB5MT0iMiIgeDI9IjgiIHkyPSI2Ij48L2xpbmU+PGxpbmUgeDE9IjMiIHkxPSIxMCIgeDI9IjIxIiB5Mj0iMTAiPjwvbGluZT48L3N2Zz4='
+    console.log( 'Checking notifications:', {
+        today,
+        pendingTasks: pendingTasks.length,
+        currentTime: `${now.getHours()}:${now.getMinutes().toString().padStart( 2, '0' )}`
+    } );
+
+    // Notificación matutina (9:00 AM)
+    if ( currentTime === 9 * 60 && pendingTasks.length > 0 ) {
+        new Notification( '¡Buenos días! 🌅', {
+            body: `Tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''} para hoy`,
+            icon: getFaviconAsDataUrl(),
+            tag: 'morning-reminder'
         } );
     }
 
-    // Notificaciones específicas por horario
+    // Notificación de medio día (12:00 PM)
+    if ( currentTime === 12 * 60 && pendingTasks.length > 0 ) {
+        new Notification( 'Recordatorio de medio día 🌞', {
+            body: `Aún tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} por completar`,
+            icon: getFaviconAsDataUrl(),
+            tag: 'midday-reminder'
+        } );
+    }
+
+    // Notificación vespertina (6:00 PM)
+    if ( currentTime === 18 * 60 && pendingTasks.length > 0 ) {
+        new Notification( 'Recordatorio vespertino 🌇', {
+            body: `No olvides completar tus ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} restante${pendingTasks.length > 1 ? 's' : ''}`,
+            icon: getFaviconAsDataUrl(),
+            tag: 'evening-reminder'
+        } );
+    }
+
+    // Notificaciones específicas por tiempo
     pendingTasks.forEach( task => {
         if ( task.time ) {
-            const taskTime = new Date( `${today}T${task.time}` );
-            const now = new Date();
-            const timeDiff = taskTime.getTime() - now.getTime();
+            const [ hours, minutes ] = task.time.split( ':' ).map( Number );
+            const taskTimeMinutes = hours * 60 + minutes;
 
             // Notificar 15 minutos antes
-            if ( timeDiff > 0 && timeDiff <= 15 * 60 * 1000 ) {
-                new Notification( `Recordatorio: ${task.title}`, {
+            const reminderTime = taskTimeMinutes - 15;
+            if ( currentTime === reminderTime ) {
+                new Notification( `⏰ Recordatorio: ${task.title}`, {
                     body: `Tu tarea comienza en 15 minutos (${task.time})`,
-                    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIj48L2NpcmNsZT48cG9seWxpbmUgcG9pbnRzPSIxMiw2IDEyLDEyIDE2LDE0Ij48L3BvbHlsaW5lPjwvc3ZnPg=='
+                    icon: getFaviconAsDataUrl(),
+                    tag: `task-reminder-${task.id}`,
+                    requireInteraction: true
+                } );
+            }
+
+            // Notificar al momento exacto
+            if ( currentTime === taskTimeMinutes ) {
+                new Notification( `🚀 Es hora: ${task.title}`, {
+                    body: task.description || `Tu tarea programada para las ${task.time}`,
+                    icon: getFaviconAsDataUrl(),
+                    tag: `task-now-${task.id}`,
+                    requireInteraction: true
                 } );
             }
         }
     } );
+}
+
+/ Obtener favicon como data URL para las notificaciones
+function getFaviconAsDataUrl() {
+    // Crear un ícono simple SVG como data URL
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+            <rect width="64" height="64" rx="12" fill="#3B82F6"/>
+            <path d="M20 32l8 8 16-16" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <circle cx="48" cy="16" r="6" fill="#EF4444"/>
+        </svg>
+    `;
+    return `data:image/svg+xml;base64,${btoa( svg )}`;
 }
 
 // Mostrar notificación
