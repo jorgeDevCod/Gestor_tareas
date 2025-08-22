@@ -33,7 +33,7 @@ document.addEventListener( 'DOMContentLoaded', function () {
     renderCalendar();
     updateProgress();
     setupEventListeners();
-    requestNotificationPermission(); 
+    requestNotificationPermission();
     initNotifications();
     setupDragAndDrop();
     setupTaskTooltips();
@@ -87,10 +87,19 @@ function initFirebase() {
     }
 }
 
-const taskDateInput = document.getElementById('taskDate');
-if (taskDateInput) {
-    const today = new Date().toISOString().split('T')[0];
-    taskDateInput.setAttribute('min', today);
+const taskDateInput = document.getElementById( 'taskDate' );
+if ( taskDateInput ) {
+    const taskDateInput = document.getElementById( 'taskDate' );
+    if ( taskDateInput ) {
+        // ✅ Usar zona local en lugar de UTC
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String( now.getMonth() + 1 ).padStart( 2, '0' );
+        const day = String( now.getDate() ).padStart( 2, '0' );
+        const today = `${year}-${month}-${day}`;
+
+        taskDateInput.setAttribute( 'min', today );
+    }
 }
 
 
@@ -271,9 +280,13 @@ async function syncFromFirebase() {
         const snapshot = await userTasksRef.get();
 
         const firebaseTasks = {};
+        const firebaseTaskIds = new Set(); // Para trackear qué tareas existen en Firebase
+
         snapshot.forEach( doc => {
             const task = doc.data();
             const date = task.date;
+
+            firebaseTaskIds.add( `${date}_${task.id}` );
 
             if ( !firebaseTasks[ date ] ) {
                 firebaseTasks[ date ] = [];
@@ -288,7 +301,20 @@ async function syncFromFirebase() {
             } );
         } );
 
-        // Mergear con tareas locales (prioridad a las más recientes)
+        // ✅ NUEVO: Eliminar tareas locales que no existen en Firebase
+        Object.keys( tasks ).forEach( date => {
+            tasks[ date ] = tasks[ date ].filter( localTask => {
+                const taskKey = `${date}_${localTask.id}`;
+                return firebaseTaskIds.has( taskKey );
+            } );
+
+            // Limpiar fechas vacías
+            if ( tasks[ date ].length === 0 ) {
+                delete tasks[ date ];
+            }
+        } );
+
+        // Agregar/actualizar tareas desde Firebase
         Object.keys( firebaseTasks ).forEach( date => {
             if ( !tasks[ date ] ) {
                 tasks[ date ] = [];
@@ -298,6 +324,9 @@ async function syncFromFirebase() {
                 const existingTaskIndex = tasks[ date ].findIndex( t => t.id === firebaseTask.id );
                 if ( existingTaskIndex === -1 ) {
                     tasks[ date ].push( firebaseTask );
+                } else {
+                    // Actualizar tarea existente
+                    tasks[ date ][ existingTaskIndex ] = { ...tasks[ date ][ existingTaskIndex ], ...firebaseTask };
                 }
             } );
         } );
@@ -306,15 +335,48 @@ async function syncFromFirebase() {
         renderCalendar();
         updateProgress();
 
-        showFirebaseStatus( 'Descargado', 'success' );
-        showNotification( 'Tareas cargadas', 'success' );
+        showFirebaseStatus( 'Sincronizado', 'success' );
+        showNotification( 'Tareas sincronizadas', 'success' );
 
     } catch ( error ) {
         console.error( 'Error syncing from Firebase:', error );
         showFirebaseStatus( 'Error al descargar', 'error' );
-        showNotification( 'Error al cargar', 'error' );
+        showNotification( 'Error al sincronizar', 'error' );
     } finally {
         syncInProgress = false;
+    }
+}
+
+async function deleteTaskFromFirebase( dateStr, taskId ) {
+    if ( !currentUser || !isOnline ) return;
+
+    try {
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+        const taskDocId = `${dateStr}_${taskId}`;
+
+        await userTasksRef.doc( taskDocId ).delete();
+        console.log( 'Tarea eliminada de Firebase:', taskDocId );
+    } catch ( error ) {
+        console.error( 'Error eliminando tarea de Firebase:', error );
+    }
+}
+
+async function syncTaskToFirebase( dateStr, task ) {
+    if ( !currentUser || !isOnline ) return;
+
+    try {
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+        const taskDocId = `${dateStr}_${task.id}`;
+
+        await userTasksRef.doc( taskDocId ).set( {
+            ...task,
+            date: dateStr,
+            lastModified: new Date()
+        }, { merge: true } );
+
+        console.log( 'Tarea sincronizada a Firebase:', taskDocId );
+    } catch ( error ) {
+        console.error( 'Error sincronizando tarea a Firebase:', error );
     }
 }
 
@@ -524,17 +586,43 @@ function renderCalendar() {
     }
 }
 
-// Crear elemento de día
+// REEMPLAZAR completamente la función createDayElement:
 function createDayElement( day, dateStr, dayTasks ) {
     const dayElement = document.createElement( 'div' );
-    const isToday = dateStr === new Date().toISOString().split( 'T' )[ 0 ];
-    const isPastDate = new Date( dateStr ) < new Date().setHours( 0, 0, 0, 0 );
 
-    dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? 'bg-blue-100 border-blue-300' : ''} ${isPastDate ? 'opacity-75' : ''}`;
+    // ✅ CORRECCIÓN: Usar función local para obtener fecha actual
+    const todayStr = getTodayString();
+    const isToday = dateStr === todayStr;
+
+    // Para fechas pasadas, comparar directamente con la fecha actual
+    const today = new Date();
+    const dayDate = new Date( dateStr );
+
+    // Establecer ambas fechas a medianoche para comparación justa
+    today.setHours( 0, 0, 0, 0 );
+    dayDate.setHours( 0, 0, 0, 0 );
+
+    const isPastDate = dayDate < today;
+
+    // DEBUG detallado para días problemáticos
+    if ( day >= 20 && day <= 25 ) {
+        console.log( `📅 DEBUG día ${day}:`, {
+            dateStr,
+            todayStr,
+            isToday,
+            isPastDate,
+            dayDate: dayDate.toLocaleDateString( 'es-PE' ),
+            today: today.toLocaleDateString( 'es-PE' ),
+            comparison: `${dayDate.getTime()} vs ${today.getTime()}`
+        } );
+    }
+
+    dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-200' : ''} ${isPastDate ? 'opacity-75' : ''}`;
     dayElement.dataset.date = dateStr;
 
     dayElement.innerHTML = `
-        <div class="font-semibold text-sm mb-1">${day}</div>
+        <div class="font-semibold text-sm mb-1 ${isToday ? 'text-blue-700' : ''}">${day}</div>
+        ${isToday ? '<div class="absolute top-0 right-1 text-blue-600 text-xs font-bold">HOY</div>' : ''}
         <div class="space-y-1">
             ${dayTasks.slice( 0, 2 ).map( task => createTaskElement( task, dateStr ) ).join( '' )}
             ${dayTasks.length > 2 ? `
@@ -562,6 +650,28 @@ function createDayElement( day, dateStr, dayTasks ) {
     return dayElement;
 }
 
+
+function getTodayString() {
+    // Crear fecha actual en zona horaria local del navegador
+    const now = new Date();
+
+    // Obtener componentes de fecha locales
+    const year = now.getFullYear();
+    const month = String( now.getMonth() + 1 ).padStart( 2, '0' );
+    const day = String( now.getDate() ).padStart( 2, '0' );
+
+    const todayStr = `${year}-${month}-${day}`;
+
+    console.log( '🕐 Fecha actual (local):', {
+        dateObject: now,
+        formatted: todayStr,
+        locale: now.toLocaleDateString( 'es-PE' ),
+        time: now.toLocaleTimeString( 'es-PE' )
+    } );
+
+    return todayStr;
+}
+
 function showDailyTaskPanel( dateStr, day ) {
     const panel = document.getElementById( 'dailyTaskPanel' );
     const panelDate = document.getElementById( 'panelDate' );
@@ -571,17 +681,35 @@ function showDailyTaskPanel( dateStr, day ) {
 
     selectedDateForPanel = dateStr;
     const dayTasks = tasks[ dateStr ] || [];
-    const date = new Date( dateStr );
-    const isPastDate = date < new Date().setHours( 0, 0, 0, 0 );
+
+    // ✅ CORREGIDO: Usar directamente dateStr para crear la fecha
+    const date = new Date( dateStr + 'T12:00:00' ); // Agregar tiempo para evitar problemas de zona horaria
+    const today = new Date();
+    today.setHours( 0, 0, 0, 0 );
+    const selectedDate = new Date( date );
+    selectedDate.setHours( 0, 0, 0, 0 );
+    const isPastDate = selectedDate < today;
+
+    // ✅ CORREGIDO: Mostrar la fecha correcta
+    const dateOptions = {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'America/Lima' // Ajustar a tu zona horaria
+    };
+
+    console.log( '📅 Panel Info:', {
+        dateStr,
+        day,
+        formattedDate: date.toLocaleDateString( 'es-ES', dateOptions ),
+        tasksCount: dayTasks.length
+    } );
 
     // Actualizar título del panel
     panelDate.innerHTML = `
         <i class="fas fa-tasks text-indigo-600 mr-2"></i>
-        Tareas del ${day} - ${date.toLocaleDateString( 'es-ES', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric'
-    } )}
+        Tareas del ${day} - ${date.toLocaleDateString( 'es-ES', dateOptions )}
     `;
 
     // Actualizar lista de tareas
@@ -590,6 +718,7 @@ function showDailyTaskPanel( dateStr, day ) {
             <div class="text-center py-8 text-gray-500">
                 <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
                 <p>No hay tareas para este día</p>
+                <p class="text-xs text-gray-400 mt-2">Fecha: ${dateStr}</p>
                 ${!isPastDate ? '<p class="text-sm mt-2">¡Agrega tu primera tarea!</p>' : ''}
             </div>
         `;
@@ -681,6 +810,8 @@ function createTaskElement( task, dateStr ) {
             `;
 }
 
+
+
 // Actualizar progreso del panel
 function updatePanelProgress( dayTasks ) {
     const progressBar = document.getElementById( 'panelProgressBar' );
@@ -730,22 +861,6 @@ function toggleTaskFromPanel( dateStr, taskId ) {
         // Sincronizar si está logueado
         if ( currentUser && isOnline ) {
             setTimeout( () => syncToFirebase(), 500 );
-        }
-    }
-}
-
-// Eliminar tarea desde el panel
-function deleteTaskFromPanel( dateStr, taskId ) {
-    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
-    if ( !task ) return;
-
-    if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
-        deleteTaskWithUndo( dateStr, taskId );
-
-        // Actualizar el panel
-        if ( selectedDateForPanel === dateStr ) {
-            const day = new Date( dateStr ).getDate();
-            showDailyTaskPanel( dateStr, day );
         }
     }
 }
@@ -1203,9 +1318,15 @@ function deleteTaskWithUndo( dateStr, taskId ) {
         lastDeletedTask = { ...dayTasks[ taskIndex ] };
         lastDeletedDate = dateStr;
 
+        // Eliminar localmente
         tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
         if ( tasks[ dateStr ].length === 0 ) {
             delete tasks[ dateStr ];
+        }
+
+        // ✅ NUEVO: Eliminar también de Firebase
+        if ( currentUser && isOnline ) {
+            deleteTaskFromFirebase( dateStr, taskId );
         }
 
         saveTasks();
@@ -1213,11 +1334,6 @@ function deleteTaskWithUndo( dateStr, taskId ) {
         updateProgress();
         showDayTasks( dateStr, new Date( dateStr ).getDate() );
         showUndoNotification();
-
-        // Sincronizar si está logueado
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
     }
 }
 
@@ -1243,7 +1359,14 @@ function showUndoNotification() {
 function undoDelete() {
     if ( lastDeletedTask && lastDeletedDate ) {
         if ( !tasks[ lastDeletedDate ] ) tasks[ lastDeletedDate ] = [];
+
+        // Restaurar localmente
         tasks[ lastDeletedDate ].push( lastDeletedTask );
+
+        // ✅ NUEVO: Restaurar también en Firebase
+        if ( currentUser && isOnline ) {
+            syncTaskToFirebase( lastDeletedDate, lastDeletedTask );
+        }
 
         saveTasks();
         renderCalendar();
@@ -1252,13 +1375,8 @@ function undoDelete() {
         lastDeletedTask = null;
         lastDeletedDate = null;
 
-        showNotification( 'Tarea restaurada' );
+        showNotification( 'Tarea restaurada exitosamente', 'success' );
         document.querySelector( '.fixed.bottom-4.left-4' )?.remove();
-
-        // Sincronizar si está logueado
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
     }
 }
 
@@ -1327,7 +1445,7 @@ function clearMonth() {
 
 // Actualizar progreso
 function updateProgress() {
-    const today = new Date().toISOString().split( 'T' )[ 0 ];
+    const today = getTodayString(); // Usar la nueva función
     const todayTasks = tasks[ today ] || [];
     const completedTasks = todayTasks.filter( task => task.completed ).length;
     const progress = todayTasks.length === 0 ? 0 : Math.round( ( completedTasks / todayTasks.length ) * 100 );
@@ -1337,6 +1455,13 @@ function updateProgress() {
 
     if ( progressBar ) progressBar.style.width = `${progress}%`;
     if ( progressText ) progressText.textContent = `${progress}% (${completedTasks}/${todayTasks.length})`;
+
+    console.log( '📊 Progreso actualizado:', {
+        today,
+        totalTasks: todayTasks.length,
+        completedTasks,
+        progress: `${progress}%`
+    } );
 }
 
 // Exportar a Excel
@@ -1430,29 +1555,34 @@ function startNotificationService() {
 
     // Verificar que las notificaciones estén habilitadas y tengamos permisos
     if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
-        console.log( 'Notificaciones no habilitadas o sin permisos' );
+        console.log( '❌ Notificaciones no habilitadas o sin permisos' );
         return;
     }
 
-    console.log( 'Iniciando servicio de notificaciones' );
+    console.log( '✅ Iniciando servicio de notificaciones' );
 
     // Verificar inmediatamente
-    try {
-        checkDailyTasks();
-    } catch ( error ) {
-        console.error( 'Error en checkDailyTasks inicial:', error );
-    }
+    setTimeout( () => {
+        try {
+            checkDailyTasks();
+        } catch ( error ) {
+            console.error( 'Error en checkDailyTasks inicial:', error );
+        }
+    }, 2000 ); // Delay de 2 segundos para asegurar que todo esté cargado
 
-    // Verificar cada minuto
+    // ✅ CORREGIDO: Verificar cada 30 segundos para mejor precisión
     notificationInterval = setInterval( () => {
         try {
             if ( notificationsEnabled && Notification.permission === 'granted' ) {
                 checkDailyTasks();
+            } else {
+                console.log( '⚠️ Notificaciones deshabilitadas en intervalo' );
+                stopNotificationService();
             }
         } catch ( error ) {
             console.error( 'Error en intervalo de notificaciones:', error );
         }
-    }, 60000 ); // 1 minuto
+    }, 30000 ); // 30 segundos para mejor precisión
 }
 
 // Detener servicio de notificaciones
@@ -1463,7 +1593,6 @@ function stopNotificationService() {
         console.log( 'Servicio de notificaciones detenido' );
     }
 }
-
 
 // Actualizar botón de notificaciones
 function updateNotificationButton() {
@@ -1489,76 +1618,125 @@ function updateNotificationButton() {
 
 // Verificar tareas diarias
 function checkDailyTasks() {
-    if ( !notificationsEnabled || Notification.permission !== 'granted' ) return;
+    if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
+        console.log( 'Notificaciones no habilitadas o sin permisos' );
+        return;
+    }
 
     const now = new Date();
     const today = now.toISOString().split( 'T' )[ 0 ];
-    const currentTime = now.getHours() * 60 + now.getMinutes(); // Minutos desde medianoche
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = `${currentHour.toString().padStart( 2, '0' )}:${currentMinute.toString().padStart( 2, '0' )}`;
 
     const todayTasks = tasks[ today ] || [];
     const pendingTasks = todayTasks.filter( task => !task.completed );
 
-    console.log( 'Checking notifications:', {
+    console.log( '🔔 Verificando notificaciones:', {
         today,
+        currentTime,
         pendingTasks: pendingTasks.length,
-        currentTime: `${now.getHours()}:${now.getMinutes().toString().padStart( 2, '0' )}`
+        totalTasks: todayTasks.length
     } );
 
-    // Notificación matutina (9:00 AM)
-    if ( currentTime === 9 * 60 && pendingTasks.length > 0 ) {
-        new Notification( '¡Buenos días! 🌅', {
-            body: `Tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''} para hoy`,
-            icon: getFaviconAsDataUrl(),
-            tag: 'morning-reminder'
-        } );
+    // ✅ CORREGIDO: Notificaciones en horarios específicos (verificar segundos también)
+    const currentSeconds = now.getSeconds();
+
+    // Solo notificar en el primer segundo del minuto para evitar spam
+    if ( currentSeconds === 0 ) {
+        // Notificación matutina (9:00 AM)
+        if ( currentHour === 9 && currentMinute === 0 && pendingTasks.length > 0 ) {
+            console.log( '🌅 Enviando notificación matutina' );
+            showDesktopNotification( '¡Buenos días! 🌅',
+                `Tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''} para hoy`,
+                'morning-reminder'
+            );
+        }
+
+        // Notificación de medio día (12:00 PM)
+        if ( currentHour === 12 && currentMinute === 0 && pendingTasks.length > 0 ) {
+            console.log( '🌞 Enviando notificación de medio día' );
+            showDesktopNotification( 'Recordatorio de medio día 🌞',
+                `Aún tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} por completar`,
+                'midday-reminder'
+            );
+        }
+
+        // Notificación vespertina (6:00 PM)
+        if ( currentHour === 18 && currentMinute === 0 && pendingTasks.length > 0 ) {
+            console.log( '🌇 Enviando notificación vespertina' );
+            showDesktopNotification( 'Recordatorio vespertino 🌇',
+                `No olvides completar tus ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} restante${pendingTasks.length > 1 ? 's' : ''}`,
+                'evening-reminder'
+            );
+        }
     }
 
-    // Notificación de medio día (12:00 PM)
-    if ( currentTime === 12 * 60 && pendingTasks.length > 0 ) {
-        new Notification( 'Recordatorio de medio día 🌞', {
-            body: `Aún tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} por completar`,
-            icon: getFaviconAsDataUrl(),
-            tag: 'midday-reminder'
-        } );
-    }
-
-    // Notificación vespertina (6:00 PM)
-    if ( currentTime === 18 * 60 && pendingTasks.length > 0 ) {
-        new Notification( 'Recordatorio vespertino 🌇', {
-            body: `No olvides completar tus ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} restante${pendingTasks.length > 1 ? 's' : ''}`,
-            icon: getFaviconAsDataUrl(),
-            tag: 'evening-reminder'
-        } );
-    }
-
-    // Notificaciones específicas por tiempo
+    // ✅ CORREGIDO: Notificaciones específicas por tiempo de tarea
     pendingTasks.forEach( task => {
         if ( task.time ) {
-            const [ hours, minutes ] = task.time.split( ':' ).map( Number );
-            const taskTimeMinutes = hours * 60 + minutes;
+            const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
 
-            // Notificar 15 minutos antes
-            const reminderTime = taskTimeMinutes - 15;
-            if ( currentTime === reminderTime ) {
-                new Notification( `⏰ Recordatorio: ${task.title}`, {
-                    body: `Tu tarea comienza en 15 minutos (${task.time})`,
-                    icon: getFaviconAsDataUrl(),
-                    tag: `task-reminder-${task.id}`,
-                    requireInteraction: true
-                } );
+            // Notificar 15 minutos antes (solo en el segundo 0)
+            const reminderTime = new Date();
+            reminderTime.setHours( taskHours, taskMinutes - 15, 0, 0 );
+
+            if ( currentSeconds === 0 &&
+                currentHour === reminderTime.getHours() &&
+                currentMinute === reminderTime.getMinutes() ) {
+
+                console.log( '⏰ Enviando recordatorio 15 min antes:', task.title );
+                showDesktopNotification( `⏰ Recordatorio: ${task.title}`,
+                    `Tu tarea comienza en 15 minutos (${task.time})`,
+                    `task-reminder-${task.id}`,
+                    true
+                );
             }
 
-            // Notificar al momento exacto
-            if ( currentTime === taskTimeMinutes ) {
-                new Notification( `🚀 Es hora: ${task.title}`, {
-                    body: task.description || `Tu tarea programada para las ${task.time}`,
-                    icon: getFaviconAsDataUrl(),
-                    tag: `task-now-${task.id}`,
-                    requireInteraction: true
-                } );
+            // Notificar al momento exacto (solo en el segundo 0)
+            if ( currentSeconds === 0 &&
+                currentHour === taskHours &&
+                currentMinute === taskMinutes ) {
+
+                console.log( '🚀 Enviando notificación de inicio:', task.title );
+                showDesktopNotification( `🚀 Es hora: ${task.title}`,
+                    task.description || `Tu tarea programada para las ${task.time}`,
+                    `task-now-${task.id}`,
+                    true
+                );
             }
         }
     } );
+}
+
+function showDesktopNotification( title, body, tag, requireInteraction = false ) {
+    try {
+        const notification = new Notification( title, {
+            body: body,
+            icon: getFaviconAsDataUrl(),
+            tag: tag,
+            requireInteraction: requireInteraction,
+            silent: false,
+            badge: getFaviconAsDataUrl()
+        } );
+
+        // Agregar click handler
+        notification.onclick = function () {
+            window.focus();
+            notification.close();
+        };
+
+        // Auto-close después de 10 segundos si no requiere interacción
+        if ( !requireInteraction ) {
+            setTimeout( () => {
+                notification.close();
+            }, 10000 );
+        }
+
+        console.log( '✅ Notificación enviada:', title );
+    } catch ( error ) {
+        console.error( '❌ Error enviando notificación:', error );
+    }
 }
 
 // Obtener favicon como data URL para las notificaciones
