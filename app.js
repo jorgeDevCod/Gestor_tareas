@@ -1,4 +1,4 @@
-// Configuración de Firebase (DEBES REEMPLAZAR CON TUS CREDENCIALES)
+// Configuración de Firebase
 const firebaseConfig = {
     apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
     authDomain: "calendario-tareas-app.firebaseapp.com",
@@ -213,137 +213,137 @@ function updateSyncIndicator( status ) {
 
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
-    if (!currentUser || !isOnline) {
-        showNotification('No hay conexión disponible', 'error');
+    if ( !currentUser || !isOnline ) {
+        showNotification( 'No hay conexión disponible', 'error' );
         return;
     }
 
-    if (isSyncing) {
-        showNotification('Sincronización en progreso...', 'info');
+    if ( isSyncing ) {
+        showNotification( 'Sincronización en progreso...', 'info' );
         return;
     }
 
-    const syncBtn = document.getElementById('syncBtn');
+    const syncBtn = document.getElementById( 'syncBtn' );
     const originalHTML = syncBtn ? syncBtn.innerHTML : '';
-    
+
     try {
         // Cambiar visual del botón
-        if (syncBtn) {
+        if ( syncBtn ) {
             syncBtn.disabled = true;
             syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sincronizando...';
         }
 
         // Primero procesar cola pendiente
-        if (syncQueue.size > 0) {
-            console.log('🔄 Procesando cola pendiente antes del sync manual');
+        if ( syncQueue.size > 0 ) {
+            console.log( '🔄 Procesando cola pendiente antes del sync manual' );
             await processSyncQueue();
         }
 
         // Hacer sync completo bidireccional
         isSyncing = true;
-        updateSyncIndicator('syncing');
+        updateSyncIndicator( 'syncing' );
 
         // 1. Sync local → remoto (subir cambios)
-        const userTasksRef = db.collection('users').doc(currentUser.uid).collection('tasks');
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
         const allLocalTasks = [];
 
-        Object.entries(tasks).forEach(([date, dayTasks]) => {
-            dayTasks.forEach(task => {
-                allLocalTasks.push({
+        Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+            dayTasks.forEach( task => {
+                allLocalTasks.push( {
                     ...task,
                     date,
                     lastModified: new Date()
-                });
-            });
-        });
+                } );
+            } );
+        } );
 
-        if (allLocalTasks.length > 0) {
+        if ( allLocalTasks.length > 0 ) {
             const uploadBatch = db.batch();
-            allLocalTasks.forEach(task => {
-                const taskRef = userTasksRef.doc(`${task.date}_${task.id}`);
-                uploadBatch.set(taskRef, task, { merge: true });
-            });
+            allLocalTasks.forEach( task => {
+                const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
+                uploadBatch.set( taskRef, task, { merge: true } );
+            } );
 
             await uploadBatch.commit();
-            console.log(`📤 ${allLocalTasks.length} tareas locales subidas`);
+            console.log( `📤 ${allLocalTasks.length} tareas locales subidas` );
         }
 
         // 2. Sync remoto → local (bajar cambios)
         const snapshot = await userTasksRef.get();
         let tasksDownloaded = 0;
 
-        if (!snapshot.empty) {
+        if ( !snapshot.empty ) {
             const remoteTasks = {};
-            snapshot.forEach(doc => {
+            snapshot.forEach( doc => {
                 const task = doc.data();
                 const date = task.date;
 
-                if (!remoteTasks[date]) {
-                    remoteTasks[date] = [];
+                if ( !remoteTasks[ date ] ) {
+                    remoteTasks[ date ] = [];
                 }
 
-                remoteTasks[date].push({
+                remoteTasks[ date ].push( {
                     id: task.id,
                     title: task.title,
                     description: task.description || '',
                     time: task.time || '',
                     completed: task.completed || false
-                });
-            });
+                } );
+            } );
 
             // Mergear con tareas locales
-            Object.keys(remoteTasks).forEach(date => {
-                if (!tasks[date]) {
-                    tasks[date] = [];
+            Object.keys( remoteTasks ).forEach( date => {
+                if ( !tasks[ date ] ) {
+                    tasks[ date ] = [];
                 }
 
-                remoteTasks[date].forEach(remoteTask => {
-                    const existsLocally = tasks[date].some(localTask =>
+                remoteTasks[ date ].forEach( remoteTask => {
+                    const existsLocally = tasks[ date ].some( localTask =>
                         localTask.id === remoteTask.id ||
-                        (localTask.title === remoteTask.title && localTask.time === remoteTask.time)
+                        ( localTask.title === remoteTask.title && localTask.time === remoteTask.time )
                     );
 
-                    if (!existsLocally) {
-                        tasks[date].push(remoteTask);
+                    if ( !existsLocally ) {
+                        tasks[ date ].push( remoteTask );
                         tasksDownloaded++;
                     }
-                });
-            });
+                } );
+            } );
 
-            if (tasksDownloaded > 0) {
+            if ( tasksDownloaded > 0 ) {
                 saveTasks();
                 renderCalendar();
                 updateProgress();
             }
         }
 
-        updateSyncIndicator('success');
-        
+        updateSyncIndicator( 'success' );
+
         const totalSynced = allLocalTasks.length + tasksDownloaded;
-        if (totalSynced > 0) {
+        if ( totalSynced > 0 ) {
             showNotification(
-                `Sincronización completa: ${allLocalTasks.length} subidas, ${tasksDownloaded} descargadas`, 
+                `Sincronización completa: ${allLocalTasks.length} subidas, ${tasksDownloaded} descargadas`,
                 'success'
             );
         } else {
-            showNotification('Todo está sincronizado', 'success');
+            showNotification( 'Todo está sincronizado', 'success' );
         }
 
         // Reiniciar notificaciones si están habilitadas
-        if (notificationsEnabled && Notification.permission === 'granted') {
+        if ( notificationsEnabled && Notification.permission === 'granted' ) {
             stopNotificationService();
-            setTimeout(() => startNotificationService(), 1000);
+            setTimeout( () => startNotificationService(), 1000 );
         }
 
-    } catch (error) {
-        console.error('Error en sync manual:', error);
-        updateSyncIndicator('error');
-        showNotification('Error en sincronización: ' + error.message, 'error');
+    } catch ( error ) {
+        console.error( 'Error en sync manual:', error );
+        updateSyncIndicator( 'error' );
+        showNotification( 'Error en sincronización: ' + error.message, 'error' );
     } finally {
         isSyncing = false;
-        
+
         // Restaurar botón
-        if (syncBtn) {
+        if ( syncBtn ) {
             syncBtn.disabled = false;
             syncBtn.innerHTML = originalHTML || '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
         }
@@ -352,11 +352,11 @@ async function syncToFirebase() {
 
 // función para mostrar estadísticas de sync (OPCIONAL)
 function showSyncStats() {
-    const totalTasks = Object.values(tasks).reduce((sum, dayTasks) => sum + dayTasks.length, 0);
+    const totalTasks = Object.values( tasks ).reduce( ( sum, dayTasks ) => sum + dayTasks.length, 0 );
     const pendingOps = syncQueue.size;
-    const lastSync = lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Nunca';
-    
-    const statsModal = document.createElement('div');
+    const lastSync = lastSyncTime ? new Date( lastSyncTime ).toLocaleTimeString() : 'Nunca';
+
+    const statsModal = document.createElement( 'div' );
     statsModal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
     statsModal.innerHTML = `
         <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
@@ -406,8 +406,8 @@ function showSyncStats() {
             </div>
         </div>
     `;
-    
-    document.body.appendChild(statsModal);
+
+    document.body.appendChild( statsModal );
 }
 
 // FUNCIÓN única para obtener fecha actual en formato local
@@ -982,6 +982,13 @@ function addTaskToDate( dateStr, task ) {
     if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
     const newTask = { ...task, id: `${dateStr}-${Date.now()}` };
     tasks[ dateStr ].push( newTask );
+
+    // Actualizar panel si está abierto para este día
+    if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( dateStr, day );
+    }
+
     return newTask;
 }
 
@@ -1200,45 +1207,44 @@ function createPanelTaskElement( task, dateStr ) {
     const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
 
     return `
-        <div class="flex items-center justify-between p-4 border rounded-lg ${state.class.replace( 'text-', 'border-' ).replace( 'bg-', 'border-' ).replace( '200', '300' )} hover:shadow-md transition-shadow border-l-4" style="border-left-color: ${priority.color}">
-            <div class="flex items-center space-x-3 flex-1">
-                <div class="flex flex-col space-y-1">
-                    <button onclick="toggleTaskState('${dateStr}', '${task.id}')"
-                            class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${state.class}"
-                            title="Estado: ${state.label}">
-                        <i class="fas ${state.icon} text-xs"></i>
-                    </button>
-                    <div class="text-xs px-2 py-1 rounded ${priority.class}" title="Prioridad: ${priority.label}">
-                        ${task.priority}
+        <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5" style="border-left-color: ${priority.color}">
+            <div class="flex items-center justify-between">
+                <div class="flex items-start space-x-3 flex-1">
+                    <div class="flex flex-col space-y-2">
+                        <button onclick="toggleTaskState('${dateStr}', '${task.id}')"
+                                class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${state.class}"
+                                title="Estado: ${state.label}">
+                            <i class="fas ${state.icon} text-xs"></i>
+                        </button>
+                        <span class="task-priority-dot inline-block w-2.5 h-2.5 rounded-full" style="background-color: ${priority.color}" title="Prioridad: ${priority.label}"></span>
+                    </div>
+                    <div class="flex-1">
+                        <div class="task-title font-semibold text-base ${task.state === 'completed' ? 'line-through text-gray-500' : 'text-gray-800'}">${task.title}</div>
+                        ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
+                        <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
+                            ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                            <div class="text-gray-500">${state.label}</div>
+                            <div class="text-gray-500">${priority.label}</div>
+                        </div>
                     </div>
                 </div>
-                <div class="flex-1">
-                    <div class="font-medium ${task.state === 'completed' ? 'line-through opacity-75' : 'text-gray-800'}">${task.title}</div>
-                    ${task.description ? `<div class="text-sm text-gray-600 mt-1">${task.description}</div>` : ''}
-                    <div class="flex items-center space-x-3 mt-1 text-xs">
-                        ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
-                        <div class="text-gray-500">${state.label}</div>
-                        <div class="text-gray-500">${priority.label}</div>
+                ${!isPastDate ? `
+                    <div class="task-actions flex space-x-2">
+                        <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
+                                class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition"
+                                title="Editar completo">
+                            <i class="fas fa-edit text-sm"></i>
+                        </button>
+                        <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
+                                class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition">
+                            <i class="fas fa-trash text-sm"></i>
+                        </button>
                     </div>
-                </div>
+                ` : ''}
             </div>
-            ${!isPastDate ? `
-                <div class="flex space-x-2">
-                    <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
-                            class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition"
-                            title="Editar completo">
-                        <i class="fas fa-edit text-sm"></i>
-                    </button>
-                    <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
-                            class="text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50 transition">
-                        <i class="fas fa-trash text-sm"></i>
-                    </button>
-                </div>
-            ` : ''}
         </div>
     `;
 }
-
 
 function createTaskElement( task, dateStr ) {
     const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
@@ -1277,6 +1283,9 @@ function createTaskElement( task, dateStr ) {
     `;
 }
 
+function getTasks() {
+    return JSON.parse( localStorage.getItem( 'tasks' ) ) || {};
+}
 
 function updatePanelProgress( dayTasks ) {
     const progressBar = document.getElementById( 'panelProgressBar' );
@@ -1355,7 +1364,7 @@ function deleteTaskFromPanel( dateStr, taskId ) {
     }
 }
 
-// ✅ NUEVA: Función para cambiar estados de tarea
+// Función para cambiar estados de tarea
 function toggleTaskState( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
     if ( !task ) return;
@@ -1389,90 +1398,78 @@ function toggleTaskState( dateStr, taskId ) {
     showNotification( `Tarea cambiada a: ${stateInfo.label}`, 'success' );
 }
 
-// ✅ NUEVA: Modal de edición avanzada
+// Modal de edición avanzada
 function showAdvancedEditModal( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
-    if ( !task ) return;
+    if ( !task ) {
+        showNotification( 'Tarea no encontrada', 'error' );
+        return;
+    }
 
-    currentEditingTask = taskId;
-    currentEditingDate = dateStr;
+    if ( isDatePast( dateStr ) ) {
+        showNotification( 'No puedes editar tareas de fechas pasadas', 'error' );
+        return;
+    }
+
+    // Cerrar cualquier modal existente
+    closeAllModals();
 
     const modal = document.createElement( 'div' );
-    modal.id = 'advancedEditTaskModal';
+    modal.id = 'advancedEditModal';
     modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
 
     modal.innerHTML = `
-        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-semibold text-gray-800">
-                    <i class="fas fa-cogs text-blue-500 mr-2"></i>Editar Tarea Completa
+                    <i class="fas fa-edit text-blue-500 mr-2"></i>Editar Tarea
                 </h3>
-                <button onclick="closeAdvancedEditModal()" class="text-gray-500 hover:text-gray-700">
+                <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            
             <form id="advancedEditTaskForm" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Título</label>
-                    <input type="text" id="editAdvancedTaskTitle" value="${task.title}" required 
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Título <span class="text-red-500">*</span></label>
+                    <input type="text" id="advancedEditTaskTitle" value="${task.title || ''}" required 
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                 </div>
-                
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                    <textarea id="editAdvancedTaskDescription" rows="3" 
+                    <textarea id="advancedEditTaskDescription" rows="3" 
                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ''}</textarea>
                 </div>
-                
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
-                        <input type="time" id="editAdvancedTaskTime" value="${task.time || ''}" 
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
+                        <input type="time" id="advancedEditTaskTime" value="${task.time || ''}" required
                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                    
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad</label>
-                        <select id="editAdvancedTaskPriority" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="1" ${task.priority === 1 ? 'selected' : ''}>1 - Muy Importante</option>
-                            <option value="2" ${task.priority === 2 ? 'selected' : ''}>2 - Regular</option>
-                            <option value="3" ${task.priority === 3 ? 'selected' : ''}>3 - Medio-Bajo</option>
-                            <option value="4" ${task.priority === 4 ? 'selected' : ''}>4 - No Prioritario</option>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
+                        <select id="advancedEditTaskPriority" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="" disabled>Selecciona una prioridad</option>
+                            <option value="1" ${task.priority === 1 ? 'selected' : ''}>🔴 Muy Importante</option>
+                            <option value="2" ${task.priority === 2 ? 'selected' : ''}>🟠 Regular</option>
+                            <option value="3" ${task.priority === 3 ? 'selected' : ''}>🔵 Medio-Bajo</option>
+                            <option value="4" ${task.priority === 4 ? 'selected' : ''}>⚫ No Prioritario</option>
                         </select>
                     </div>
                 </div>
-                
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Estado</label>
-                    <div class="grid grid-cols-3 gap-2">
-                        <button type="button" onclick="selectTaskState('pending')" 
-                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'pending' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
-                                data-state="pending">
-                            <i class="fas fa-clock text-gray-600 mb-1"></i>
-                            <div class="text-xs font-medium">Pendiente</div>
-                        </button>
-                        <button type="button" onclick="selectTaskState('inProgress')" 
-                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'inProgress' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
-                                data-state="inProgress">
-                            <i class="fas fa-spinner text-yellow-600 mb-1"></i>
-                            <div class="text-xs font-medium">En Proceso</div>
-                        </button>
-                        <button type="button" onclick="selectTaskState('completed')" 
-                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'completed' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
-                                data-state="completed">
-                            <i class="fas fa-check text-green-600 mb-1"></i>
-                            <div class="text-xs font-medium">Completada</div>
-                        </button>
-                    </div>
-                    <input type="hidden" id="editAdvancedTaskState" value="${task.state}">
+                    <select id="advancedEditTaskState" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="pending" ${( task.state === 'pending' || !task.state ) ? 'selected' : ''}>Pendiente</option>
+                        <option value="inProgress" ${task.state === 'inProgress' ? 'selected' : ''}>En Proceso</option>
+                        <option value="completed" ${task.state === 'completed' ? 'selected' : ''}>Completada</option>
+                    </select>
                 </div>
-                
                 <div class="flex space-x-3 pt-4 border-t">
                     <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
                         <i class="fas fa-save mr-2"></i>Guardar Cambios
                     </button>
-                    <button type="button" onclick="closeAdvancedEditModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                    <button type="button" onclick="closeAllModals()" 
+                            class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
                         Cancelar
                     </button>
                 </div>
@@ -1481,10 +1478,80 @@ function showAdvancedEditModal( dateStr, taskId ) {
     `;
 
     document.body.appendChild( modal );
-    document.getElementById( 'advancedEditTaskForm' ).addEventListener( 'submit', updateAdvancedTask );
+
+    // Event listener para el formulario
+    document.getElementById( 'advancedEditTaskForm' ).addEventListener( 'submit', ( e ) => {
+        e.preventDefault();
+        updateAdvancedTaskFromPanel( dateStr, taskId );
+    } );
 }
 
-// ✅ NUEVA: Función para seleccionar estado en el modal
+// NUEVA función para actualizar tareas desde el panel
+function updateAdvancedTaskFromPanel( dateStr, taskId ) {
+    const title = document.getElementById( 'advancedEditTaskTitle' ).value.trim();
+    const description = document.getElementById( 'advancedEditTaskDescription' ).value.trim();
+    const time = document.getElementById( 'advancedEditTaskTime' ).value;
+    const priority = parseInt( document.getElementById( 'advancedEditTaskPriority' ).value );
+    const state = document.getElementById( 'advancedEditTaskState' ).value;
+
+    if ( !title || !time || !priority ) {
+        showNotification( 'Por favor completa todos los campos obligatorios', 'error' );
+        return;
+    }
+
+    // Encontrar la tarea en el almacenamiento
+    if ( !tasks[ dateStr ] ) {
+        showNotification( 'Error: No se encontró la fecha de la tarea', 'error' );
+        return;
+    }
+
+    const taskIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
+    if ( taskIndex === -1 ) {
+        showNotification( 'Error: No se encontró la tarea', 'error' );
+        return;
+    }
+
+    // Actualizar la tarea manteniendo el ID original
+    const updatedTask = {
+        ...tasks[ dateStr ][ taskIndex ],
+        title: title,
+        description: description,
+        time: time,
+        priority: priority,
+        state: state,
+        completed: state === 'completed'
+    };
+
+    // Guardar la tarea actualizada
+    tasks[ dateStr ][ taskIndex ] = updatedTask;
+
+    // Persistir cambios
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    enqueueSync( 'upsert', dateStr, updatedTask );
+
+    // Cerrar modal y actualizar UI
+    closeAllModals();
+    showNotification( 'Tarea actualizada exitosamente', 'success' );
+
+    // Actualizar panel si está abierto para esta fecha
+    if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( dateStr, day );
+    }
+
+    // Limpiar notificaciones si la tarea se marca como completada
+    if ( state === 'completed' ) {
+        clearTaskNotifications( taskId );
+    }
+}
+
+function saveTasks() {
+    localStorage.setItem( 'tasks', JSON.stringify( getTasks() ) );
+}
+
+// Función para seleccionar estado en el modal
 function selectTaskState( state ) {
     document.querySelectorAll( '.state-btn' ).forEach( btn => {
         btn.className = btn.className.replace( ' border-blue-500 bg-blue-50', ' border-gray-300' );
@@ -1496,7 +1563,7 @@ function selectTaskState( state ) {
     document.getElementById( 'editAdvancedTaskState' ).value = state;
 }
 
-// ✅ NUEVA: Actualizar tarea con todos los campos
+// Actualizar tarea con todos los campos
 function updateAdvancedTask( e ) {
     e.preventDefault();
     if ( !currentEditingTask || !currentEditingDate ) return;
@@ -1530,7 +1597,7 @@ function updateAdvancedTask( e ) {
     }
 }
 
-// ✅ NUEVA: Cerrar modal avanzado
+// Cerrar modal avanzado
 function closeAdvancedEditModal() {
     const modal = document.getElementById( 'advancedEditTaskModal' );
     modal?.remove();
@@ -1538,61 +1605,150 @@ function closeAdvancedEditModal() {
     currentEditingDate = null;
 }
 
-// ✅ NUEVA: Edición rápida mejorada
+// Edición rápida mejorada
 function quickEditTaskAdvanced( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
-    if ( !task ) return;
+    if ( !task ) {
+        showNotification( 'Tarea no encontrada', 'error' );
+        return;
+    }
+
+    if ( isDatePast( dateStr ) ) {
+        showNotification( 'No puedes editar tareas de fechas pasadas', 'error' );
+        return;
+    }
+
+    // Cerrar cualquier modal existente
+    closeAllModals();
 
     const modal = document.createElement( 'div' );
+    modal.id = 'quickEditModal';
     modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
     modal.innerHTML = `
         <div class="bg-white rounded-lg p-4 max-w-sm w-full">
-            <h4 class="font-medium mb-3">Edición Rápida</h4>
-            <div class="space-y-3">
-                <input type="text" id="quickEditTitle" value="${task.title}" 
-                       class="w-full px-3 py-2 border rounded-lg" placeholder="Título">
-                <input type="time" id="quickEditTime" value="${task.time || ''}" 
-                       class="w-full px-3 py-2 border rounded-lg">
-                <select id="quickEditPriority" class="w-full px-3 py-2 border rounded-lg">
-                    <option value="1" ${task.priority === 1 ? 'selected' : ''}>1 - Muy Importante</option>
-                    <option value="2" ${task.priority === 2 ? 'selected' : ''}>2 - Regular</option>
-                    <option value="3" ${task.priority === 3 ? 'selected' : ''}>3 - Medio-Bajo</option>
-                    <option value="4" ${task.priority === 4 ? 'selected' : ''}>4 - No Prioritario</option>
-                </select>
-                <div class="flex space-x-2">
-                    <button onclick="saveQuickEdit('${dateStr}', '${taskId}')" 
-                            class="flex-1 bg-blue-500 text-white py-2 rounded-lg">Guardar</button>
-                    <button onclick="this.closest('.fixed').remove()" 
-                            class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg">Cancelar</button>
+            <h4 class="font-medium mb-3"><i class="fas fa-edit text-blue-500 mr-2"></i>Edición Rápida</h4>
+            <form id="quickEditForm" class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Título <span class="text-red-500">*</span></label>
+                    <input type="text" id="quickEditTitle" value="${task.title}" required
+                           class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                 </div>
-            </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
+                    <textarea id="quickEditDescription" rows="3" 
+                              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ''}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
+                    <input type="time" id="quickEditTime" value="${task.time || ''}" required
+                           class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
+                    <select id="quickEditPriority" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="" disabled>Selecciona una prioridad</option>
+                        <option value="1" ${task.priority === 1 ? 'selected' : ''}>🔴 Muy Importante</option>
+                        <option value="2" ${task.priority === 2 ? 'selected' : ''}>🟠 Regular</option>
+                        <option value="3" ${task.priority === 3 ? 'selected' : ''}>🔵 Medio-Bajo</option>
+                        <option value="4" ${task.priority === 4 ? 'selected' : ''}>⚫ No Prioritario</option>
+                    </select>
+                </div>
+                <div class="flex space-x-2">
+                    <button type="submit" class="flex-1 bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-700 transition">
+                        <i class="fas fa-save mr-2"></i>Guardar
+                    </button>
+                    <button type="button" onclick="closeAllModals()" 
+                            class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
         </div>
     `;
 
     document.body.appendChild( modal );
+
+    // Event listener para el formulario
+    document.getElementById( 'quickEditForm' ).addEventListener( 'submit', ( e ) => {
+        e.preventDefault();
+        saveQuickEditImproved( dateStr, taskId );
+    } );
 }
 
-// ✅ NUEVA: Guardar edición rápida
+function saveQuickEditImproved( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) {
+        showNotification( 'Error: No se encontró la tarea', 'error' );
+        return;
+    }
+
+    const newTitle = document.getElementById( 'quickEditTitle' ).value.trim();
+    const newDescription = document.getElementById( 'quickEditDescription' ).value.trim();
+    const newTime = document.getElementById( 'quickEditTime' ).value;
+    const newPriority = parseInt( document.getElementById( 'quickEditPriority' ).value );
+
+    if ( !newTitle || !newTime || !newPriority ) {
+        showNotification( 'Por favor completa todos los campos obligatorios', 'error' );
+        return;
+    }
+
+    // Actualizar la tarea
+    task.title = newTitle;
+    task.description = newDescription;
+    task.time = newTime;
+    task.priority = newPriority;
+
+    // Persistir cambios
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    enqueueSync( 'upsert', dateStr, task );
+
+    // Cerrar modal y mostrar notificación
+    closeAllModals();
+    showNotification( 'Tarea actualizada exitosamente', 'success' );
+
+    // Actualizar panel si está abierto
+    if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( dateStr, day );
+    }
+}
+
+// Guardar edición rápida
 function saveQuickEdit( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
     if ( !task ) return;
 
     const newTitle = document.getElementById( 'quickEditTitle' ).value.trim();
+    const newDescription = document.getElementById( 'quickEditDescription' ).value.trim();  // Nuevo: Guardar descripción
     const newTime = document.getElementById( 'quickEditTime' ).value;
     const newPriority = parseInt( document.getElementById( 'quickEditPriority' ).value );
 
-    if ( newTitle ) {
-        task.title = newTitle;
-        task.time = newTime;
-        task.priority = newPriority;
+    if ( !newTitle || !newTime || !newPriority ) {
+        showNotification( 'Por favor completa todos los campos obligatorios', 'error' );
+        return;
+    }
 
-        saveTasks();
-        renderCalendar();
-        updateProgress();
-        enqueueSync( 'upsert', dateStr, task );
+    task.title = newTitle;
+    task.description = newDescription;  // Nuevo: Actualizar descripción
+    task.time = newTime;
+    task.priority = newPriority;
 
-        showNotification( 'Tarea actualizada', 'success' );
-        document.querySelector( '.fixed.inset-0' ).remove();
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    enqueueSync( 'upsert', dateStr, task );
+
+    showNotification( 'Tarea actualizada exitosamente', 'success' );
+    const modal = document.getElementById( 'quickAddTaskModal' );  // Cerrar modal explícitamente
+    if ( modal ) modal.remove();  // Asegura cierre automático al guardar
+
+    // Actualizar panel si está abierto
+    if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( dateStr, day );  // Refresca el panel para mostrar la descripción actualizada
     }
 }
 
@@ -1605,30 +1761,7 @@ function addQuickTaskToSelectedDay() {
         return;
     }
 
-    const date = new Date( selectedDateForPanel + 'T12:00:00' );
-    const title = prompt( `tarea para ${date.toLocaleDateString( 'es-ES' )}:` );
-    if ( title?.trim() ) {
-        const task = {
-            id: `${selectedDateForPanel}-${Date.now()}`,
-            title: title.trim(),
-            description: '',
-            time: '',
-            completed: false
-        };
-
-        addTaskToDate( selectedDateForPanel, task );
-        saveTasks();
-        renderCalendar();
-        updateProgress();
-
-        // Auto-sync
-        enqueueSync( 'upsert', selectedDateForPanel, task );
-
-        const day = date.getDate();
-        showDailyTaskPanel( selectedDateForPanel, day );
-
-        showNotification( 'Tarea agregada exitosamente', 'success' );
-    }
+    showQuickAddTask( selectedDateForPanel );
 }
 
 function closeDailyTaskPanel() {
@@ -1672,14 +1805,86 @@ function showQuickAddTask( dateStr ) {
         return;
     }
 
-    const date = new Date( dateStr + 'T12:00:00' );
-    const title = prompt( 'tarea para ' + date.toLocaleDateString( 'es-ES' ) + ':' );
-    if ( title?.trim() ) {
+    // Cerrar cualquier modal existente
+    closeAllModals();
+
+    const modal = document.createElement( 'div' );
+    modal.id = 'quickAddTaskModal';
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-plus text-green-500 mr-2"></i>Agregar Nueva Tarea
+                </h3>
+                <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="quickAddTaskForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Título <span class="text-red-500">*</span></label>
+                    <input type="text" id="quickAddTaskTitle" required 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
+                    <textarea id="quickAddTaskDescription" rows="3" 
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
+                        <input type="time" id="quickAddTaskTime" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
+                        <select id="quickAddTaskPriority" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                            <option value="" disabled selected>Selecciona una prioridad</option>
+                            <option value="1">🔴 Muy Importante</option>
+                            <option value="2">🟠 Regular</option>
+                            <option value="3">🔵 Medio-Bajo</option>
+                            <option value="4">⚫ No Prioritario</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex space-x-3 pt-4 border-t">
+                    <button type="submit" class="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition">
+                        <i class="fas fa-save mr-2"></i>Agregar Tarea
+                    </button>
+                    <button type="button" onclick="closeAllModals()" 
+                            class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    document.body.appendChild( modal );
+
+    // Event listener para el formulario
+    document.getElementById( 'quickAddTaskForm' ).addEventListener( 'submit', ( e ) => {
+        e.preventDefault();
+        const title = document.getElementById( 'quickAddTaskTitle' ).value.trim();
+        const description = document.getElementById( 'quickAddTaskDescription' ).value.trim();
+        const time = document.getElementById( 'quickAddTaskTime' ).value;
+        const priority = parseInt( document.getElementById( 'quickAddTaskPriority' ).value );
+
+        if ( !title || !time || !priority ) {
+            showNotification( 'Por favor completa todos los campos obligatorios', 'error' );
+            return;
+        }
+
         const task = {
             id: `${dateStr}-${Date.now()}`,
-            title: title.trim(),
-            description: '',
-            time: '',
+            title,
+            description,
+            time,
+            priority,
+            state: 'pending',
             completed: false
         };
 
@@ -1687,12 +1892,44 @@ function showQuickAddTask( dateStr ) {
         saveTasks();
         renderCalendar();
         updateProgress();
-        showNotification( 'Tarea agregada rápidamente', 'success' );
-
-        // Auto-sync
         enqueueSync( 'upsert', dateStr, task );
-    }
+
+        closeAllModals();
+        showNotification( 'Tarea agregada exitosamente', 'success' );
+
+        // Actualizar panel si está abierto
+        if ( selectedDateForPanel === dateStr ) {
+            const day = new Date( dateStr + 'T12:00:00' ).getDate();
+            showDailyTaskPanel( dateStr, day );
+        }
+    } );
 }
+
+// NUEVA función para cerrar todos los modales
+function closeAllModals() {
+    const modals = [
+        'advancedEditModal',
+        'quickEditModal',
+        'quickAddTaskModal',
+        'editTaskModal',
+        'taskModal'
+    ];
+
+    modals.forEach( modalId => {
+        const modal = document.getElementById( modalId );
+        if ( modal ) {
+            modal.remove();
+        }
+    } );
+
+    // También cerrar modales por clase
+    document.querySelectorAll( '.fixed.inset-0.bg-black.bg-opacity-50' ).forEach( modal => {
+        modal.remove();
+    } );
+}
+
+
+
 
 function setupTaskTooltips() {
     let tooltip = createTaskTooltip();
