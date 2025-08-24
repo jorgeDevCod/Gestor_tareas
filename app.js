@@ -26,6 +26,7 @@ let syncInProgress = false;
 let selectedDateForPanel = null;
 let notificationInterval = null;
 
+
 // ✅ CORREGIDO: Función única para obtener fecha actual en formato local
 function getTodayString() {
     const now = new Date();
@@ -284,26 +285,33 @@ async function syncFromFirebase() {
     if ( !currentUser || !isOnline || syncInProgress ) return;
 
     syncInProgress = true;
+    updateSyncButtonState();
     showFirebaseStatus( 'Descargando...', 'syncing' );
 
     try {
         const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
         const snapshot = await userTasksRef.get();
 
-        const firebaseTasks = {};
-        const firebaseTaskIds = new Set();
+        if ( snapshot.empty ) {
+            console.log( 'No hay tareas remotas para sincronizar' );
+            lastTasksSnapshot = generateTasksSnapshot();
+            syncButtonBlocked = true;
+            showFirebaseStatus( 'Sincronizado', 'success' );
+            updateSyncButtonState();
+            return;
+        }
 
+        // Obtener tareas remotas
+        const remoteTasks = {};
         snapshot.forEach( doc => {
             const task = doc.data();
             const date = task.date;
 
-            firebaseTaskIds.add( `${date}_${task.id}` );
-
-            if ( !firebaseTasks[ date ] ) {
-                firebaseTasks[ date ] = [];
+            if ( !remoteTasks[ date ] ) {
+                remoteTasks[ date ] = [];
             }
 
-            firebaseTasks[ date ].push( {
+            remoteTasks[ date ].push( {
                 id: task.id,
                 title: task.title,
                 description: task.description || '',
@@ -312,37 +320,42 @@ async function syncFromFirebase() {
             } );
         } );
 
-        Object.keys( tasks ).forEach( date => {
-            tasks[ date ] = tasks[ date ].filter( localTask => {
-                const taskKey = `${date}_${localTask.id}`;
-                return firebaseTaskIds.has( taskKey );
-            } );
-
-            if ( tasks[ date ].length === 0 ) {
-                delete tasks[ date ];
-            }
-        } );
-
-        Object.keys( firebaseTasks ).forEach( date => {
+        // Solo agregar tareas que no existen localmente
+        let tasksAdded = 0;
+        Object.keys( remoteTasks ).forEach( date => {
             if ( !tasks[ date ] ) {
                 tasks[ date ] = [];
             }
 
-            firebaseTasks[ date ].forEach( firebaseTask => {
-                const existingTaskIndex = tasks[ date ].findIndex( t => t.id === firebaseTask.id );
-                if ( existingTaskIndex === -1 ) {
-                    tasks[ date ].push( firebaseTask );
-                } else {
-                    tasks[ date ][ existingTaskIndex ] = { ...tasks[ date ][ existingTaskIndex ], ...firebaseTask };
+            remoteTasks[ date ].forEach( remoteTask => {
+                // Verificar si la tarea ya existe localmente
+                const existsLocally = tasks[ date ].some( localTask =>
+                    localTask.id === remoteTask.id ||
+                    ( localTask.title === remoteTask.title && localTask.time === remoteTask.time )
+                );
+
+                // Solo agregar si no existe localmente
+                if ( !existsLocally ) {
+                    tasks[ date ].push( remoteTask );
+                    tasksAdded++;
                 }
             } );
         } );
 
-        saveTasks();
-        renderCalendar();
-        updateProgress();
+        if ( tasksAdded > 0 ) {
+            saveTasks();
+            renderCalendar();
+            updateProgress();
+            showNotification( `${tasksAdded} tareas nuevas sincronizadas`, 'success' );
+        } else {
+            showNotification( 'Tareas ya están actualizadas', 'info' );
+        }
 
-        // Reiniciar notificaciones después de sincronizar
+        lastTasksSnapshot = generateTasksSnapshot();
+        syncButtonBlocked = true;
+        showFirebaseStatus( 'Sincronizado', 'success' );
+
+        // Reiniciar notificaciones si están habilitadas
         if ( notificationsEnabled && Notification.permission === 'granted' ) {
             stopNotificationService();
             setTimeout( () => {
@@ -350,17 +363,15 @@ async function syncFromFirebase() {
             }, 1000 );
         }
 
-        showFirebaseStatus( 'Sincronizado', 'success' );
-        showNotification( 'Tareas sincronizadas', 'success' );
-
     } catch ( error ) {
         console.error( 'Error syncing from Firebase:', error );
         showFirebaseStatus( 'Error al descargar', 'error' );
         showNotification( 'Error al sincronizar', 'error' );
     } finally {
         syncInProgress = false;
+        updateSyncButtonState();
     }
-}
+}}
 
 async function deleteTaskFromFirebase( dateStr, taskId ) {
     if ( !currentUser || !isOnline ) return;
