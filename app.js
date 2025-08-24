@@ -22,12 +22,395 @@ let isOnline = navigator.onLine;
 let currentUser = null;
 let db = null;
 let auth = null;
-let syncInProgress = false;
 let selectedDateForPanel = null;
 let notificationInterval = null;
+let lastNotificationCheck = 0;
+let sentNotifications = new Set();
+let notificationStatus = {
+    morning: false,
+    midday: false,
+    evening: false,
+    taskReminders: new Set()
+};
 
+// Sistema de sincronización automática optimizada
+let syncQueue = new Map(); // Cola de operaciones pendientes
+let syncTimeout = null;    // Timeout para batch sync
+let isSyncing = false;     // Flag para evitar múltiples syncs
+let lastSyncTime = 0;      // Timestamp del último sync
+const SYNC_DEBOUNCE_TIME = 2000; // 2 segundos de debounce
+const MIN_SYNC_INTERVAL = 5000;  // Mínimo 5 segundos entre syncs
 
-// ✅ CORREGIDO: Función única para obtener fecha actual en formato local
+// constantes para estados y prioridades
+const TASK_STATES = {
+    pending: { label: 'Pendiente', class: 'bg-gray-200 text-gray-800', icon: 'fa-clock' },
+    inProgress: { label: 'En Proceso', class: 'bg-yellow-200 text-yellow-800', icon: 'fa-spinner' },
+    completed: { label: 'Completada', class: 'bg-green-200 text-green-800', icon: 'fa-check' }
+};
+
+const PRIORITY_LEVELS = {
+    1: { label: 'Muy Importante', class: 'bg-red-500 text-white', color: '#EF4444' },
+    2: { label: 'Regular', class: 'bg-orange-400 text-white', color: '#F97316' },
+    3: { label: 'Medio-Bajo', class: 'bg-blue-400 text-white', color: '#3B82F6' },
+    4: { label: 'No Prioritario', class: 'bg-gray-400 text-white', color: '#6B7280' }
+};
+
+//Encolar operaciones para sync automático
+function enqueueSync( operation, dateStr, task = null ) {
+    if ( !currentUser || !isOnline ) return;
+
+    const operationKey = `${dateStr}_${task?.id || 'batch'}`;
+
+    syncQueue.set( operationKey, {
+        operation,
+        dateStr,
+        task: task ? { ...task } : null,
+        timestamp: Date.now()
+    } );
+
+    // Cancelar timeout anterior si existe
+    if ( syncTimeout ) {
+        clearTimeout( syncTimeout );
+    }
+
+    // Programar sync con debounce
+    syncTimeout = setTimeout( () => {
+        processSyncQueue();
+    }, SYNC_DEBOUNCE_TIME );
+
+    updateSyncIndicator( 'pending' );
+}
+
+//Procesar cola de sincronización
+async function processSyncQueue() {
+    if ( !currentUser || !isOnline || isSyncing || syncQueue.size === 0 ) {
+        return;
+    }
+
+    // Verificar intervalo mínimo entre syncs
+    const now = Date.now();
+    if ( now - lastSyncTime < MIN_SYNC_INTERVAL ) {
+        // Re-programar sync
+        syncTimeout = setTimeout( () => {
+            processSyncQueue();
+        }, MIN_SYNC_INTERVAL - ( now - lastSyncTime ) );
+        return;
+    }
+
+    isSyncing = true;
+    updateSyncIndicator( 'syncing' );
+
+    try {
+        const operations = Array.from( syncQueue.values() );
+        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+        const batch = db.batch();
+
+        let operationsCount = 0;
+
+        for ( const op of operations ) {
+            const taskDocId = `${op.dateStr}_${op.task?.id}`;
+            const taskRef = userTasksRef.doc( taskDocId );
+
+            switch ( op.operation ) {
+                case 'upsert':
+                    if ( op.task ) {
+                        batch.set( taskRef, {
+                            ...op.task,
+                            date: op.dateStr,
+                            lastModified: new Date()
+                        }, { merge: true } );
+                        operationsCount++;
+                    }
+                    break;
+
+                case 'delete':
+                    batch.delete( taskRef );
+                    operationsCount++;
+                    break;
+            }
+        }
+
+        if ( operationsCount > 0 ) {
+            await batch.commit();
+            console.log( `Sincronizadas ${operationsCount} operaciones` );
+
+            // Solo mostrar notificación si hay muchas operaciones
+            if ( operationsCount >= 5 ) {
+                showNotification( `${operationsCount} cambios sincronizados`, 'success' );
+            }
+        }
+
+        // Limpiar cola
+        syncQueue.clear();
+        lastSyncTime = Date.now();
+        updateSyncIndicator( 'success' );
+
+    } catch ( error ) {
+        console.error( '❌ Error en sync automático:', error );
+        updateSyncIndicator( 'error' );
+
+        // Re-intentar después de un tiempo
+        setTimeout( () => {
+            processSyncQueue();
+        }, 10000 );
+    } finally {
+        isSyncing = false;
+    }
+}
+
+//indicador visual de sync
+function updateSyncIndicator( status ) {
+    const statusEl = document.getElementById( 'firebaseStatus' );
+    const iconEl = document.getElementById( 'statusIcon' );
+    const textEl = document.getElementById( 'statusText' );
+
+    if ( !statusEl || !iconEl || !textEl ) return;
+
+    const statusConfig = {
+        success: {
+            class: 'bg-green-500 text-white',
+            icon: 'fa-check-circle',
+            text: 'Sincronizado'
+        },
+        error: {
+            class: 'bg-red-500 text-white',
+            icon: 'fa-exclamation-triangle',
+            text: 'Error de sync'
+        },
+        syncing: {
+            class: 'bg-blue-500 text-white',
+            icon: 'fa-sync-alt fa-spin',
+            text: 'Sincronizando...'
+        },
+        pending: {
+            class: 'bg-orange-500 text-white',
+            icon: 'fa-clock',
+            text: 'Cambios pendientes'
+        },
+        offline: {
+            class: 'bg-gray-500 text-white',
+            icon: 'fa-wifi',
+            text: 'Sin conexión'
+        }
+    };
+
+    const config = statusConfig[ status ] || statusConfig.offline;
+
+    statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
+    iconEl.className = `fas ${config.icon} mr-2`;
+    textEl.textContent = config.text;
+    statusEl.classList.remove( 'hidden' );
+
+    // Auto-ocultar después de 3 segundos (excepto offline y pending)
+    if ( ![ 'offline', 'pending' ].includes( status ) ) {
+        setTimeout( () => {
+            if ( textEl.textContent === config.text ) { // Solo ocultar si no cambió
+                statusEl.classList.add( 'hidden' );
+            }
+        }, 3000 );
+    }
+}
+
+//Sync manual mejorado (mantener para botón)
+async function syncToFirebase() {
+    if (!currentUser || !isOnline) {
+        showNotification('No hay conexión disponible', 'error');
+        return;
+    }
+
+    if (isSyncing) {
+        showNotification('Sincronización en progreso...', 'info');
+        return;
+    }
+
+    const syncBtn = document.getElementById('syncBtn');
+    const originalHTML = syncBtn ? syncBtn.innerHTML : '';
+    
+    try {
+        // Cambiar visual del botón
+        if (syncBtn) {
+            syncBtn.disabled = true;
+            syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sincronizando...';
+        }
+
+        // Primero procesar cola pendiente
+        if (syncQueue.size > 0) {
+            console.log('🔄 Procesando cola pendiente antes del sync manual');
+            await processSyncQueue();
+        }
+
+        // Hacer sync completo bidireccional
+        isSyncing = true;
+        updateSyncIndicator('syncing');
+
+        // 1. Sync local → remoto (subir cambios)
+        const userTasksRef = db.collection('users').doc(currentUser.uid).collection('tasks');
+        const allLocalTasks = [];
+
+        Object.entries(tasks).forEach(([date, dayTasks]) => {
+            dayTasks.forEach(task => {
+                allLocalTasks.push({
+                    ...task,
+                    date,
+                    lastModified: new Date()
+                });
+            });
+        });
+
+        if (allLocalTasks.length > 0) {
+            const uploadBatch = db.batch();
+            allLocalTasks.forEach(task => {
+                const taskRef = userTasksRef.doc(`${task.date}_${task.id}`);
+                uploadBatch.set(taskRef, task, { merge: true });
+            });
+
+            await uploadBatch.commit();
+            console.log(`📤 ${allLocalTasks.length} tareas locales subidas`);
+        }
+
+        // 2. Sync remoto → local (bajar cambios)
+        const snapshot = await userTasksRef.get();
+        let tasksDownloaded = 0;
+
+        if (!snapshot.empty) {
+            const remoteTasks = {};
+            snapshot.forEach(doc => {
+                const task = doc.data();
+                const date = task.date;
+
+                if (!remoteTasks[date]) {
+                    remoteTasks[date] = [];
+                }
+
+                remoteTasks[date].push({
+                    id: task.id,
+                    title: task.title,
+                    description: task.description || '',
+                    time: task.time || '',
+                    completed: task.completed || false
+                });
+            });
+
+            // Mergear con tareas locales
+            Object.keys(remoteTasks).forEach(date => {
+                if (!tasks[date]) {
+                    tasks[date] = [];
+                }
+
+                remoteTasks[date].forEach(remoteTask => {
+                    const existsLocally = tasks[date].some(localTask =>
+                        localTask.id === remoteTask.id ||
+                        (localTask.title === remoteTask.title && localTask.time === remoteTask.time)
+                    );
+
+                    if (!existsLocally) {
+                        tasks[date].push(remoteTask);
+                        tasksDownloaded++;
+                    }
+                });
+            });
+
+            if (tasksDownloaded > 0) {
+                saveTasks();
+                renderCalendar();
+                updateProgress();
+            }
+        }
+
+        updateSyncIndicator('success');
+        
+        const totalSynced = allLocalTasks.length + tasksDownloaded;
+        if (totalSynced > 0) {
+            showNotification(
+                `Sincronización completa: ${allLocalTasks.length} subidas, ${tasksDownloaded} descargadas`, 
+                'success'
+            );
+        } else {
+            showNotification('Todo está sincronizado', 'success');
+        }
+
+        // Reiniciar notificaciones si están habilitadas
+        if (notificationsEnabled && Notification.permission === 'granted') {
+            stopNotificationService();
+            setTimeout(() => startNotificationService(), 1000);
+        }
+
+    } catch (error) {
+        console.error('Error en sync manual:', error);
+        updateSyncIndicator('error');
+        showNotification('Error en sincronización: ' + error.message, 'error');
+    } finally {
+        isSyncing = false;
+        
+        // Restaurar botón
+        if (syncBtn) {
+            syncBtn.disabled = false;
+            syncBtn.innerHTML = originalHTML || '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
+        }
+    }
+}
+
+// función para mostrar estadísticas de sync (OPCIONAL)
+function showSyncStats() {
+    const totalTasks = Object.values(tasks).reduce((sum, dayTasks) => sum + dayTasks.length, 0);
+    const pendingOps = syncQueue.size;
+    const lastSync = lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Nunca';
+    
+    const statsModal = document.createElement('div');
+    statsModal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+    statsModal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-chart-bar text-blue-500 mr-2"></i>Estadísticas de Sync
+                </h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-sm">
+                <div class="flex justify-between">
+                    <span>Total de tareas:</span>
+                    <span class="font-medium">${totalTasks}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Operaciones pendientes:</span>
+                    <span class="font-medium ${pendingOps > 0 ? 'text-orange-600' : 'text-green-600'}">${pendingOps}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Última sincronización:</span>
+                    <span class="font-medium">${lastSync}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Estado de conexión:</span>
+                    <span class="font-medium ${isOnline ? 'text-green-600' : 'text-red-600'}">
+                        ${isOnline ? 'Conectado' : 'Desconectado'}
+                    </span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Usuario activo:</span>
+                    <span class="font-medium ${currentUser ? 'text-green-600' : 'text-red-600'}">
+                        ${currentUser ? 'Sí' : 'No'}
+                    </span>
+                </div>
+            </div>
+            <div class="mt-6 flex space-x-3">
+                <button onclick="syncToFirebase(); this.closest('.fixed').remove();" 
+                        class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+                    <i class="fas fa-sync-alt mr-2"></i>Sync Ahora
+                </button>
+                <button onclick="this.closest('.fixed').remove()" 
+                        class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(statsModal);
+}
+
+// FUNCIÓN única para obtener fecha actual en formato local
 function getTodayString() {
     const now = new Date();
     const year = now.getFullYear();
@@ -36,12 +419,11 @@ function getTodayString() {
     return `${year}-${month}-${day}`;
 }
 
-// ✅ CORREGIDO: Función para comparar fechas correctamente
+// FUNCIÓN para comparar fechas correctamente
 function isDatePast( dateStr ) {
     const today = new Date();
     const checkDate = new Date( dateStr + 'T00:00:00' );
 
-    // Establecer ambas fechas a medianoche para comparación justa
     today.setHours( 0, 0, 0, 0 );
     checkDate.setHours( 0, 0, 0, 0 );
 
@@ -71,12 +453,10 @@ function setupDateInput() {
     if ( taskDateInput ) {
         const today = getTodayString();
         taskDateInput.setAttribute( 'min', today );
-        // Establecer fecha actual por defecto
         taskDateInput.value = today;
     }
 
     if ( taskTimeInput ) {
-        // Establecer hora actual por defecto
         const now = new Date();
         const currentHour = String( now.getHours() ).padStart( 2, '0' );
         const currentMinute = String( now.getMinutes() ).padStart( 2, '0' );
@@ -108,14 +488,14 @@ function initFirebase() {
             updateUI();
 
             if ( user ) {
-                showFirebaseStatus( 'Conectado', 'success' );
+                updateSyncIndicator( 'success' );
                 setTimeout( () => {
-                    if ( isOnline && !syncInProgress ) {
+                    if ( isOnline && !isSyncing ) {
                         syncFromFirebase();
                     }
                 }, 1000 );
             } else {
-                showFirebaseStatus( 'Desconectado', 'offline' );
+                updateSyncIndicator( 'offline' );
             }
         } );
 
@@ -123,7 +503,7 @@ function initFirebase() {
 
     } catch ( error ) {
         console.error( 'Error initializing Firebase:', error );
-        showFirebaseStatus( 'Error de conexión', 'error' );
+        updateSyncIndicator( 'error' );
         hideLoadingScreen();
     }
 }
@@ -146,15 +526,17 @@ function initNotifications() {
 function setupNetworkListeners() {
     window.addEventListener( 'online', () => {
         isOnline = true;
-        showFirebaseStatus( 'En línea', 'success' );
+        updateSyncIndicator( 'success' );
         if ( currentUser ) {
+            // Procesar cola pendiente al reconectar
+            setTimeout( () => processSyncQueue(), 1000 );
             syncFromFirebase();
         }
     } );
 
     window.addEventListener( 'offline', () => {
         isOnline = false;
-        showFirebaseStatus( 'Sin conexión', 'offline' );
+        updateSyncIndicator( 'offline' );
     } );
 }
 
@@ -164,34 +546,6 @@ function hideLoadingScreen() {
     setTimeout( () => {
         loadingScreen.style.display = 'none';
     }, 300 );
-}
-
-function showFirebaseStatus( text, type ) {
-    const statusEl = document.getElementById( 'firebaseStatus' );
-    const iconEl = document.getElementById( 'statusIcon' );
-    const textEl = document.getElementById( 'statusText' );
-
-    const statusConfig = {
-        success: { class: 'bg-green-500 text-white', icon: 'fa-check-circle' },
-        error: { class: 'bg-red-500 text-white', icon: 'fa-exclamation-triangle' },
-        offline: { class: 'bg-gray-500 text-white', icon: 'fa-wifi' },
-        syncing: { class: 'bg-blue-500 text-white', icon: 'fa-sync-alt fa-spin' }
-    };
-
-    const config = statusConfig[ type ] || statusConfig.offline;
-
-    statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
-    iconEl.className = `fas ${config.icon} mr-2`;
-    textEl.textContent = text;
-    statusEl.classList.remove( 'hidden' );
-
-    if ( type !== 'offline' ) {
-        setTimeout( () => {
-            if ( type !== 'syncing' ) {
-                statusEl.classList.add( 'hidden' );
-            }
-        }, 3000 );
-    }
 }
 
 function updateUI() {
@@ -242,51 +596,11 @@ function signOut() {
     }
 }
 
-async function syncToFirebase() {
-    if ( !currentUser || !isOnline || syncInProgress ) return;
-
-    syncInProgress = true;
-    showFirebaseStatus( 'Sincronizando...', 'syncing' );
-
-    try {
-        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
-
-        const allLocalTasks = [];
-        Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
-            dayTasks.forEach( task => {
-                allLocalTasks.push( {
-                    ...task,
-                    date,
-                    lastModified: new Date()
-                } );
-            } );
-        } );
-
-        const batch = db.batch();
-        allLocalTasks.forEach( task => {
-            const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
-            batch.set( taskRef, task, { merge: true } );
-        } );
-
-        await batch.commit();
-        showFirebaseStatus( 'Sincronizado', 'success' );
-        showNotification( 'Tareas sincronizadas', 'success' );
-
-    } catch ( error ) {
-        console.error( 'Error syncing to Firebase:', error );
-        showFirebaseStatus( 'Error al sincronizar', 'error' );
-        showNotification( 'Error al sincronizar con Firebase', 'error' );
-    } finally {
-        syncInProgress = false;
-    }
-}
-
 async function syncFromFirebase() {
-    if ( !currentUser || !isOnline || syncInProgress ) return;
+    if ( !currentUser || !isOnline || isSyncing ) return;
 
-    syncInProgress = true;
-    updateSyncButtonState();
-    showFirebaseStatus( 'Descargando...', 'syncing' );
+    isSyncing = true;
+    updateSyncIndicator( 'syncing' );
 
     try {
         const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
@@ -294,14 +608,10 @@ async function syncFromFirebase() {
 
         if ( snapshot.empty ) {
             console.log( 'No hay tareas remotas para sincronizar' );
-            lastTasksSnapshot = generateTasksSnapshot();
-            syncButtonBlocked = true;
-            showFirebaseStatus( 'Sincronizado', 'success' );
-            updateSyncButtonState();
+            updateSyncIndicator( 'success' );
             return;
         }
 
-        // Obtener tareas remotas
         const remoteTasks = {};
         snapshot.forEach( doc => {
             const task = doc.data();
@@ -320,7 +630,6 @@ async function syncFromFirebase() {
             } );
         } );
 
-        // Solo agregar tareas que no existen localmente
         let tasksAdded = 0;
         Object.keys( remoteTasks ).forEach( date => {
             if ( !tasks[ date ] ) {
@@ -328,13 +637,11 @@ async function syncFromFirebase() {
             }
 
             remoteTasks[ date ].forEach( remoteTask => {
-                // Verificar si la tarea ya existe localmente
                 const existsLocally = tasks[ date ].some( localTask =>
                     localTask.id === remoteTask.id ||
                     ( localTask.title === remoteTask.title && localTask.time === remoteTask.time )
                 );
 
-                // Solo agregar si no existe localmente
                 if ( !existsLocally ) {
                     tasks[ date ].push( remoteTask );
                     tasksAdded++;
@@ -346,16 +653,11 @@ async function syncFromFirebase() {
             saveTasks();
             renderCalendar();
             updateProgress();
-            showNotification( `${tasksAdded} tareas nuevas sincronizadas`, 'success' );
-        } else {
-            showNotification( 'Tareas ya están actualizadas', 'info' );
+            showNotification( `${tasksAdded} tareas sincronizadas`, 'success' );
         }
 
-        lastTasksSnapshot = generateTasksSnapshot();
-        syncButtonBlocked = true;
-        showFirebaseStatus( 'Sincronizado', 'success' );
+        updateSyncIndicator( 'success' );
 
-        // Reiniciar notificaciones si están habilitadas
         if ( notificationsEnabled && Notification.permission === 'granted' ) {
             stopNotificationService();
             setTimeout( () => {
@@ -365,48 +667,14 @@ async function syncFromFirebase() {
 
     } catch ( error ) {
         console.error( 'Error syncing from Firebase:', error );
-        showFirebaseStatus( 'Error al descargar', 'error' );
+        updateSyncIndicator( 'error' );
         showNotification( 'Error al sincronizar', 'error' );
     } finally {
-        syncInProgress = false;
-        updateSyncButtonState();
+        isSyncing = false;
     }
 }
 
-async function deleteTaskFromFirebase( dateStr, taskId ) {
-    if ( !currentUser || !isOnline ) return;
-
-    try {
-        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
-        const taskDocId = `${dateStr}_${taskId}`;
-
-        await userTasksRef.doc( taskDocId ).delete();
-        console.log( 'Tarea eliminada de Firebase:', taskDocId );
-    } catch ( error ) {
-        console.error( 'Error eliminando tarea de Firebase:', error );
-    }
-}
-
-async function syncTaskToFirebase( dateStr, task ) {
-    if ( !currentUser || !isOnline ) return;
-
-    try {
-        const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
-        const taskDocId = `${dateStr}_${task.id}`;
-
-        await userTasksRef.doc( taskDocId ).set( {
-            ...task,
-            date: dateStr,
-            lastModified: new Date()
-        }, { merge: true } );
-
-        console.log( 'Tarea sincronizada a Firebase:', taskDocId );
-    } catch ( error ) {
-        console.error( 'Error sincronizando tarea a Firebase:', error );
-    }
-}
-
-// ✅ MEJORADO: Configuración de eventos con botón reset
+// CONFIGURACIÓN de eventos con botón reset
 function setupEventListeners() {
     const elements = {
         'taskForm': addTask,
@@ -445,16 +713,14 @@ function setupEventListeners() {
         addQuickTaskBtn.addEventListener( 'click', addQuickTaskToSelectedDay );
     }
 
-    // Event listeners para configuración avanzada
     const repeatDurationSelect = document.getElementById( 'repeatDuration' );
     const customDaysInputs = document.querySelectorAll( '#customDays input[type="checkbox"]' );
-    const taskDateInput = document.getElementById( 'taskDate' ); // ✅ NUEVO
+    const taskDateInput = document.getElementById( 'taskDate' );
 
     if ( repeatDurationSelect ) {
         repeatDurationSelect.addEventListener( 'change', updateRepeatPreview );
     }
 
-    // ✅ NUEVO: Recalcular cuando cambie la fecha de inicio
     if ( taskDateInput ) {
         taskDateInput.addEventListener( 'change', updateRepeatPreview );
     }
@@ -464,37 +730,28 @@ function setupEventListeners() {
     } );
 }
 
-// Función para resetear formulario
 function resetForm() {
     const form = document.getElementById( 'taskForm' );
     const advancedConfig = document.getElementById( 'advancedRepeatConfig' );
     const customDays = document.getElementById( 'customDays' );
     const repeatDuration = document.getElementById( 'repeatDuration' );
 
-    // Resetear formulario
     form.reset();
-
-    // Ocultar configuración avanzada
     advancedConfig?.classList.add( 'hidden' );
     customDays?.classList.add( 'hidden' );
 
-    // Resetear duración a valor por defecto
     if ( repeatDuration ) {
-        repeatDuration.value = '2'; // Este mes y el siguiente
+        repeatDuration.value = '2';
     }
 
-    // Desmarcar todos los checkboxes de días personalizados
     const customDaysCheckboxes = document.querySelectorAll( '#customDays input[type="checkbox"]' );
     customDaysCheckboxes.forEach( checkbox => {
         checkbox.checked = false;
     } );
 
-    // Restablecer valores por defecto de fecha y hora
     setupDateInput();
-
     showNotification( 'Formulario reiniciado', 'info' );
 
-    // Auto-cerrar selector de hora
     const taskTimeInput = document.getElementById( 'taskTime' );
     if ( taskTimeInput ) {
         taskTimeInput.addEventListener( 'change', () => {
@@ -503,7 +760,6 @@ function resetForm() {
             }, 100 );
         } );
 
-        // Para cerrar con Enter
         taskTimeInput.addEventListener( 'keydown', ( e ) => {
             if ( e.key === 'Enter' ) {
                 taskTimeInput.blur();
@@ -511,7 +767,6 @@ function resetForm() {
         } );
     }
 
-    // Para inputs de tiempo dinámicos (como el modal de edición)
     document.addEventListener( 'change', ( e ) => {
         if ( e.target.type === 'time' ) {
             setTimeout( () => {
@@ -559,7 +814,6 @@ function toggleCustomDays() {
     }
 }
 
-// Actualizar vista previa de repetición
 function updateRepeatPreview() {
     const repeatType = document.getElementById( 'taskRepeat' ).value;
     const duration = document.getElementById( 'repeatDuration' ).value;
@@ -597,7 +851,6 @@ function updateRepeatPreview() {
         }
     }
 
-    // ✅ NUEVO: Cálculo preciso de tareas basado en fechas reales
     const approxTasks = calculateExactTaskCount( repeatType, parseInt( duration ), taskDate );
 
     if ( approxTasks > 0 ) {
@@ -607,28 +860,21 @@ function updateRepeatPreview() {
     previewText.textContent = preview;
 }
 
-// ✅ NUEVA: Función para calcular cantidad exacta de tareas
 function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
-    // Usar fecha actual si no hay fecha específica
     const startDate = startDateStr ? new Date( startDateStr + 'T00:00:00' ) : new Date();
 
-    // ✅ CORREGIDO: Calcular fecha final igual que en addRecurringTasks
     let endDate;
     if ( durationMonths === 1 ) {
-        // Solo este mes: hasta el último día del mes actual
         endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
     } else {
-        // Otros casos: agregar meses completos
         endDate = new Date( startDate );
         endDate.setMonth( endDate.getMonth() + durationMonths );
-        // Ajustar al último día del mes final
         endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
     }
 
     let count = 0;
     let currentDate = new Date( startDate );
 
-    // Obtener días seleccionados para opción custom
     let selectedDays = [];
     if ( repeatType === 'custom' ) {
         selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) )
@@ -636,7 +882,6 @@ function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
         if ( selectedDays.length === 0 ) return 0;
     }
 
-    // Contar día por día
     while ( currentDate <= endDate ) {
         const dayOfWeek = currentDate.getDay();
         let shouldCount = false;
@@ -659,7 +904,6 @@ function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
                 break;
         }
 
-        // Solo contar si no es fecha pasada
         const currentDateStr = currentDate.toISOString().split( 'T' )[ 0 ];
         if ( shouldCount && !isDatePast( currentDateStr ) ) {
             count++;
@@ -671,7 +915,7 @@ function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
     return count;
 }
 
-// ✅ CORREGIDO: Validación de fechas mejorada
+//addTask con sync automático
 function addTask( e ) {
     e.preventDefault();
 
@@ -680,12 +924,12 @@ function addTask( e ) {
         description: document.getElementById( 'taskDescription' ).value.trim(),
         date: document.getElementById( 'taskDate' ).value,
         time: document.getElementById( 'taskTime' ).value,
-        repeat: document.getElementById( 'taskRepeat' ).value
+        repeat: document.getElementById( 'taskRepeat' ).value,
+        priority: parseInt( document.getElementById( 'taskPriority' ).value ) || 3 // Por defecto: medio-bajo
     };
 
     if ( !formData.title ) return;
 
-    // ✅ CORREGIDO: Validación de fecha usando función local
     if ( formData.date && isDatePast( formData.date ) ) {
         showNotification( 'No puedes agregar tareas a fechas anteriores. Por favor selecciona hoy o una fecha futura.', 'error' );
         return;
@@ -696,11 +940,14 @@ function addTask( e ) {
         title: formData.title,
         description: formData.description,
         time: formData.time,
-        completed: false
+        priority: formData.priority,
+        state: 'pending', // Estado inicial
+        completed: false // Mantener para compatibilidad
     };
 
     if ( formData.date && formData.repeat === 'none' ) {
         addTaskToDate( formData.date, task );
+        enqueueSync( 'upsert', formData.date, task );
     } else if ( formData.repeat !== 'none' ) {
         const startDate = formData.date ? new Date( formData.date + 'T00:00:00' ) : new Date();
         addRecurringTasks( task, formData.repeat, startDate );
@@ -710,12 +957,8 @@ function addTask( e ) {
     renderCalendar();
     updateProgress();
     document.getElementById( 'taskForm' ).reset();
-    setupDateInput(); // 
+    setupDateInput();
     showNotification( 'Tarea agregada exitosamente' );
-
-    if ( currentUser && isOnline ) {
-        setTimeout( () => syncToFirebase(), 1000 );
-    }
 
     const advancedConfig = document.getElementById( 'advancedRepeatConfig' );
     const customDays = document.getElementById( 'customDays' );
@@ -724,25 +967,26 @@ function addTask( e ) {
     advancedConfig?.classList.add( 'hidden' );
     customDays?.classList.add( 'hidden' );
 
-    // Resetear duración a valor por defecto
     if ( repeatDuration ) {
         repeatDuration.value = '2';
     }
 
-    // Desmarcar checkboxes de días personalizados
-    const customDaysCheckboxes = document.querySelectorAll( '#customDays input[type="checkbox"]' );
-    customDaysCheckboxes.forEach( checkbox => {
-        checkbox.checked = false;
-    } );
+    // Reset priority to default
+    const prioritySelect = document.getElementById( 'taskPriority' );
+    if ( prioritySelect ) {
+        prioritySelect.value = '3';
+    }
 }
 
 function addTaskToDate( dateStr, task ) {
     if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-    tasks[ dateStr ].push( { ...task, id: `${dateStr}-${Date.now()}` } );
+    const newTask = { ...task, id: `${dateStr}-${Date.now()}` };
+    tasks[ dateStr ].push( newTask );
+    return newTask;
 }
 
+//addRecurringTasks con sync automático optimizado
 function addRecurringTasks( task, repeatType, startDate ) {
-    // Obtener duración configurada por el usuario
     const durationSelect = document.getElementById( 'repeatDuration' );
     const durationMonths = durationSelect ? parseInt( durationSelect.value ) : 2;
 
@@ -750,24 +994,22 @@ function addRecurringTasks( task, repeatType, startDate ) {
     let currentDate = new Date( startDate );
     let tasksAdded = 0;
 
-    // ✅ CORREGIDO: Calcular fecha final correctamente según duración seleccionada
     if ( durationMonths === 1 ) {
-        // Solo este mes: hasta el último día del mes actual
         endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
     } else {
-        // Otros casos: agregar meses completos
         endDate = new Date( startDate );
         endDate.setMonth( endDate.getMonth() + durationMonths );
-        // Ajustar al último día del mes final
         endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
     }
 
-    // ✅ NUEVO: Obtener días seleccionados para custom antes del loop
     let selectedDays = [];
     if ( repeatType === 'custom' ) {
         selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) )
             .map( cb => parseInt( cb.value ) );
     }
+
+    // Recopilar todas las tareas antes de sincronizar
+    const newTasks = [];
 
     while ( currentDate <= endDate ) {
         const dateStr = currentDate.toISOString().split( 'T' )[ 0 ];
@@ -793,14 +1035,19 @@ function addRecurringTasks( task, repeatType, startDate ) {
         }
 
         if ( shouldAdd && !isDatePast( dateStr ) ) {
-            addTaskToDate( dateStr, task );
+            const newTask = addTaskToDate( dateStr, task );
+            newTasks.push( { dateStr, task: newTask } );
             tasksAdded++;
         }
 
         currentDate.setDate( currentDate.getDate() + 1 );
     }
 
-    // ✅ MEJORADO: Mostrar resumen más detallado y preciso
+    // Sync automático batch para todas las tareas recurrentes
+    newTasks.forEach( ( { dateStr, task } ) => {
+        enqueueSync( 'upsert', dateStr, task );
+    } );
+
     const durationText = {
         '1': 'lo que resta del mes actual',
         '2': 'lo que resta del mes actual y todo el mes siguiente',
@@ -855,7 +1102,6 @@ function renderCalendar() {
     }
 }
 
-// ✅ CORREGIDO: Elemento del día sin etiqueta "HOY"
 function createDayElement( day, dateStr, dayTasks ) {
     const dayElement = document.createElement( 'div' );
 
@@ -895,7 +1141,6 @@ function createDayElement( day, dateStr, dayTasks ) {
     return dayElement;
 }
 
-// ✅ CORREGIDO: Panel de tareas con mejor manejo de fechas
 function showDailyTaskPanel( dateStr, day ) {
     const panel = document.getElementById( 'dailyTaskPanel' );
     const panelDate = document.getElementById( 'panelDate' );
@@ -951,23 +1196,37 @@ function showDailyTaskPanel( dateStr, day ) {
 
 function createPanelTaskElement( task, dateStr ) {
     const isPastDate = isDatePast( dateStr );
+    const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+    const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
 
     return `
-        <div class="flex items-center justify-between p-4 border rounded-lg ${task.completed ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'} hover:shadow-md transition-shadow">
+        <div class="flex items-center justify-between p-4 border rounded-lg ${state.class.replace( 'text-', 'border-' ).replace( 'bg-', 'border-' ).replace( '200', '300' )} hover:shadow-md transition-shadow border-l-4" style="border-left-color: ${priority.color}">
             <div class="flex items-center space-x-3 flex-1">
-                <input type="checkbox" ${task.completed ? 'checked' : ''}
-                       onchange="toggleTaskFromPanel('${dateStr}', '${task.id}')"
-                       class="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                <div class="flex flex-col space-y-1">
+                    <button onclick="toggleTaskState('${dateStr}', '${task.id}')"
+                            class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${state.class}"
+                            title="Estado: ${state.label}">
+                        <i class="fas ${state.icon} text-xs"></i>
+                    </button>
+                    <div class="text-xs px-2 py-1 rounded ${priority.class}" title="Prioridad: ${priority.label}">
+                        ${task.priority}
+                    </div>
+                </div>
                 <div class="flex-1">
-                    <div class="font-medium ${task.completed ? 'line-through text-green-600' : 'text-gray-800'}">${task.title}</div>
+                    <div class="font-medium ${task.state === 'completed' ? 'line-through opacity-75' : 'text-gray-800'}">${task.title}</div>
                     ${task.description ? `<div class="text-sm text-gray-600 mt-1">${task.description}</div>` : ''}
-                    ${task.time ? `<div class="text-xs text-indigo-600 mt-1"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                    <div class="flex items-center space-x-3 mt-1 text-xs">
+                        ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ''}
+                        <div class="text-gray-500">${state.label}</div>
+                        <div class="text-gray-500">${priority.label}</div>
+                    </div>
                 </div>
             </div>
             ${!isPastDate ? `
                 <div class="flex space-x-2">
-                    <button onclick="showEditTaskModal('${dateStr}', '${task.id}')"
-                            class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition">
+                    <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
+                            class="text-blue-500 hover:text-blue-700 p-2 rounded hover:bg-blue-50 transition"
+                            title="Editar completo">
                         <i class="fas fa-edit text-sm"></i>
                     </button>
                     <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
@@ -980,22 +1239,33 @@ function createPanelTaskElement( task, dateStr ) {
     `;
 }
 
+
 function createTaskElement( task, dateStr ) {
+    const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+    const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
+
     return `
         <div class="task-item-wrapper relative group/task">
-            <div class="text-xs p-1 rounded ${task.completed ? 'bg-green-200 text-green-800 line-through' : 'bg-blue-200 text-blue-800'} truncate task-item cursor-move pr-8"
+            <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4" 
                  data-task-id="${task.id}"
                  data-date="${dateStr}"
                  draggable="true"
-                 title="${task.title}${task.time ? ' - ' + task.time : ''}">
-                <i class="fas fa-grip-lines mr-1 opacity-50"></i>
+                 style="border-left-color: ${priority.color}"
+                 title="${task.title}${task.time ? ' - ' + task.time : ''} | ${state.label} | ${priority.label}">
+                <i class="fas ${state.icon} mr-1 opacity-75"></i>
                 ${task.title}
+                ${task.time ? `<span class="text-xs opacity-75 ml-1">${task.time}</span>` : ''}
             </div>
             <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
-                <button onclick="event.stopPropagation(); quickEditTask('${dateStr}', '${task.id}')"
+                <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
                         class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
                         title="Editar tarea">
                     <i class="fas fa-edit"></i>
+                </button>
+                <button onclick="event.stopPropagation(); toggleTaskState('${dateStr}', '${task.id}')"
+                        class="text-green-500 hover:text-green-700 text-xs p-1 rounded hover:bg-green-100 ml-1"
+                        title="Cambiar estado">
+                    <i class="fas fa-sync-alt"></i>
                 </button>
                 <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
                         class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
@@ -1007,26 +1277,45 @@ function createTaskElement( task, dateStr ) {
     `;
 }
 
+
 function updatePanelProgress( dayTasks ) {
     const progressBar = document.getElementById( 'panelProgressBar' );
     const progressText = document.getElementById( 'panelProgressText' );
 
     if ( !progressBar || !progressText ) return;
 
-    const completedTasks = dayTasks.filter( task => task.completed ).length;
+    const completedTasks = dayTasks.filter( task => task.state === 'completed' ).length;
+    const inProgressTasks = dayTasks.filter( task => task.state === 'inProgress' ).length;
+    const pendingTasks = dayTasks.filter( task => task.state === 'pending' ).length;
+
     const progress = dayTasks.length === 0 ? 0 : Math.round( ( completedTasks / dayTasks.length ) * 100 );
 
     progressBar.style.width = `${progress}%`;
-    progressText.textContent = `${progress}% (${completedTasks}/${dayTasks.length})`;
+    progressText.innerHTML = `
+        ${progress}% | 
+        <span class="text-green-600">${completedTasks} ✓</span> 
+        <span class="text-yellow-600">${inProgressTasks} ⟳</span> 
+        <span class="text-gray-600">${pendingTasks} ⏸</span>
+    `;
 }
 
+//toggleTaskFromPanel con sync automático
 function toggleTaskFromPanel( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
     if ( task ) {
         task.completed = !task.completed;
+
+        // Limpiar notificaciones si se completa la tarea
+        if ( task.completed ) {
+            clearTaskNotifications( taskId );
+        }
+
         saveTasks();
         renderCalendar();
         updateProgress();
+
+        // Auto-sync
+        enqueueSync( 'upsert', dateStr, task );
 
         if ( selectedDateForPanel === dateStr ) {
             const dayTasks = tasks[ dateStr ] || [];
@@ -1048,13 +1337,10 @@ function toggleTaskFromPanel( dateStr, taskId ) {
                 }
             }
         }
-
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
     }
 }
 
+//deleteTaskFromPanel con sync automático
 function deleteTaskFromPanel( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
     if ( !task ) return;
@@ -1069,7 +1355,248 @@ function deleteTaskFromPanel( dateStr, taskId ) {
     }
 }
 
-// ✅ CORREGIDO: Validación mejorada para tareas rápidas
+// ✅ NUEVA: Función para cambiar estados de tarea
+function toggleTaskState( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    const stateOrder = [ 'pending', 'inProgress', 'completed' ];
+    const currentIndex = stateOrder.indexOf( task.state );
+    const nextIndex = ( currentIndex + 1 ) % stateOrder.length;
+
+    task.state = stateOrder[ nextIndex ];
+
+    // Mantener compatibilidad con el campo completed
+    task.completed = task.state === 'completed';
+
+    // Limpiar notificaciones si se completa
+    if ( task.state === 'completed' ) {
+        clearTaskNotifications( taskId );
+    }
+
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    enqueueSync( 'upsert', dateStr, task );
+
+    // Actualizar panel si está abierto
+    if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( dateStr, day );
+    }
+
+    const stateInfo = TASK_STATES[ task.state ];
+    showNotification( `Tarea cambiada a: ${stateInfo.label}`, 'success' );
+}
+
+// ✅ NUEVA: Modal de edición avanzada
+function showAdvancedEditModal( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    currentEditingTask = taskId;
+    currentEditingDate = dateStr;
+
+    const modal = document.createElement( 'div' );
+    modal.id = 'advancedEditTaskModal';
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+    modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-cogs text-blue-500 mr-2"></i>Editar Tarea Completa
+                </h3>
+                <button onclick="closeAdvancedEditModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <form id="advancedEditTaskForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Título</label>
+                    <input type="text" id="editAdvancedTaskTitle" value="${task.title}" required 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
+                    <textarea id="editAdvancedTaskDescription" rows="3" 
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ''}</textarea>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
+                        <input type="time" id="editAdvancedTaskTime" value="${task.time || ''}" 
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad</label>
+                        <select id="editAdvancedTaskPriority" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="1" ${task.priority === 1 ? 'selected' : ''}>1 - Muy Importante</option>
+                            <option value="2" ${task.priority === 2 ? 'selected' : ''}>2 - Regular</option>
+                            <option value="3" ${task.priority === 3 ? 'selected' : ''}>3 - Medio-Bajo</option>
+                            <option value="4" ${task.priority === 4 ? 'selected' : ''}>4 - No Prioritario</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button type="button" onclick="selectTaskState('pending')" 
+                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'pending' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
+                                data-state="pending">
+                            <i class="fas fa-clock text-gray-600 mb-1"></i>
+                            <div class="text-xs font-medium">Pendiente</div>
+                        </button>
+                        <button type="button" onclick="selectTaskState('inProgress')" 
+                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'inProgress' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
+                                data-state="inProgress">
+                            <i class="fas fa-spinner text-yellow-600 mb-1"></i>
+                            <div class="text-xs font-medium">En Proceso</div>
+                        </button>
+                        <button type="button" onclick="selectTaskState('completed')" 
+                                class="state-btn p-3 rounded-lg border-2 transition ${task.state === 'completed' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}"
+                                data-state="completed">
+                            <i class="fas fa-check text-green-600 mb-1"></i>
+                            <div class="text-xs font-medium">Completada</div>
+                        </button>
+                    </div>
+                    <input type="hidden" id="editAdvancedTaskState" value="${task.state}">
+                </div>
+                
+                <div class="flex space-x-3 pt-4 border-t">
+                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+                        <i class="fas fa-save mr-2"></i>Guardar Cambios
+                    </button>
+                    <button type="button" onclick="closeAdvancedEditModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    document.body.appendChild( modal );
+    document.getElementById( 'advancedEditTaskForm' ).addEventListener( 'submit', updateAdvancedTask );
+}
+
+// ✅ NUEVA: Función para seleccionar estado en el modal
+function selectTaskState( state ) {
+    document.querySelectorAll( '.state-btn' ).forEach( btn => {
+        btn.className = btn.className.replace( ' border-blue-500 bg-blue-50', ' border-gray-300' );
+    } );
+
+    const selectedBtn = document.querySelector( `[data-state="${state}"]` );
+    selectedBtn.className = selectedBtn.className.replace( ' border-gray-300', ' border-blue-500 bg-blue-50' );
+
+    document.getElementById( 'editAdvancedTaskState' ).value = state;
+}
+
+// ✅ NUEVA: Actualizar tarea con todos los campos
+function updateAdvancedTask( e ) {
+    e.preventDefault();
+    if ( !currentEditingTask || !currentEditingDate ) return;
+
+    const formData = {
+        title: document.getElementById( 'editAdvancedTaskTitle' ).value.trim(),
+        description: document.getElementById( 'editAdvancedTaskDescription' ).value.trim(),
+        time: document.getElementById( 'editAdvancedTaskTime' ).value,
+        priority: parseInt( document.getElementById( 'editAdvancedTaskPriority' ).value ),
+        state: document.getElementById( 'editAdvancedTaskState' ).value
+    };
+
+    const task = tasks[ currentEditingDate ]?.find( t => t.id === currentEditingTask );
+    if ( task ) {
+        Object.assign( task, formData );
+        task.completed = task.state === 'completed'; // Mantener compatibilidad
+
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+        closeAdvancedEditModal();
+        showNotification( 'Tarea actualizada exitosamente', 'success' );
+
+        enqueueSync( 'upsert', currentEditingDate, task );
+
+        // Actualizar panel si está abierto
+        if ( selectedDateForPanel === currentEditingDate ) {
+            const day = new Date( currentEditingDate + 'T12:00:00' ).getDate();
+            showDailyTaskPanel( currentEditingDate, day );
+        }
+    }
+}
+
+// ✅ NUEVA: Cerrar modal avanzado
+function closeAdvancedEditModal() {
+    const modal = document.getElementById( 'advancedEditTaskModal' );
+    modal?.remove();
+    currentEditingTask = null;
+    currentEditingDate = null;
+}
+
+// ✅ NUEVA: Edición rápida mejorada
+function quickEditTaskAdvanced( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    const modal = document.createElement( 'div' );
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+    modal.innerHTML = `
+        <div class="bg-white rounded-lg p-4 max-w-sm w-full">
+            <h4 class="font-medium mb-3">Edición Rápida</h4>
+            <div class="space-y-3">
+                <input type="text" id="quickEditTitle" value="${task.title}" 
+                       class="w-full px-3 py-2 border rounded-lg" placeholder="Título">
+                <input type="time" id="quickEditTime" value="${task.time || ''}" 
+                       class="w-full px-3 py-2 border rounded-lg">
+                <select id="quickEditPriority" class="w-full px-3 py-2 border rounded-lg">
+                    <option value="1" ${task.priority === 1 ? 'selected' : ''}>1 - Muy Importante</option>
+                    <option value="2" ${task.priority === 2 ? 'selected' : ''}>2 - Regular</option>
+                    <option value="3" ${task.priority === 3 ? 'selected' : ''}>3 - Medio-Bajo</option>
+                    <option value="4" ${task.priority === 4 ? 'selected' : ''}>4 - No Prioritario</option>
+                </select>
+                <div class="flex space-x-2">
+                    <button onclick="saveQuickEdit('${dateStr}', '${taskId}')" 
+                            class="flex-1 bg-blue-500 text-white py-2 rounded-lg">Guardar</button>
+                    <button onclick="this.closest('.fixed').remove()" 
+                            class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg">Cancelar</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild( modal );
+}
+
+// ✅ NUEVA: Guardar edición rápida
+function saveQuickEdit( dateStr, taskId ) {
+    const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+    if ( !task ) return;
+
+    const newTitle = document.getElementById( 'quickEditTitle' ).value.trim();
+    const newTime = document.getElementById( 'quickEditTime' ).value;
+    const newPriority = parseInt( document.getElementById( 'quickEditPriority' ).value );
+
+    if ( newTitle ) {
+        task.title = newTitle;
+        task.time = newTime;
+        task.priority = newPriority;
+
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+        enqueueSync( 'upsert', dateStr, task );
+
+        showNotification( 'Tarea actualizada', 'success' );
+        document.querySelector( '.fixed.inset-0' ).remove();
+    }
+}
+
+//addQuickTaskToSelectedDay con sync automático
 function addQuickTaskToSelectedDay() {
     if ( !selectedDateForPanel ) return;
 
@@ -1079,7 +1606,7 @@ function addQuickTaskToSelectedDay() {
     }
 
     const date = new Date( selectedDateForPanel + 'T12:00:00' );
-    const title = prompt( `Nueva tarea para ${date.toLocaleDateString( 'es-ES' )}:` );
+    const title = prompt( `tarea para ${date.toLocaleDateString( 'es-ES' )}:` );
     if ( title?.trim() ) {
         const task = {
             id: `${selectedDateForPanel}-${Date.now()}`,
@@ -1094,14 +1621,13 @@ function addQuickTaskToSelectedDay() {
         renderCalendar();
         updateProgress();
 
+        // Auto-sync
+        enqueueSync( 'upsert', selectedDateForPanel, task );
+
         const day = date.getDate();
         showDailyTaskPanel( selectedDateForPanel, day );
 
         showNotification( 'Tarea agregada exitosamente', 'success' );
-
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
     }
 }
 
@@ -1113,6 +1639,7 @@ function closeDailyTaskPanel() {
     }
 }
 
+//quickEditTask con sync automático
 function quickEditTask( dateStr, taskId ) {
     const task = tasks[ dateStr ]?.find( t => t.id === taskId );
     if ( !task ) return;
@@ -1124,9 +1651,8 @@ function quickEditTask( dateStr, taskId ) {
         renderCalendar();
         showNotification( 'Tarea actualizada', 'success' );
 
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
+        // Auto-sync
+        enqueueSync( 'upsert', dateStr, task );
     }
 }
 
@@ -1139,7 +1665,7 @@ function quickDeleteTask( dateStr, taskId ) {
     }
 }
 
-// ✅ CORREGIDO: Validación de fecha en tarea rápida
+//showQuickAddTask con sync automático
 function showQuickAddTask( dateStr ) {
     if ( isDatePast( dateStr ) ) {
         showNotification( 'No puedes agregar tareas a fechas anteriores', 'error' );
@@ -1147,7 +1673,7 @@ function showQuickAddTask( dateStr ) {
     }
 
     const date = new Date( dateStr + 'T12:00:00' );
-    const title = prompt( 'Nueva tarea para ' + date.toLocaleDateString( 'es-ES' ) + ':' );
+    const title = prompt( 'tarea para ' + date.toLocaleDateString( 'es-ES' ) + ':' );
     if ( title?.trim() ) {
         const task = {
             id: `${dateStr}-${Date.now()}`,
@@ -1163,9 +1689,8 @@ function showQuickAddTask( dateStr ) {
         updateProgress();
         showNotification( 'Tarea agregada rápidamente', 'success' );
 
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
+        // Auto-sync
+        enqueueSync( 'upsert', dateStr, task );
     }
 }
 
@@ -1265,11 +1790,9 @@ function handleDrop( e ) {
     if ( dropTarget && draggedTask && draggedFromDate ) {
         const targetDate = dropTarget.dataset.date;
 
-        // Verificar si la fecha destino es anterior a hoy
         if ( isDatePast( targetDate ) ) {
             showNotification( 'No puedes mover tareas a fechas anteriores', 'error' );
 
-            // Remover efectos visuales
             document.querySelectorAll( '.bg-yellow-100' ).forEach( el => {
                 el.classList.remove( 'bg-yellow-100' );
             } );
@@ -1287,6 +1810,7 @@ function handleDrop( e ) {
     } );
 }
 
+//moveTask con sync automático
 function moveTask( fromDate, toDate, taskId ) {
     const fromTasks = tasks[ fromDate ];
     const taskIndex = fromTasks?.findIndex( t => t.id === taskId );
@@ -1307,9 +1831,9 @@ function moveTask( fromDate, toDate, taskId ) {
         renderCalendar();
         updateProgress();
 
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
+        // Auto-sync: eliminar de fecha origen y agregar a fecha destino
+        enqueueSync( 'delete', fromDate, { id: taskId } );
+        enqueueSync( 'upsert', toDate, task );
     }
 }
 
@@ -1367,6 +1891,7 @@ function showEditTaskModal( dateStr, taskId ) {
     document.getElementById( 'editTaskForm' ).addEventListener( 'submit', updateTask );
 }
 
+//updateTask con sync automático
 function updateTask( e ) {
     e.preventDefault();
     if ( !currentEditingTask || !currentEditingDate ) return;
@@ -1386,9 +1911,8 @@ function updateTask( e ) {
         closeEditModal();
         showNotification( 'Tarea actualizada exitosamente', 'success' );
 
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
+        // Auto-sync
+        enqueueSync( 'upsert', currentEditingDate, task );
     }
 }
 
@@ -1416,12 +1940,12 @@ function toggleTask( dateStr, taskId ) {
         renderCalendar();
         updateProgress();
 
-        if ( currentUser && isOnline ) {
-            setTimeout( () => syncToFirebase(), 500 );
-        }
+        // Auto-sync
+        enqueueSync( 'upsert', dateStr, task );
     }
 }
 
+//deleteTaskWithUndo con sync automático
 function deleteTaskWithUndo( dateStr, taskId ) {
     const dayTasks = tasks[ dateStr ];
     const taskIndex = dayTasks?.findIndex( t => t.id === taskId );
@@ -1435,9 +1959,8 @@ function deleteTaskWithUndo( dateStr, taskId ) {
             delete tasks[ dateStr ];
         }
 
-        if ( currentUser && isOnline ) {
-            deleteTaskFromFirebase( dateStr, taskId );
-        }
+        // Auto-sync delete
+        enqueueSync( 'delete', dateStr, { id: taskId } );
 
         saveTasks();
         renderCalendar();
@@ -1463,15 +1986,15 @@ function showUndoNotification() {
     setTimeout( () => notification.remove(), 5000 );
 }
 
+//undoDelete con sync automático
 function undoDelete() {
     if ( lastDeletedTask && lastDeletedDate ) {
         if ( !tasks[ lastDeletedDate ] ) tasks[ lastDeletedDate ] = [];
 
         tasks[ lastDeletedDate ].push( lastDeletedTask );
 
-        if ( currentUser && isOnline ) {
-            syncTaskToFirebase( lastDeletedDate, lastDeletedTask );
-        }
+        // Auto-sync restore
+        enqueueSync( 'upsert', lastDeletedDate, lastDeletedTask );
 
         saveTasks();
         renderCalendar();
@@ -1495,6 +2018,7 @@ function changeMonth( delta ) {
     updateProgress();
 }
 
+//clearWeek con sync automático optimizado
 function clearWeek() {
     if ( !confirm( '¿Estás seguro de que quieres limpiar todas las tareas de esta semana?' ) ) return;
 
@@ -1502,58 +2026,84 @@ function clearWeek() {
     const startOfWeek = new Date( today );
     startOfWeek.setDate( today.getDate() - today.getDay() );
 
+    const deletedTasks = [];
+
     for ( let i = 0; i < 7; i++ ) {
         const date = new Date( startOfWeek );
         date.setDate( startOfWeek.getDate() + i );
         const dateStr = date.toISOString().split( 'T' )[ 0 ];
-        delete tasks[ dateStr ];
+
+        if ( tasks[ dateStr ] ) {
+            // Guardar tareas para sync
+            tasks[ dateStr ].forEach( task => {
+                deletedTasks.push( { dateStr, taskId: task.id } );
+            } );
+            delete tasks[ dateStr ];
+        }
     }
+
+    // Auto-sync batch delete
+    deletedTasks.forEach( ( { dateStr, taskId } ) => {
+        enqueueSync( 'delete', dateStr, { id: taskId } );
+    } );
 
     saveTasks();
     renderCalendar();
     updateProgress();
     showNotification( 'Semana limpiada exitosamente' );
-
-    if ( currentUser && isOnline ) {
-        setTimeout( () => syncToFirebase(), 500 );
-    }
 }
 
+//clearMonth con sync automático optimizado
 function clearMonth() {
     if ( !confirm( '¿Estás seguro de que quieres limpiar todas las tareas de este mes?' ) ) return;
 
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
+    const deletedTasks = [];
 
     Object.keys( tasks ).forEach( dateStr => {
         const date = new Date( dateStr + 'T12:00:00' );
         if ( date.getFullYear() === year && date.getMonth() === month ) {
+            // Guardar tareas para sync
+            tasks[ dateStr ].forEach( task => {
+                deletedTasks.push( { dateStr, taskId: task.id } );
+            } );
             delete tasks[ dateStr ];
         }
+    } );
+
+    // Auto-sync batch delete
+    deletedTasks.forEach( ( { dateStr, taskId } ) => {
+        enqueueSync( 'delete', dateStr, { id: taskId } );
     } );
 
     saveTasks();
     renderCalendar();
     updateProgress();
     showNotification( 'Mes limpiado exitosamente' );
-
-    if ( currentUser && isOnline ) {
-        setTimeout( () => syncToFirebase(), 500 );
-    }
 }
 
-// ✅ CORREGIDO: Progreso usando función local
 function updateProgress() {
     const today = getTodayString();
     const todayTasks = tasks[ today ] || [];
-    const completedTasks = todayTasks.filter( task => task.completed ).length;
+    const completedTasks = todayTasks.filter( task => task.state === 'completed' ).length;
+    const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' ).length;
+    const pendingTasks = todayTasks.filter( task => task.state === 'pending' ).length;
+
     const progress = todayTasks.length === 0 ? 0 : Math.round( ( completedTasks / todayTasks.length ) * 100 );
 
     const progressBar = document.getElementById( 'progressBar' );
     const progressText = document.getElementById( 'progressText' );
 
     if ( progressBar ) progressBar.style.width = `${progress}%`;
-    if ( progressText ) progressText.textContent = `${progress}% (${completedTasks}/${todayTasks.length})`;
+    if ( progressText ) {
+        progressText.innerHTML = `
+            ${progress}% | 
+            <span class="text-green-600">${completedTasks} ✓</span> 
+            <span class="text-yellow-600">${inProgressTasks} ⟳</span> 
+            <span class="text-gray-600">${pendingTasks} ⏸</span>
+        `;
+    }
 }
 
 function exportToExcel() {
@@ -1645,20 +2195,25 @@ function startNotificationService() {
         return;
     }
 
-    console.log( '✅ Iniciando servicio de notificaciones' );
+    console.log( 'Iniciando servicio de notificaciones mejorado' );
 
+    // Reset de estado diario a las 00:01
+    resetDailyNotificationStatus();
+
+    // Verificación inmediata
     setTimeout( () => {
         try {
-            checkDailyTasks();
+            checkDailyTasksImproved();
         } catch ( error ) {
             console.error( 'Error en checkDailyTasks inicial:', error );
         }
-    }, 2000 );
+    }, 1000 );
 
+    // Intervalo más frecuente pero inteligente (cada 30 segundos)
     notificationInterval = setInterval( () => {
         try {
             if ( notificationsEnabled && Notification.permission === 'granted' ) {
-                checkDailyTasks();
+                checkDailyTasksImproved();
             } else {
                 console.log( '⚠️ Notificaciones deshabilitadas en intervalo' );
                 stopNotificationService();
@@ -1666,7 +2221,29 @@ function startNotificationService() {
         } catch ( error ) {
             console.error( 'Error en intervalo de notificaciones:', error );
         }
-    }, 30000 );
+    }, 30000 ); // 30 segundos
+
+    // Verificación adicional cada 5 minutos para mayor seguridad
+    setInterval( () => {
+        if ( notificationsEnabled && Notification.permission === 'granted' ) {
+            checkDailyTasksImproved( true ); // Forzar verificación
+        }
+    }, 5 * 60 * 1000 ); // 5 minutos
+}
+
+// función mejorada para reset diario
+function resetDailyNotificationStatus() {
+    const now = new Date();
+    if ( now.getHours() === 0 && now.getMinutes() <= 1 ) {
+        notificationStatus = {
+            morning: false,
+            midday: false,
+            evening: false,
+            taskReminders: new Set()
+        }; checkDailyTasksImproved
+        sentNotifications.clear();
+        console.log( '🔄 Estado de notificaciones diarias reseteado' );
+    }
 }
 
 function stopNotificationService() {
@@ -1698,10 +2275,8 @@ function updateNotificationButton() {
     }
 }
 
-// ✅ CORREGIDO: Verificación de tareas usando función local
-function checkDailyTasks() {
+function checkDailyTasksImproved( forceCheck = false ) {
     if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
-        console.log( 'Notificaciones no habilitadas o sin permisos' );
         return;
     }
 
@@ -1709,81 +2284,106 @@ function checkDailyTasks() {
     const today = getTodayString();
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
-    const currentSeconds = now.getSeconds();
+    const currentTime = `${String( currentHour ).padStart( 2, '0' )}:${String( currentMinute ).padStart( 2, '0' )}`;
 
     const todayTasks = tasks[ today ] || [];
-    const pendingTasks = todayTasks.filter( task => !task.completed );
+    const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
+    const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
 
-    if ( currentSeconds === 0 ) {
-        if ( currentHour === 9 && currentMinute === 0 && pendingTasks.length > 0 ) {
-            console.log( '🌅 Enviando notificación matutina' );
-            showDesktopNotification( '¡Buenos días! 🌅',
-                `Tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''} para hoy`,
-                'morning-reminder'
+    resetDailyNotificationStatus();
+
+    // Notificaciones de tareas con hora específica
+    todayTasks.forEach( task => {
+        if ( !task.time || task.state === 'completed' ) return;
+
+        const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
+        const taskTime = taskHours * 60 + taskMinutes;
+        const currentTimeInMinutes = currentHour * 60 + currentMinute;
+
+        // Notificación de inicio - cambiar automáticamente a "en proceso"
+        const nowKey = `${task.id}-now`;
+        if ( !notificationStatus.taskReminders.has( nowKey ) &&
+            currentTimeInMinutes >= taskTime &&
+            currentTimeInMinutes <= taskTime + 2 &&
+            task.state === 'pending' ) {
+
+            // Cambiar estado a "en proceso" automáticamente
+            task.state = 'inProgress';
+            task.completed = false;
+            saveTasks();
+            renderCalendar();
+            enqueueSync( 'upsert', today, task );
+
+            const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+            showDesktopNotification(
+                `🚀 Iniciando: ${task.title}`,
+                `Tarea ${priority.label.toLowerCase()} comenzó. Estado: En Proceso`,
+                nowKey,
+                true
             );
+            notificationStatus.taskReminders.add( nowKey );
+        }
+    } );
+
+    // Notificaciones generales con información de estados
+    const totalPending = pendingTasks.length;
+    const totalInProgress = inProgressTasks.length;
+
+    if ( !notificationStatus.morning && currentHour === 9 && currentMinute <= 30 && ( totalPending > 0 || totalInProgress > 0 ) ) {
+        let message = '';
+        if ( totalPending > 0 ) message += `${totalPending} pendiente${totalPending > 1 ? 's' : ''}`;
+        if ( totalInProgress > 0 ) {
+            if ( message ) message += ' y ';
+            message += `${totalInProgress} en proceso`;
         }
 
-        if ( currentHour === 12 && currentMinute === 0 && pendingTasks.length > 0 ) {
-            console.log( '🌞 Enviando notificación de medio día' );
-            showDesktopNotification( 'Recordatorio de medio día 🌞',
-                `Aún tienes ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} por completar`,
-                'midday-reminder'
-            );
-        }
-
-        if ( currentHour === 18 && currentMinute === 0 && pendingTasks.length > 0 ) {
-            console.log( '🌇 Enviando notificación vespertina' );
-            showDesktopNotification( 'Recordatorio vespertino 🌇',
-                `No olvides completar tus ${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} restante${pendingTasks.length > 1 ? 's' : ''}`,
-                'evening-reminder'
-            );
-        }
+        showDesktopNotification(
+            '¡Buenos días! 🌅',
+            `Tienes ${message} para hoy`,
+            'morning-reminder'
+        );
+        notificationStatus.morning = true;
     }
+}
 
-    pendingTasks.forEach( task => {
-        if ( task.time ) {
-            const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
+// función para limpiar notificaciones cuando se completa una tarea
+function clearTaskNotifications( taskId ) {
+    const keysToRemove = [
+        `${taskId}-reminder-15`,
+        `${taskId}-now`,
+        `${taskId}-late`
+    ];
 
-            const reminderTime = new Date();
-            reminderTime.setHours( taskHours, taskMinutes - 15, 0, 0 );
-
-            if ( currentSeconds === 0 &&
-                currentHour === reminderTime.getHours() &&
-                currentMinute === reminderTime.getMinutes() ) {
-
-                console.log( '⏰ Enviando recordatorio 15 min antes:', task.title );
-                showDesktopNotification( `⏰ Recordatorio: ${task.title}`,
-                    `Tu tarea comienza en 15 minutos (${task.time})`,
-                    `task-reminder-${task.id}`,
-                    true
-                );
-            }
-
-            if ( currentSeconds === 0 &&
-                currentHour === taskHours &&
-                currentMinute === taskMinutes ) {
-
-                console.log( '🚀 Enviando notificación de inicio:', task.title );
-                showDesktopNotification( `🚀 Es hora: ${task.title}`,
-                    task.description || `Tu tarea programada para las ${task.time}`,
-                    `task-now-${task.id}`,
-                    true
-                );
-            }
-        }
+    keysToRemove.forEach( key => {
+        notificationStatus.taskReminders.delete( key );
     } );
 }
 
 function showDesktopNotification( title, body, tag, requireInteraction = false ) {
     try {
+        // Evitar notificaciones duplicadas en poco tiempo
+        if ( sentNotifications.has( tag ) ) {
+            console.log( '⏭️ Notificación duplicada evitada:', tag );
+            return;
+        }
+
         const notification = new Notification( title, {
             body: body,
             icon: getFaviconAsDataUrl(),
             tag: tag,
             requireInteraction: requireInteraction,
             silent: false,
-            badge: getFaviconAsDataUrl()
+            badge: getFaviconAsDataUrl(),
+            timestamp: Date.now()
         } );
+
+        // Marcar como enviada
+        sentNotifications.add( tag );
+
+        // Limpiar del set después de 5 minutos para permitir re-envío si es necesario
+        setTimeout( () => {
+            sentNotifications.delete( tag );
+        }, 5 * 60 * 1000 );
 
         notification.onclick = function () {
             window.focus();
@@ -1796,11 +2396,30 @@ function showDesktopNotification( title, body, tag, requireInteraction = false )
             }, 10000 );
         }
 
-        console.log( '✅ Notificación enviada:', title );
+        console.log( 'Notificación enviada:', title, '- Tag:', tag );
     } catch ( error ) {
         console.error( '❌ Error enviando notificación:', error );
     }
 }
+
+// función para testear notificaciones
+function testNotifications() {
+    if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
+        showNotification( 'Las notificaciones no están habilitadas', 'error' );
+        return;
+    }
+
+    showDesktopNotification(
+        '🧪 Prueba de Notificación',
+        'Si ves esto, las notificaciones funcionan correctamente',
+        'test-notification',
+        false
+    );
+
+    showNotification( 'Notificación de prueba enviada', 'success' );
+}
+
+
 
 function getFaviconAsDataUrl() {
     const svg = `
@@ -1852,6 +2471,7 @@ function saveTasks() {
     }
 }
 
+//clearAll con sync automático optimizado
 function clearAll() {
     const totalTasks = Object.values( tasks ).reduce( ( sum, dayTasks ) => sum + dayTasks.length, 0 );
 
@@ -1864,27 +2484,64 @@ function clearAll() {
         return;
     }
 
-    // Confirmación adicional para evitar eliminación accidental
     if ( !confirm( '⚠️ ESTA ACCIÓN NO SE PUEDE DESHACER. ¿Continuar?' ) ) {
         return;
     }
+
+    const deletedTasks = [];
+
+    // Recopilar todas las tareas para sync
+    Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
+        dayTasks.forEach( task => {
+            deletedTasks.push( { dateStr, taskId: task.id } );
+        } );
+    } );
 
     tasks = {};
     saveTasks();
     renderCalendar();
     updateProgress();
-    closeDailyTaskPanel(); // Cerrar panel si está abierto
+    closeDailyTaskPanel();
+
+    // Auto-sync batch delete
+    deletedTasks.forEach( ( { dateStr, taskId } ) => {
+        enqueueSync( 'delete', dateStr, { id: taskId } );
+    } );
 
     showNotification( `${totalTasks} tareas eliminadas del calendario`, 'success' );
-
-    if ( currentUser && isOnline ) {
-        setTimeout( () => syncToFirebase(), 500 );
-    }
 }
 
-// Auto-sincronización cada 5 minutos si está logueado y online
+// OPTIMIZADO: Auto-sincronización periódica más inteligente
 setInterval( () => {
-    if ( currentUser && isOnline && !syncInProgress ) {
-        syncFromFirebase();
+    if ( currentUser && isOnline && !isSyncing ) {
+        // Solo hacer sync completo cada 10 minutos si no hay cambios pendientes
+        if ( syncQueue.size === 0 ) {
+            console.log( '🔄 Sync periódico: verificando cambios remotos' );
+            syncFromFirebase();
+        } else {
+            console.log( '⏳ Sync periódico: hay cambios pendientes, procesando cola' );
+            processSyncQueue();
+        }
     }
-}, 5 * 60 * 1000 );
+}, 10 * 60 * 1000 ); // Cada 10 minutos
+
+// Procesar cola al cerrar/recargar página
+window.addEventListener( 'beforeunload', () => {
+    if ( syncQueue.size > 0 && currentUser && isOnline ) {
+        // Intentar sync inmediato antes de cerrar
+        navigator.sendBeacon && navigator.sendBeacon( '/sync-beacon',
+            JSON.stringify( {
+                uid: currentUser.uid,
+                operations: Array.from( syncQueue.values() )
+            } )
+        );
+    }
+} );
+
+// Manejar cambios de visibilidad de página
+document.addEventListener( 'visibilitychange', () => {
+    if ( !document.hidden && syncQueue.size > 0 && currentUser && isOnline ) {
+        // Procesar cola cuando la página vuelva a ser visible
+        setTimeout( () => processSyncQueue(), 1000 );
+    }
+} );
