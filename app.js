@@ -59,12 +59,10 @@ document.addEventListener( 'DOMContentLoaded', function () {
     setupDragAndDrop();
     setupTaskTooltips();
     setupNetworkListeners();
-
-    // ✅ NUEVO: Configurar fecha mínima en el input
     setupDateInput();
 } );
 
-// ✅ NUEVO: Configurar input de fecha
+// Configurar input de fecha
 function setupDateInput() {
     const taskDateInput = document.getElementById( 'taskDate' );
     const taskTimeInput = document.getElementById( 'taskTime' );
@@ -72,12 +70,12 @@ function setupDateInput() {
     if ( taskDateInput ) {
         const today = getTodayString();
         taskDateInput.setAttribute( 'min', today );
-        // ✅ NUEVO: Establecer fecha actual por defecto
+        // Establecer fecha actual por defecto
         taskDateInput.value = today;
     }
 
     if ( taskTimeInput ) {
-        // ✅ NUEVO: Establecer hora actual por defecto
+        // Establecer hora actual por defecto
         const now = new Date();
         const currentHour = String( now.getHours() ).padStart( 2, '0' );
         const currentMinute = String( now.getMinutes() ).padStart( 2, '0' );
@@ -344,6 +342,14 @@ async function syncFromFirebase() {
         renderCalendar();
         updateProgress();
 
+        // Reiniciar notificaciones después de sincronizar
+        if ( notificationsEnabled && Notification.permission === 'granted' ) {
+            stopNotificationService();
+            setTimeout( () => {
+                startNotificationService();
+            }, 1000 );
+        }
+
         showFirebaseStatus( 'Sincronizado', 'success' );
         showNotification( 'Tareas sincronizadas', 'success' );
 
@@ -427,20 +433,87 @@ function setupEventListeners() {
     if ( addQuickTaskBtn ) {
         addQuickTaskBtn.addEventListener( 'click', addQuickTaskToSelectedDay );
     }
+
+    // Event listeners para configuración avanzada
+    const repeatDurationSelect = document.getElementById( 'repeatDuration' );
+    const customDaysInputs = document.querySelectorAll( '#customDays input[type="checkbox"]' );
+    const taskDateInput = document.getElementById( 'taskDate' ); // ✅ NUEVO
+
+    if ( repeatDurationSelect ) {
+        repeatDurationSelect.addEventListener( 'change', updateRepeatPreview );
+    }
+
+    // ✅ NUEVO: Recalcular cuando cambie la fecha de inicio
+    if ( taskDateInput ) {
+        taskDateInput.addEventListener( 'change', updateRepeatPreview );
+    }
+
+    customDaysInputs.forEach( input => {
+        input.addEventListener( 'change', updateRepeatPreview );
+    } );
 }
 
-// ✅ NUEVO: Función para resetear formulario
+// Función para resetear formulario
 function resetForm() {
     const form = document.getElementById( 'taskForm' );
+    const advancedConfig = document.getElementById( 'advancedRepeatConfig' );
     const customDays = document.getElementById( 'customDays' );
+    const repeatDuration = document.getElementById( 'repeatDuration' );
 
+    // Resetear formulario
     form.reset();
+
+    // Ocultar configuración avanzada
+    advancedConfig?.classList.add( 'hidden' );
     customDays?.classList.add( 'hidden' );
 
-    // ✅ NUEVO: Restablecer valores por defecto después del reset
+    // Resetear duración a valor por defecto
+    if ( repeatDuration ) {
+        repeatDuration.value = '2'; // Este mes y el siguiente
+    }
+
+    // Desmarcar todos los checkboxes de días personalizados
+    const customDaysCheckboxes = document.querySelectorAll( '#customDays input[type="checkbox"]' );
+    customDaysCheckboxes.forEach( checkbox => {
+        checkbox.checked = false;
+    } );
+
+    // Restablecer valores por defecto de fecha y hora
     setupDateInput();
 
     showNotification( 'Formulario reiniciado', 'info' );
+
+    // Auto-cerrar selector de hora
+    const taskTimeInput = document.getElementById( 'taskTime' );
+    if ( taskTimeInput ) {
+        taskTimeInput.addEventListener( 'change', () => {
+            setTimeout( () => {
+                taskTimeInput.blur();
+            }, 100 );
+        } );
+
+        // Para cerrar con Enter
+        taskTimeInput.addEventListener( 'keydown', ( e ) => {
+            if ( e.key === 'Enter' ) {
+                taskTimeInput.blur();
+            }
+        } );
+    }
+
+    // Para inputs de tiempo dinámicos (como el modal de edición)
+    document.addEventListener( 'change', ( e ) => {
+        if ( e.target.type === 'time' ) {
+            setTimeout( () => {
+                e.target.blur();
+            }, 100 );
+        }
+    } );
+
+    document.addEventListener( 'keydown', ( e ) => {
+        if ( e.target.type === 'time' && e.key === 'Enter' ) {
+            e.target.blur();
+        }
+    } );
 }
 
 function showLoginModal() {
@@ -463,8 +536,128 @@ function loadTasks() {
 
 function toggleCustomDays() {
     const select = document.getElementById( 'taskRepeat' );
+    const advancedConfig = document.getElementById( 'advancedRepeatConfig' );
     const customDays = document.getElementById( 'customDays' );
-    customDays?.classList.toggle( 'hidden', select.value !== 'custom' );
+
+    if ( select.value === 'none' ) {
+        advancedConfig?.classList.add( 'hidden' );
+    } else {
+        advancedConfig?.classList.remove( 'hidden' );
+        customDays?.classList.toggle( 'hidden', select.value !== 'custom' );
+        updateRepeatPreview();
+    }
+}
+
+// Actualizar vista previa de repetición
+function updateRepeatPreview() {
+    const repeatType = document.getElementById( 'taskRepeat' ).value;
+    const duration = document.getElementById( 'repeatDuration' ).value;
+    const previewText = document.getElementById( 'previewText' );
+    const taskDate = document.getElementById( 'taskDate' ).value;
+
+    if ( !previewText || repeatType === 'none' ) return;
+
+    const durationText = {
+        '1': 'lo que resta del mes actual',
+        '2': 'lo que resta del mes actual y todo el mes siguiente',
+        '3': 'los próximos 3 meses',
+        '6': 'los próximos 6 meses',
+        '12': 'el próximo año'
+    };
+
+    const typeText = {
+        'daily': 'todos los días',
+        'weekdays': 'días de semana (Lun-Vie)',
+        'weekends': 'fines de semana (Sáb-Dom)',
+        'weekly': 'cada semana (mismo día)',
+        'custom': 'días personalizados'
+    };
+
+    let preview = `Se creará ${typeText[ repeatType ]} durante ${durationText[ duration ]}`;
+
+    if ( repeatType === 'custom' ) {
+        const selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) );
+        if ( selectedDays.length > 0 ) {
+            const dayNames = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
+            const selectedDayNames = selectedDays.map( cb => dayNames[ parseInt( cb.value ) ] );
+            preview = `Se creará los ${selectedDayNames.join( ', ' )} durante ${durationText[ duration ]}`;
+        } else {
+            preview = 'Selecciona al menos un día';
+        }
+    }
+
+    // ✅ NUEVO: Cálculo preciso de tareas basado en fechas reales
+    const approxTasks = calculateExactTaskCount( repeatType, parseInt( duration ), taskDate );
+
+    if ( approxTasks > 0 ) {
+        preview += ` (~${approxTasks} tareas)`;
+    }
+
+    previewText.textContent = preview;
+}
+
+// ✅ NUEVA: Función para calcular cantidad exacta de tareas
+function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
+    // Usar fecha actual si no hay fecha específica
+    const startDate = startDateStr ? new Date( startDateStr + 'T00:00:00' ) : new Date();
+
+    // ✅ CORREGIDO: Calcular fecha final igual que en addRecurringTasks
+    let endDate;
+    if ( durationMonths === 1 ) {
+        // Solo este mes: hasta el último día del mes actual
+        endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
+    } else {
+        // Otros casos: agregar meses completos
+        endDate = new Date( startDate );
+        endDate.setMonth( endDate.getMonth() + durationMonths );
+        // Ajustar al último día del mes final
+        endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
+    }
+
+    let count = 0;
+    let currentDate = new Date( startDate );
+
+    // Obtener días seleccionados para opción custom
+    let selectedDays = [];
+    if ( repeatType === 'custom' ) {
+        selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) )
+            .map( cb => parseInt( cb.value ) );
+        if ( selectedDays.length === 0 ) return 0;
+    }
+
+    // Contar día por día
+    while ( currentDate <= endDate ) {
+        const dayOfWeek = currentDate.getDay();
+        let shouldCount = false;
+
+        switch ( repeatType ) {
+            case 'daily':
+                shouldCount = true;
+                break;
+            case 'weekdays':
+                shouldCount = dayOfWeek >= 1 && dayOfWeek <= 5;
+                break;
+            case 'weekends':
+                shouldCount = dayOfWeek === 0 || dayOfWeek === 6;
+                break;
+            case 'weekly':
+                shouldCount = dayOfWeek === startDate.getDay();
+                break;
+            case 'custom':
+                shouldCount = selectedDays.includes( dayOfWeek );
+                break;
+        }
+
+        // Solo contar si no es fecha pasada
+        const currentDateStr = currentDate.toISOString().split( 'T' )[ 0 ];
+        if ( shouldCount && !isDatePast( currentDateStr ) ) {
+            count++;
+        }
+
+        currentDate.setDate( currentDate.getDate() + 1 );
+    }
+
+    return count;
 }
 
 // ✅ CORREGIDO: Validación de fechas mejorada
@@ -506,12 +699,30 @@ function addTask( e ) {
     renderCalendar();
     updateProgress();
     document.getElementById( 'taskForm' ).reset();
-    setupDateInput(); // ✅ CORREGIDO: Restablecer fecha mínima después de reset
+    setupDateInput(); // 
     showNotification( 'Tarea agregada exitosamente' );
 
     if ( currentUser && isOnline ) {
         setTimeout( () => syncToFirebase(), 1000 );
     }
+
+    const advancedConfig = document.getElementById( 'advancedRepeatConfig' );
+    const customDays = document.getElementById( 'customDays' );
+    const repeatDuration = document.getElementById( 'repeatDuration' );
+
+    advancedConfig?.classList.add( 'hidden' );
+    customDays?.classList.add( 'hidden' );
+
+    // Resetear duración a valor por defecto
+    if ( repeatDuration ) {
+        repeatDuration.value = '2';
+    }
+
+    // Desmarcar checkboxes de días personalizados
+    const customDaysCheckboxes = document.querySelectorAll( '#customDays input[type="checkbox"]' );
+    customDaysCheckboxes.forEach( checkbox => {
+        checkbox.checked = false;
+    } );
 }
 
 function addTaskToDate( dateStr, task ) {
@@ -520,9 +731,32 @@ function addTaskToDate( dateStr, task ) {
 }
 
 function addRecurringTasks( task, repeatType, startDate ) {
-    const endDate = new Date( startDate );
-    endDate.setMonth( endDate.getMonth() + 1 );
+    // Obtener duración configurada por el usuario
+    const durationSelect = document.getElementById( 'repeatDuration' );
+    const durationMonths = durationSelect ? parseInt( durationSelect.value ) : 2;
+
+    let endDate;
     let currentDate = new Date( startDate );
+    let tasksAdded = 0;
+
+    // ✅ CORREGIDO: Calcular fecha final correctamente según duración seleccionada
+    if ( durationMonths === 1 ) {
+        // Solo este mes: hasta el último día del mes actual
+        endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
+    } else {
+        // Otros casos: agregar meses completos
+        endDate = new Date( startDate );
+        endDate.setMonth( endDate.getMonth() + durationMonths );
+        // Ajustar al último día del mes final
+        endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
+    }
+
+    // ✅ NUEVO: Obtener días seleccionados para custom antes del loop
+    let selectedDays = [];
+    if ( repeatType === 'custom' ) {
+        selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) )
+            .map( cb => parseInt( cb.value ) );
+    }
 
     while ( currentDate <= endDate ) {
         const dateStr = currentDate.toISOString().split( 'T' )[ 0 ];
@@ -543,15 +777,31 @@ function addRecurringTasks( task, repeatType, startDate ) {
                 shouldAdd = dayOfWeek === startDate.getDay();
                 break;
             case 'custom':
-                const selectedDays = Array.from( document.querySelectorAll( '#customDays input:checked' ) )
-                    .map( cb => parseInt( cb.value ) );
-                shouldAdd = selectedDays.includes( dayOfWeek );
+                shouldAdd = selectedDays.includes( dayOfWeek ) && selectedDays.length > 0;
                 break;
         }
 
-        if ( shouldAdd ) addTaskToDate( dateStr, task );
+        if ( shouldAdd && !isDatePast( dateStr ) ) {
+            addTaskToDate( dateStr, task );
+            tasksAdded++;
+        }
+
         currentDate.setDate( currentDate.getDate() + 1 );
     }
+
+    // ✅ MEJORADO: Mostrar resumen más detallado y preciso
+    const durationText = {
+        '1': 'lo que resta del mes actual',
+        '2': 'lo que resta del mes actual y todo el mes siguiente',
+        '3': 'los próximos 3 meses',
+        '6': 'los próximos 6 meses',
+        '12': 'el próximo año'
+    };
+
+    showNotification(
+        `${tasksAdded} tareas agregadas para ${durationText[ durationMonths.toString() ] || `${durationMonths} meses`}`,
+        'success'
+    );
 }
 
 function renderCalendar() {
@@ -1004,7 +1254,7 @@ function handleDrop( e ) {
     if ( dropTarget && draggedTask && draggedFromDate ) {
         const targetDate = dropTarget.dataset.date;
 
-        // ✅ NUEVO: Verificar si la fecha destino es anterior a hoy
+        // Verificar si la fecha destino es anterior a hoy
         if ( isDatePast( targetDate ) ) {
             showNotification( 'No puedes mover tareas a fechas anteriores', 'error' );
 

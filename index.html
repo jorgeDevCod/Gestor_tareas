@@ -141,16 +141,37 @@
                                 <option value="custom">Días personalizados</option>
                             </select>
                         </div>
-                        <div id="customDays" class="hidden">
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Seleccionar días</label>
-                            <div class="grid grid-cols-3 gap-2">
-                                <label class="flex items-center"><input type="checkbox" value="0" class="mr-1"> Dom</label>
-                                <label class="flex items-center"><input type="checkbox" value="1" class="mr-1"> Lun</label>
-                                <label class="flex items-center"><input type="checkbox" value="2" class="mr-1"> Mar</label>
-                                <label class="flex items-center"><input type="checkbox" value="3" class="mr-1"> Mié</label>
-                                <label class="flex items-center"><input type="checkbox" value="4" class="mr-1"> Jue</label>
-                                <label class="flex items-center"><input type="checkbox" value="5" class="mr-1"> Vie</label>
-                                <label class="flex items-center"><input type="checkbox" value="6" class="mr-1"> Sáb</label>
+                        <div id="advancedRepeatConfig" class="hidden space-y-4 p-4 bg-gray-50 rounded-lg border">
+                            <!-- Duración de repetición -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Duración de repetición</label>
+                                <select id="repeatDuration" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="1">Solo este mes</option>
+                                    <option value="2" selected>Este mes y el siguiente</option>
+                                    <option value="3">Próximos 3 meses</option>
+                                    <option value="6">Próximos 6 meses</option>
+                                    <option value="12">Próximo año</option>
+                                </select>
+                            </div>
+                        
+                            <!-- Días personalizados (solo para opción custom) -->
+                            <div id="customDays" class="hidden">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Seleccionar días</label>
+                                <div class="grid grid-cols-4 gap-2">
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="0" class="mr-1 rounded"> Dom</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="1" class="mr-1 rounded"> Lun</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="2" class="mr-1 rounded"> Mar</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="3" class="mr-1 rounded"> Mié</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="4" class="mr-1 rounded"> Jue</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="5" class="mr-1 rounded"> Vie</label>
+                                    <label class="flex items-center text-sm"><input type="checkbox" value="6" class="mr-1 rounded"> Sáb</label>
+                                </div>
+                            </div>
+                        
+                            <!-- Vista previa -->
+                            <div id="repeatPreview" class="text-xs text-gray-600 bg-white p-2 rounded border">
+                                <span class="font-medium">Vista previa:</span>
+                                <span id="previewText">Selecciona opciones para ver vista previa</span>
                             </div>
                         </div>
 
