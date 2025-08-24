@@ -371,7 +371,7 @@ async function syncFromFirebase() {
         syncInProgress = false;
         updateSyncButtonState();
     }
-}}
+}
 
 async function deleteTaskFromFirebase( dateStr, taskId ) {
     if ( !currentUser || !isOnline ) return;
