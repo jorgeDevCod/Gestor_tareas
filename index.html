@@ -153,9 +153,16 @@
                                 <label class="flex items-center"><input type="checkbox" value="6" class="mr-1"> Sáb</label>
                             </div>
                         </div>
-                        <button type="submit" class="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
-                            <i class="fas fa-plus mr-2"></i>Agregar Tarea
-                        </button>
+
+                        <!-- ✅ NUEVO: Botones del formulario con reset -->
+                        <div class="flex space-x-3">
+                            <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300">
+                                <i class="fas fa-plus mr-2"></i>Agregar Tarea
+                            </button>
+                            <button type="button" id="resetFormBtn" class="bg-red-400 text-white py-2 px-4 rounded-lg hover:bg-gray-500 transition duration-300" title="Limpiar formulario">
+                                <i class="fas fa-eraser"></i>
+                            </button>
+                        </div>
                     </form>
                 </div>
 
@@ -168,6 +175,9 @@
                         </button>
                         <button id="clearMonthBtn" class="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition">
                             <i class="fas fa-trash-alt mr-2"></i>Limpiar Mes
+                        </button>
+                        <button id="clearAllBtn" class="w-full bg-gray-700 text-white py-2 px-4 rounded-lg hover:bg-gray-800 transition">
+                            <i class="fas fa-trash-alt mr-2"></i>Limpiar Todo
                         </button>
                     </div>
                 </div>
@@ -281,8 +291,9 @@
             <span id="messageText"></span>
         </div>
     </div>
-</body>
 
-<script src="app.js"></script>
+    <script src="app.js"></script>
+
+</body>
 
 </html>
