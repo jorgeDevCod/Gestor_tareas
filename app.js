@@ -359,29 +359,25 @@ function clearDayChangeLog( dateStr ) {
 }
 
 //Encolar operaciones para sync automático
-function enqueueSync( operation, dateStr, task = null ) {
-  if ( !currentUser || !isOnline ) return;
+function enqueueSync( operation, dateStr, task ) {
+  const key = `${operation}-${dateStr}-${task.id}`;
 
-  const operationKey = `${dateStr}_${task?.id || "batch"}`;
-
-  syncQueue.set( operationKey, {
+  syncQueue.set( key, {
     operation,
     dateStr,
-    task: task ? { ...task } : null,
+    task: { ...task },
     timestamp: Date.now(),
+    attempts: 0
   } );
 
-  // Cancelar timeout anterior si existe
-  if ( syncTimeout ) {
-    clearTimeout( syncTimeout );
+  // Actualizar indicador con contador
+  if ( !isOnline ) {
+    updateSyncIndicator( "offline" );
+  } else if ( syncQueue.size > 0 ) {
+    updateSyncIndicator( "pending" );
   }
 
-  // Programar sync con debounce
-  syncTimeout = setTimeout( () => {
-    processSyncQueue();
-  }, SYNC_DEBOUNCE_TIME );
-
-  updateSyncIndicator( "pending" );
+  console.log( `📝 Operación ${operation} encolada para sync:`, key );
 }
 
 //Procesar cola de sincronización
@@ -467,60 +463,6 @@ async function processSyncQueue() {
     }, 10000 );
   } finally {
     isSyncing = false;
-  }
-}
-
-//indicador visual de sync
-function updateSyncIndicator( status ) {
-  const statusEl = document.getElementById( "firebaseStatus" );
-  const iconEl = document.getElementById( "statusIcon" );
-  const textEl = document.getElementById( "statusText" );
-
-  if ( !statusEl || !iconEl || !textEl ) return;
-
-  const statusConfig = {
-    success: {
-      class: "bg-green-500 text-white",
-      icon: "fa-check-circle",
-      text: "Sincronizado",
-    },
-    error: {
-      class: "bg-red-500 text-white",
-      icon: "fa-exclamation-triangle",
-      text: "Error de sync",
-    },
-    syncing: {
-      class: "bg-blue-500 text-white",
-      icon: "fa-sync-alt fa-spin",
-      text: "Sincronizando...",
-    },
-    pending: {
-      class: "bg-orange-500 text-white",
-      icon: "fa-clock",
-      text: "Cambios pendientes",
-    },
-    offline: {
-      class: "bg-gray-500 text-white",
-      icon: "fa-wifi",
-      text: "Off line",
-    },
-  };
-
-  const config = statusConfig[ status ] || statusConfig.offline;
-
-  statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
-  iconEl.className = `fas ${config.icon} mr-2`;
-  textEl.textContent = config.text;
-  statusEl.classList.remove( "hidden" );
-
-  // Auto-ocultar después de 3 segundos (excepto offline y pending)
-  if ( ![ "offline", "pending" ].includes( status ) ) {
-    setTimeout( () => {
-      if ( textEl.textContent === config.text ) {
-        // Solo ocultar si no cambió
-        statusEl.classList.add( "hidden" );
-      }
-    }, 3000 );
   }
 }
 
@@ -735,6 +677,40 @@ function showSyncStats() {
   document.body.appendChild( statsModal );
 }
 
+function exportToExcelOffline() {
+  if ( typeof XLSX === "undefined" ) {
+    showNotification( "Funcionalidad de exportación no disponible sin conexión", "error" );
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Estado", "Prioridad" ] ];
+
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    dayTasks.forEach( ( task ) => {
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+      const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
+
+      data.push( [
+        date,
+        task.title,
+        task.description || "",
+        task.time || "",
+        state.label,
+        priority.label
+      ] );
+    } );
+  } );
+
+  const ws = XLSX.utils.aoa_to_sheet( data );
+  XLSX.utils.book_append_sheet( wb, ws, "Tareas" );
+
+  const filename = `tareas_offline_${getTodayString()}.xlsx`;
+  XLSX.writeFile( wb, filename );
+
+  showNotification( `Excel exportado: ${filename}`, "success" );
+}
+
 // FUNCIÓN única para obtener fecha actual en formato local
 function getTodayString() {
   const now = new Date();
@@ -792,33 +768,48 @@ function setupDateInput() {
 // Inicializar Firebase
 function initFirebase() {
   try {
+    // Verificar conectividad antes de inicializar Firebase
+    if ( !navigator.onLine ) {
+      console.log( "🔧 Iniciando en modo offline" );
+      initOfflineMode();
+      return;
+    }
+
     firebase.initializeApp( firebaseConfig );
     db = firebase.firestore();
     auth = firebase.auth();
 
+    // Mejorar configuración de persistencia
     db.enablePersistence( {
       synchronizeTabs: true,
+      experimentalTabSynchronization: true, // Mejor sync entre tabs
+    } ).then( () => {
+      console.log( "✅ Persistencia de Firebase habilitada" );
     } ).catch( ( error ) => {
-      if ( error.code == "failed-precondition" ) {
-        console.warn( "Persistencia falló: múltiples tabs abiertas" );
-      } else if ( error.code == "unimplemented" ) {
-        console.warn( "Persistencia no soportada en este navegador" );
-      } else {
-        console.warn( "Error en persistencia de Firebase:", error );
+      console.warn( "⚠️ Persistencia falló:", error.code );
+      if ( error.code === 'failed-precondition' ) {
+        console.warn( "Múltiples tabs abiertas" );
+      } else if ( error.code === 'unimplemented' ) {
+        console.warn( "Persistencia no soportada" );
       }
+      // Continuar sin persistencia
     } );
 
+    // Listener de autenticación con manejo offline
     auth.onAuthStateChanged( ( user ) => {
       currentUser = user;
       updateUI();
 
-      if ( user ) {
+      if ( user && navigator.onLine ) {
         updateSyncIndicator( "success" );
         setTimeout( () => {
           if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
         }, 1000 );
+      } else if ( user && !navigator.onLine ) {
+        updateSyncIndicator( "offline" );
+        showOfflineMessage();
       } else {
         updateSyncIndicator( "offline" );
       }
@@ -826,9 +817,137 @@ function initFirebase() {
 
     hideLoadingScreen();
   } catch ( error ) {
-    console.error( "Error initializing Firebase:", error );
-    updateSyncIndicator( "error" );
-    hideLoadingScreen();
+    console.error( "❌ Error inicializando Firebase:", error );
+    // Inicializar en modo offline si Firebase falla
+    initOfflineMode();
+  }
+}
+
+function initOfflineMode() {
+  console.log( "🔧 Iniciando aplicación en modo offline" );
+
+  isOnline = false;
+  currentUser = getOfflineUser(); // Usuario offline persistente
+
+  updateSyncIndicator( "offline" );
+  updateUI();
+  hideLoadingScreen();
+  showOfflineMessage();
+
+  // Configurar funcionalidades offline
+  setupOfflineFeatures();
+}
+
+function getOfflineUser() {
+  let offlineUser = localStorage.getItem( 'offlineUser' );
+
+  if ( !offlineUser ) {
+    // Crear usuario offline por defecto
+    offlineUser = {
+      uid: 'offline-' + Date.now(),
+      displayName: 'Usuario Offline',
+      email: 'usuario@offline.local',
+      photoURL: null,
+      isOffline: true
+    };
+    localStorage.setItem( 'offlineUser', JSON.stringify( offlineUser ) );
+  } else {
+    offlineUser = JSON.parse( offlineUser );
+  }
+
+  return offlineUser;
+}
+
+function setupOfflineFeatures() {
+  // Deshabilitar sincronización automática
+  if ( notificationInterval ) {
+    clearInterval( notificationInterval );
+  }
+
+  // Configurar elementos de UI para modo offline
+  const syncBtn = document.getElementById( "syncBtn" );
+  if ( syncBtn ) {
+    syncBtn.disabled = true;
+    syncBtn.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>Sin Conexión';
+    syncBtn.title = "Sincronización no disponible sin internet";
+  }
+
+  // Mostrar indicadores offline en botones
+  updateOfflineUI();
+}
+
+function updateOfflineUI() {
+  const offlineElements = [
+    { id: 'loginBtn', text: 'Sin conexión para login' },
+    { id: 'logoutBtn', text: 'Logout offline' },
+  ];
+
+  offlineElements.forEach( ( { id, text } ) => {
+    const element = document.getElementById( id );
+    if ( element ) {
+      element.title = text;
+      if ( !isOnline ) {
+        element.classList.add( 'opacity-50' );
+      } else {
+        element.classList.remove( 'opacity-50' );
+      }
+    }
+  } );
+}
+
+function showOfflineMessage() {
+  const offlineMessage = document.createElement( 'div' );
+  offlineMessage.id = 'offlineMessage';
+  offlineMessage.className = 'fixed top-16 left-4 right-4 bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 rounded-lg shadow-lg z-40';
+  offlineMessage.innerHTML = `
+    <div class="flex items-start">
+      <div class="flex-shrink-0">
+        <i class="fas fa-wifi-slash text-orange-500"></i>
+      </div>
+      <div class="ml-3 flex-1">
+        <p class="text-sm font-medium">
+          Modo Sin Conexión Activo
+        </p>
+        <p class="text-xs mt-1">
+          • Tus tareas se guardan localmente<br>
+          • Se sincronizarán cuando vuelva la conexión<br>
+          • Funcionalidad limitada disponible
+        </p>
+        <div class="mt-2 flex items-center space-x-2 text-xs">
+          <span class="flex items-center">
+            <i class="fas fa-check text-green-600 mr-1"></i>
+            Crear/editar tareas
+          </span>
+          <span class="flex items-center">
+            <i class="fas fa-times text-red-600 mr-1"></i>
+            Sync en tiempo real
+          </span>
+        </div>
+      </div>
+      <button onclick="hideOfflineMessage()" class="flex-shrink-0 ml-4 text-orange-400 hover:text-orange-600">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `;
+
+  // Remover mensaje anterior si existe
+  const existing = document.getElementById( 'offlineMessage' );
+  if ( existing ) existing.remove();
+
+  document.body.appendChild( offlineMessage );
+
+  // Auto-ocultar después de 10 segundos
+  setTimeout( () => {
+    if ( document.getElementById( 'offlineMessage' ) ) {
+      hideOfflineMessage();
+    }
+  }, 10000 );
+}
+
+function hideOfflineMessage() {
+  const message = document.getElementById( 'offlineMessage' );
+  if ( message ) {
+    message.remove();
   }
 }
 
@@ -854,20 +973,108 @@ function initNotifications() {
 }
 
 function setupNetworkListeners() {
-  window.addEventListener( "online", () => {
-    isOnline = true;
+  window.addEventListener( "online", handleOnline );
+  window.addEventListener( "offline", handleOffline );
+
+  // Verificación adicional cada 30 segundos
+  setInterval( () => {
+    const actuallyOnline = navigator.onLine;
+    if ( actuallyOnline !== isOnline ) {
+      if ( actuallyOnline ) {
+        handleOnline();
+      } else {
+        handleOffline();
+      }
+    }
+  }, 30000 );
+}
+
+function handleOnline() {
+  console.log( "🌐 Conexión restaurada" );
+  isOnline = true;
+  hideOfflineMessage();
+
+  if ( currentUser && currentUser.isOffline ) {
+    // Intentar reconectar con Firebase
+    initFirebase();
+  } else {
     updateSyncIndicator( "success" );
+    updateOfflineUI();
+
     if ( currentUser ) {
       // Procesar cola pendiente al reconectar
-      setTimeout( () => processSyncQueue(), 1000 );
-      syncFromFirebase();
+      setTimeout( () => {
+        processSyncQueue();
+        syncFromFirebase();
+      }, 1000 );
     }
-  } );
+  }
 
-  window.addEventListener( "offline", () => {
-    isOnline = false;
-    updateSyncIndicator( "offline" );
-  } );
+  showNotification( "Conexión restaurada. Sincronizando...", "success" );
+}
+
+function handleOffline() {
+  console.log( "📵 Conexión perdida" );
+  isOnline = false;
+  updateSyncIndicator( "offline" );
+  updateOfflineUI();
+  showOfflineMessage();
+
+  showNotification( "Trabajando sin conexión. Los cambios se sincronizarán cuando vuelva internet.", "info" );
+}
+
+function updateSyncIndicator( status ) {
+  const statusEl = document.getElementById( "firebaseStatus" );
+  const iconEl = document.getElementById( "statusIcon" );
+  const textEl = document.getElementById( "statusText" );
+
+  if ( !statusEl || !iconEl || !textEl ) return;
+
+  const pendingCount = syncQueue.size;
+
+  const statusConfig = {
+    success: {
+      class: "bg-green-500 text-white",
+      icon: "fa-check-circle",
+      text: "Sincronizado",
+    },
+    error: {
+      class: "bg-red-500 text-white",
+      icon: "fa-exclamation-triangle",
+      text: "Error de sync",
+    },
+    syncing: {
+      class: "bg-blue-500 text-white",
+      icon: "fa-sync-alt fa-spin",
+      text: "Sincronizando...",
+    },
+    pending: {
+      class: "bg-orange-500 text-white",
+      icon: "fa-clock",
+      text: `${pendingCount} cambios pendientes`,
+    },
+    offline: {
+      class: "bg-gray-600 text-white",
+      icon: "fa-wifi-slash",
+      text: pendingCount > 0 ? `Sin conexión (${pendingCount} pendientes)` : "Sin conexión",
+    },
+  };
+
+  const config = statusConfig[ status ] || statusConfig.offline;
+
+  statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
+  iconEl.className = `fas ${config.icon} mr-2`;
+  textEl.textContent = config.text;
+  statusEl.classList.remove( "hidden" );
+
+  // Auto-ocultar solo para estados temporales
+  if ( ![ "offline", "pending" ].includes( status ) ) {
+    setTimeout( () => {
+      if ( textEl.textContent === config.text ) {
+        statusEl.classList.add( "hidden" );
+      }
+    }, 3000 );
+  }
 }
 
 function hideLoadingScreen() {
