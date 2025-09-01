@@ -360,7 +360,19 @@ function clearDayChangeLog( dateStr ) {
 
 //Encolar operaciones para sync automático
 function enqueueSync( operation, dateStr, task ) {
+  if ( !task || !task.id ) {
+    console.error( '❌ enqueueSync: task o task.id faltante', { operation, dateStr, task } );
+    return;
+  }
+
   const key = `${operation}-${dateStr}-${task.id}`;
+
+  // Evitar duplicados recientes (últimos 1000ms)
+  const existing = syncQueue.get( key );
+  if ( existing && ( Date.now() - existing.timestamp ) < 1000 ) {
+    console.log( '⚠️ Operación duplicada reciente ignorada:', key );
+    return;
+  }
 
   syncQueue.set( key, {
     operation,
@@ -370,32 +382,69 @@ function enqueueSync( operation, dateStr, task ) {
     attempts: 0
   } );
 
-  // Actualizar indicador con contador
+  console.log( `📝 Operación encolada:`, {
+    key,
+    operation,
+    queueSize: syncQueue.size,
+    taskTitle: task.title
+  } );
+
+  // Actualizar indicador inmediatamente
   if ( !isOnline ) {
     updateSyncIndicator( "offline" );
   } else if ( syncQueue.size > 0 ) {
     updateSyncIndicator( "pending" );
-  }
 
-  console.log( `📝 Operación ${operation} encolada para sync:`, key );
+    // Iniciar sync automático con debounce corto
+    if ( syncTimeout ) {
+      clearTimeout( syncTimeout );
+    }
+
+    syncTimeout = setTimeout( () => {
+      if ( syncQueue.size > 0 && !isSyncing ) {
+        processSyncQueue();
+      }
+    }, SYNC_DEBOUNCE_TIME ); // Usar la constante definida (2000ms)
+  }
 }
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
-  if ( !currentUser || !isOnline || isSyncing || syncQueue.size === 0 ) {
+  console.log( '🔄 Iniciando processSyncQueue...', {
+    currentUser: !!currentUser,
+    isOnline,
+    isSyncing,
+    queueSize: syncQueue.size,
+    dbInitialized: !!db
+  } );
+
+  // Verificaciones básicas mejoradas
+  if ( !currentUser ) {
+    console.log( '❌ No hay usuario logueado' );
+    updateSyncIndicator( "offline" );
     return;
   }
 
-  // Verificar intervalo mínimo entre syncs
-  const now = Date.now();
-  if ( now - lastSyncTime < MIN_SYNC_INTERVAL ) {
-    // Re-programar sync
-    syncTimeout = setTimeout(
-      () => {
-        processSyncQueue();
-      },
-      MIN_SYNC_INTERVAL - ( now - lastSyncTime )
-    );
+  if ( !isOnline ) {
+    console.log( '❌ Sin conexión a internet' );
+    updateSyncIndicator( "offline" );
+    return;
+  }
+
+  if ( !db ) {
+    console.log( '❌ Firebase no inicializado' );
+    updateSyncIndicator( "error" );
+    return;
+  }
+
+  if ( isSyncing ) {
+    console.log( '⚠️ Sync ya en progreso' );
+    return;
+  }
+
+  if ( syncQueue.size === 0 ) {
+    console.log( '✅ Cola vacía, actualizando indicador' );
+    updateSyncIndicator( "success" );
     return;
   }
 
@@ -404,65 +453,88 @@ async function processSyncQueue() {
 
   try {
     const operations = Array.from( syncQueue.values() );
+    console.log( `📤 Procesando ${operations.length} operaciones:`, operations );
+
     const userTasksRef = db
       .collection( "users" )
       .doc( currentUser.uid )
       .collection( "tasks" );
-    const batch = db.batch();
 
-    let operationsCount = 0;
+    // Procesar por lotes para evitar límites de Firestore
+    const BATCH_SIZE = 500; // Límite de Firestore
+    let processedCount = 0;
 
-    for ( const op of operations ) {
-      const taskDocId = `${op.dateStr}_${op.task?.id}`;
-      const taskRef = userTasksRef.doc( taskDocId );
+    for ( let i = 0; i < operations.length; i += BATCH_SIZE ) {
+      const batch = db.batch();
+      const batchOps = operations.slice( i, i + BATCH_SIZE );
 
-      switch ( op.operation ) {
-        case "upsert":
-          if ( op.task ) {
-            batch.set(
-              taskRef,
-              {
+      for ( const op of batchOps ) {
+        const taskDocId = `${op.dateStr}_${op.task?.id}`;
+        const taskRef = userTasksRef.doc( taskDocId );
+
+        switch ( op.operation ) {
+          case "upsert":
+            if ( op.task ) {
+              batch.set( taskRef, {
                 ...op.task,
                 date: op.dateStr,
                 lastModified: new Date(),
-              },
-              { merge: true }
-            );
-            operationsCount++;
-          }
-          break;
+              }, { merge: true } );
+              processedCount++;
+            }
+            break;
 
-        case "delete":
-          batch.delete( taskRef );
-          operationsCount++;
-          break;
+          case "delete":
+            batch.delete( taskRef );
+            processedCount++;
+            break;
+        }
+      }
+
+      if ( processedCount > 0 ) {
+        await batch.commit();
+        console.log( `✅ Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
       }
     }
 
-    if ( operationsCount > 0 ) {
-      await batch.commit();
-      console.log( `Sincronizadas ${operationsCount} operaciones` );
-
-      // Solo mostrar notificación si hay muchas operaciones
-      if ( operationsCount >= 5 ) {
-        showNotification( `${operationsCount} cambios sincronizados`, "success" );
-      }
-    }
-
-    // Limpiar cola
+    // IMPORTANTE: Limpiar cola SOLO después de éxito
     syncQueue.clear();
     lastSyncTime = Date.now();
-    updateSyncIndicator( "success" );
-  } catch ( error ) {
-    console.error( "❌ Error en sync automático:", error );
-    updateSyncIndicator( "error" );
 
-    // Re-intentar después de un tiempo
-    setTimeout( () => {
-      processSyncQueue();
-    }, 10000 );
+    console.log( `🎉 Sync completado: ${processedCount} operaciones procesadas` );
+
+    // Actualizar indicador a éxito
+    updateSyncIndicator( "success" );
+
+    // Mostrar notificación solo para muchas operaciones
+    if ( processedCount >= 3 ) {
+      showNotification( `${processedCount} cambios sincronizados`, "success" );
+    }
+
+  } catch ( error ) {
+    console.error( "❌ Error en processSyncQueue:", error );
+
+    // Manejar errores específicos
+    if ( error.code === 'permission-denied' ) {
+      showNotification( "Error de permisos en Firebase", "error" );
+      updateSyncIndicator( "error" );
+    } else if ( error.code === 'unavailable' ) {
+      showNotification( "Firebase temporalmente no disponible", "error" );
+      updateSyncIndicator( "pending" );
+
+      // Reintentar después de 10 segundos
+      setTimeout( () => {
+        if ( syncQueue.size > 0 ) {
+          processSyncQueue();
+        }
+      }, 10000 );
+    } else {
+      updateSyncIndicator( "error" );
+      showNotification( "Error de sincronización: " + error.message, "error" );
+    }
   } finally {
     isSyncing = false;
+    console.log( '🏁 processSyncQueue finalizado, isSyncing = false' );
   }
 }
 
@@ -710,6 +782,7 @@ function exportToExcelOffline() {
 
   showNotification( `Excel exportado: ${filename}`, "success" );
 }
+
 
 // FUNCIÓN única para obtener fecha actual en formato local
 function getTodayString() {
@@ -1028,15 +1101,19 @@ function updateSyncIndicator( status ) {
   const iconEl = document.getElementById( "statusIcon" );
   const textEl = document.getElementById( "statusText" );
 
-  if ( !statusEl || !iconEl || !textEl ) return;
+  if ( !statusEl || !iconEl || !textEl ) {
+    console.warn( '⚠️ Elementos de indicador no encontrados' );
+    return;
+  }
 
   const pendingCount = syncQueue.size;
+  console.log( `🔄 Actualizando indicador: ${status}, pendientes: ${pendingCount}` );
 
   const statusConfig = {
     success: {
       class: "bg-green-500 text-white",
       icon: "fa-check-circle",
-      text: "Sincronizado",
+      text: pendingCount > 0 ? `${pendingCount} pendientes` : "Sincronizado",
     },
     error: {
       class: "bg-red-500 text-white",
@@ -1046,7 +1123,7 @@ function updateSyncIndicator( status ) {
     syncing: {
       class: "bg-blue-500 text-white",
       icon: "fa-sync-alt fa-spin",
-      text: "Sincronizando...",
+      text: `Sincronizando ${pendingCount}...`,
     },
     pending: {
       class: "bg-orange-500 text-white",
@@ -1062,18 +1139,19 @@ function updateSyncIndicator( status ) {
 
   const config = statusConfig[ status ] || statusConfig.offline;
 
-  statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
+  // Aplicar cambios
+  statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 transition-all duration-300 ${config.class}`;
   iconEl.className = `fas ${config.icon} mr-2`;
   textEl.textContent = config.text;
   statusEl.classList.remove( "hidden" );
 
-  // Auto-ocultar solo para estados temporales
-  if ( ![ "offline", "pending" ].includes( status ) ) {
+  // Auto-ocultar solo para estados temporales Y si no hay elementos pendientes
+  if ( status === "success" && pendingCount === 0 ) {
     setTimeout( () => {
-      if ( textEl.textContent === config.text ) {
+      if ( syncQueue.size === 0 && textEl.textContent === config.text ) {
         statusEl.classList.add( "hidden" );
       }
-    }, 3000 );
+    }, 2000 ); // Reducido a 2 segundos
   }
 }
 
@@ -1218,6 +1296,16 @@ async function syncFromFirebase() {
     isSyncing = false;
   }
 }
+
+function forceSyncNow() {
+  console.log( '🔥 Forzando sincronización inmediata...' );
+  if ( syncTimeout ) {
+    clearTimeout( syncTimeout );
+    syncTimeout = null;
+  }
+  processSyncQueue();
+}
+
 
 // CONFIGURACIÓN de eventos con botón reset
 function setupEventListeners() {
