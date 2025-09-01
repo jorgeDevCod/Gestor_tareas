@@ -33,7 +33,7 @@ let notificationStatus = {
   taskReminders: new Set(),
 };
 //Sistema de registro de cambios
-let taskChangeLog = JSON.parse(localStorage.getItem("taskChangeLog")) || [];
+let taskChangeLog = JSON.parse( localStorage.getItem( "taskChangeLog" ) ) || [];
 
 // Sistema de sincronización automática optimizada
 let syncQueue = new Map(); // Cola de operaciones pendientes
@@ -87,7 +87,7 @@ const PRIORITY_LEVELS = {
 };
 
 // Estructura mejorada para registro por día
-let dailyTaskLogs = JSON.parse(localStorage.getItem("dailyTaskLogs") || "{}");
+let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
 
 function addToChangeLog(
   action,
@@ -106,50 +106,50 @@ function addToChangeLog(
     oldState,
     newState,
     timestamp: now.toISOString(),
-    time: now.toLocaleTimeString("es-ES", {
+    time: now.toLocaleTimeString( "es-ES", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-    }),
+    } ),
     date: dateStr,
-    readableDate: new Date(dateStr + "T12:00:00").toLocaleDateString("es-ES", {
+    readableDate: new Date( dateStr + "T12:00:00" ).toLocaleDateString( "es-ES", {
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
-    }),
+    } ),
   };
 
   // Registro por día específico
-  if (!dailyTaskLogs[dateStr]) {
-    dailyTaskLogs[dateStr] = [];
+  if ( !dailyTaskLogs[ dateStr ] ) {
+    dailyTaskLogs[ dateStr ] = [];
   }
-  dailyTaskLogs[dateStr].unshift(logEntry);
+  dailyTaskLogs[ dateStr ].unshift( logEntry );
 
   // Mantener solo los últimos 50 registros por día
-  if (dailyTaskLogs[dateStr].length > 50) {
-    dailyTaskLogs[dateStr] = dailyTaskLogs[dateStr].slice(0, 50);
+  if ( dailyTaskLogs[ dateStr ].length > 50 ) {
+    dailyTaskLogs[ dateStr ] = dailyTaskLogs[ dateStr ].slice( 0, 50 );
   }
 
   // Calcular tiempo de proceso a completado si aplica
-  if (action === "stateChanged" && newState === "completed" && taskId) {
-    calculateTaskDuration(dateStr, taskId, taskTitle);
+  if ( action === "stateChanged" && newState === "completed" && taskId ) {
+    calculateTaskDuration( dateStr, taskId, taskTitle );
   }
 
-  localStorage.setItem("dailyTaskLogs", JSON.stringify(dailyTaskLogs));
+  localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
 
   // Mantener registro global solo para estadísticas (opcional)
-  taskChangeLog.unshift(logEntry);
-  if (taskChangeLog.length > 200) {
-    taskChangeLog = taskChangeLog.slice(0, 200);
+  taskChangeLog.unshift( logEntry );
+  if ( taskChangeLog.length > 200 ) {
+    taskChangeLog = taskChangeLog.slice( 0, 200 );
   }
-  localStorage.setItem("taskChangeLog", JSON.stringify(taskChangeLog));
+  localStorage.setItem( "taskChangeLog", JSON.stringify( taskChangeLog ) );
 }
 
-function calculateTaskDuration(dateStr, taskId, taskTitle) {
-  const dayLogs = dailyTaskLogs[dateStr] || [];
+function calculateTaskDuration( dateStr, taskId, taskTitle ) {
+  const dayLogs = dailyTaskLogs[ dateStr ] || [];
   const completedLog = dayLogs.find(
-    (log) =>
+    ( log ) =>
       log.taskId === taskId &&
       log.action === "stateChanged" &&
       log.newState === "completed"
@@ -159,23 +159,23 @@ function calculateTaskDuration(dateStr, taskId, taskTitle) {
     .slice()
     .reverse()
     .find(
-      (log) =>
+      ( log ) =>
         log.taskId === taskId &&
         log.action === "stateChanged" &&
         log.newState === "inProgress"
     );
 
-  if (completedLog && startLog && !completedLog.duration) {
-    const startTime = new Date(startLog.timestamp);
-    const endTime = new Date(completedLog.timestamp);
+  if ( completedLog && startLog && !completedLog.duration ) {
+    const startTime = new Date( startLog.timestamp );
+    const endTime = new Date( completedLog.timestamp );
     const durationMs = endTime - startTime;
 
-    if (durationMs > 0) {
-      const hours = Math.floor(durationMs / (1000 * 60 * 60));
-      const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+    if ( durationMs > 0 ) {
+      const hours = Math.floor( durationMs / ( 1000 * 60 * 60 ) );
+      const minutes = Math.floor( ( durationMs % ( 1000 * 60 * 60 ) ) / ( 1000 * 60 ) );
 
       let durationText = "";
-      if (hours > 0) {
+      if ( hours > 0 ) {
         durationText = `${hours}h ${minutes}min`;
       } else {
         durationText = `${minutes}min`;
@@ -186,16 +186,16 @@ function calculateTaskDuration(dateStr, taskId, taskTitle) {
       completedLog.durationMs = durationMs;
 
       // Guardar cambios
-      localStorage.setItem("dailyTaskLogs", JSON.stringify(dailyTaskLogs));
+      localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
     }
   }
 }
 
-function showDayChangeLog(dateStr) {
-  const dayLogs = dailyTaskLogs[dateStr] || [];
-  const date = new Date(dateStr + "T12:00:00");
+function showDayChangeLog( dateStr ) {
+  const dayLogs = dailyTaskLogs[ dateStr ] || [];
+  const date = new Date( dateStr + "T12:00:00" );
 
-  const modal = document.createElement("div");
+  const modal = document.createElement( "div" );
   modal.id = "dayChangeLogModal";
   modal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -205,73 +205,70 @@ function showDayChangeLog(dateStr) {
             <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
                 <h3 class="text-lg font-semibold text-gray-800">
                     <i class="fas fa-history text-blue-500 mr-2"></i>
-                    Registro del ${date.toLocaleDateString("es-ES", {
-                      weekday: "long",
-                      day: "numeric",
-                      month: "long",
-                    })}
+                    Registro del ${date.toLocaleDateString( "es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  } )}
                 </h3>
                 <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="p-6 overflow-y-auto max-h-96">
-                ${
-                  dayLogs.length === 0
-                    ? `
+                ${dayLogs.length === 0
+      ? `
                     <div class="text-center py-8 text-gray-500">
                         <i class="fas fa-clipboard-list text-4xl mb-3 opacity-50"></i>
                         <p>No hay registros para este día</p>
                     </div>
                 `
-                    : `
+      : `
                     <div class="space-y-3">
                         ${dayLogs
-                          .map(
-                            (log) => `
-                            <div class="bg-gray-50 rounded-lg p-4 border-l-4 ${getDayLogColor(log.action)}">
+        .map(
+          ( log ) => `
+                            <div class="bg-gray-50 rounded-lg p-4 border-l-4 ${getDayLogColor( log.action )}">
                                 <div class="flex justify-between items-start">
                                     <div class="flex-1">
                                         <div class="font-medium text-sm text-gray-800">
-                                            ${getDayLogIcon(log.action)} ${getDayLogMessage(log)}
+                                            ${getDayLogIcon( log.action )} ${getDayLogMessage( log )}
                                         </div>
                                         <div class="text-xs text-gray-500 mt-1 flex items-center space-x-3">
                                             <span class="bg-blue-100 text-blue-700 px-2 py-1 rounded font-mono">
                                                 ${log.time}
                                             </span>
-                                            ${log.taskId ? `<span class="text-gray-400">ID: ${log.taskId.substring(0, 8)}...</span>` : ""}
+                                            ${log.taskId ? `<span class="text-gray-400">ID: ${log.taskId.substring( 0, 8 )}...</span>` : ""}
                                         </div>
-                                        ${getStateChangeInfo(log)}
-                                        ${
-                                          log.duration
-                                            ? `
+                                        ${getStateChangeInfo( log )}
+                                        ${log.duration
+              ? `
                                             <div class="mt-2 bg-green-100 text-green-800 px-2 py-1 rounded text-xs inline-block">
                                                 <i class="fas fa-stopwatch mr-1"></i>
                                                 Tiempo total: ${log.duration}
                                             </div>
                                         `
-                                            : ""
-                                        }
+              : ""
+            }
                                     </div>
                                 </div>
                             </div>
                         `
-                          )
-                          .join("")}
+        )
+        .join( "" )}
                     </div>
                 `
-                }
+    }
                 <div class="mt-6 flex justify-end space-x-3">
-                    ${
-                      dayLogs.length > 0
-                        ? `
+                    ${dayLogs.length > 0
+      ? `
                         <button onclick="clearDayChangeLog('${dateStr}')" 
                                 class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition">
                             <i class="fas fa-trash mr-2"></i>Limpiar Registro
                         </button>
                     `
-                        : ""
-                    }
+      : ""
+    }
                     <button onclick="closeAllModals()" 
                             class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition">
                         Cerrar
@@ -281,10 +278,10 @@ function showDayChangeLog(dateStr) {
         </div>
     `;
 
-  document.body.appendChild(modal);
+  document.body.appendChild( modal );
 }
 
-function getDayLogColor(action) {
+function getDayLogColor( action ) {
   const colors = {
     created: "border-green-500",
     stateChanged: "border-blue-500",
@@ -294,10 +291,10 @@ function getDayLogColor(action) {
     deleted: "border-red-500",
     moved: "border-purple-500",
   };
-  return colors[action] || "border-gray-500";
+  return colors[ action ] || "border-gray-500";
 }
 
-function getDayLogIcon(action) {
+function getDayLogIcon( action ) {
   const icons = {
     created: '<i class="fas fa-plus text-green-600"></i>',
     stateChanged: '<i class="fas fa-sync-alt text-blue-600"></i>',
@@ -307,10 +304,10 @@ function getDayLogIcon(action) {
     deleted: '<i class="fas fa-trash text-red-600"></i>',
     moved: '<i class="fas fa-arrows-alt text-purple-600"></i>',
   };
-  return icons[action] || '<i class="fas fa-info text-gray-600"></i>';
+  return icons[ action ] || '<i class="fas fa-info text-gray-600"></i>';
 }
 
-function getDayLogMessage(log) {
+function getDayLogMessage( log ) {
   const messages = {
     created: `Tarea creada: "${log.taskTitle}"`,
     stateChanged: `"${log.taskTitle}": cambio de estado`,
@@ -320,14 +317,14 @@ function getDayLogMessage(log) {
     deleted: `Tarea eliminada: "${log.taskTitle}"`,
     moved: `Tarea movida: "${log.taskTitle}"`,
   };
-  return messages[log.action] || `Cambio en: "${log.taskTitle}"`;
+  return messages[ log.action ] || `Cambio en: "${log.taskTitle}"`;
 }
 
-function getStateChangeInfo(log) {
+function getStateChangeInfo( log ) {
   if (
-    (log.action === "stateChanged" ||
+    ( log.action === "stateChanged" ||
       log.action === "paused" ||
-      log.action === "resumed") &&
+      log.action === "resumed" ) &&
     log.oldState &&
     log.newState
   ) {
@@ -338,8 +335,8 @@ function getStateChangeInfo(log) {
       completed: "Completada",
     };
 
-    const oldStateName = stateNames[log.oldState] || log.oldState;
-    const newStateName = stateNames[log.newState] || log.newState;
+    const oldStateName = stateNames[ log.oldState ] || log.oldState;
+    const newStateName = stateNames[ log.newState ] || log.newState;
 
     return `
             <div class="text-xs text-blue-600 mt-1 bg-blue-50 px-2 py-1 rounded">
@@ -350,82 +347,82 @@ function getStateChangeInfo(log) {
   return "";
 }
 
-function clearDayChangeLog(dateStr) {
+function clearDayChangeLog( dateStr ) {
   if (
-    confirm("¿Estás seguro de que quieres limpiar el registro de este día?")
+    confirm( "¿Estás seguro de que quieres limpiar el registro de este día?" )
   ) {
-    delete dailyTaskLogs[dateStr];
-    localStorage.setItem("dailyTaskLogs", JSON.stringify(dailyTaskLogs));
-    showNotification("Registro del día limpiado", "success");
+    delete dailyTaskLogs[ dateStr ];
+    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
+    showNotification( "Registro del día limpiado", "success" );
     closeAllModals();
   }
 }
 
 //Encolar operaciones para sync automático
-function enqueueSync(operation, dateStr, task = null) {
-  if (!currentUser || !isOnline) return;
+function enqueueSync( operation, dateStr, task = null ) {
+  if ( !currentUser || !isOnline ) return;
 
   const operationKey = `${dateStr}_${task?.id || "batch"}`;
 
-  syncQueue.set(operationKey, {
+  syncQueue.set( operationKey, {
     operation,
     dateStr,
     task: task ? { ...task } : null,
     timestamp: Date.now(),
-  });
+  } );
 
   // Cancelar timeout anterior si existe
-  if (syncTimeout) {
-    clearTimeout(syncTimeout);
+  if ( syncTimeout ) {
+    clearTimeout( syncTimeout );
   }
 
   // Programar sync con debounce
-  syncTimeout = setTimeout(() => {
+  syncTimeout = setTimeout( () => {
     processSyncQueue();
-  }, SYNC_DEBOUNCE_TIME);
+  }, SYNC_DEBOUNCE_TIME );
 
-  updateSyncIndicator("pending");
+  updateSyncIndicator( "pending" );
 }
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
-  if (!currentUser || !isOnline || isSyncing || syncQueue.size === 0) {
+  if ( !currentUser || !isOnline || isSyncing || syncQueue.size === 0 ) {
     return;
   }
 
   // Verificar intervalo mínimo entre syncs
   const now = Date.now();
-  if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
+  if ( now - lastSyncTime < MIN_SYNC_INTERVAL ) {
     // Re-programar sync
     syncTimeout = setTimeout(
       () => {
         processSyncQueue();
       },
-      MIN_SYNC_INTERVAL - (now - lastSyncTime)
+      MIN_SYNC_INTERVAL - ( now - lastSyncTime )
     );
     return;
   }
 
   isSyncing = true;
-  updateSyncIndicator("syncing");
+  updateSyncIndicator( "syncing" );
 
   try {
-    const operations = Array.from(syncQueue.values());
+    const operations = Array.from( syncQueue.values() );
     const userTasksRef = db
-      .collection("users")
-      .doc(currentUser.uid)
-      .collection("tasks");
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "tasks" );
     const batch = db.batch();
 
     let operationsCount = 0;
 
-    for (const op of operations) {
+    for ( const op of operations ) {
       const taskDocId = `${op.dateStr}_${op.task?.id}`;
-      const taskRef = userTasksRef.doc(taskDocId);
+      const taskRef = userTasksRef.doc( taskDocId );
 
-      switch (op.operation) {
+      switch ( op.operation ) {
         case "upsert":
-          if (op.task) {
+          if ( op.task ) {
             batch.set(
               taskRef,
               {
@@ -440,46 +437,46 @@ async function processSyncQueue() {
           break;
 
         case "delete":
-          batch.delete(taskRef);
+          batch.delete( taskRef );
           operationsCount++;
           break;
       }
     }
 
-    if (operationsCount > 0) {
+    if ( operationsCount > 0 ) {
       await batch.commit();
-      console.log(`Sincronizadas ${operationsCount} operaciones`);
+      console.log( `Sincronizadas ${operationsCount} operaciones` );
 
       // Solo mostrar notificación si hay muchas operaciones
-      if (operationsCount >= 5) {
-        showNotification(`${operationsCount} cambios sincronizados`, "success");
+      if ( operationsCount >= 5 ) {
+        showNotification( `${operationsCount} cambios sincronizados`, "success" );
       }
     }
 
     // Limpiar cola
     syncQueue.clear();
     lastSyncTime = Date.now();
-    updateSyncIndicator("success");
-  } catch (error) {
-    console.error("❌ Error en sync automático:", error);
-    updateSyncIndicator("error");
+    updateSyncIndicator( "success" );
+  } catch ( error ) {
+    console.error( "❌ Error en sync automático:", error );
+    updateSyncIndicator( "error" );
 
     // Re-intentar después de un tiempo
-    setTimeout(() => {
+    setTimeout( () => {
       processSyncQueue();
-    }, 10000);
+    }, 10000 );
   } finally {
     isSyncing = false;
   }
 }
 
 //indicador visual de sync
-function updateSyncIndicator(status) {
-  const statusEl = document.getElementById("firebaseStatus");
-  const iconEl = document.getElementById("statusIcon");
-  const textEl = document.getElementById("statusText");
+function updateSyncIndicator( status ) {
+  const statusEl = document.getElementById( "firebaseStatus" );
+  const iconEl = document.getElementById( "statusIcon" );
+  const textEl = document.getElementById( "statusText" );
 
-  if (!statusEl || !iconEl || !textEl) return;
+  if ( !statusEl || !iconEl || !textEl ) return;
 
   const statusConfig = {
     success: {
@@ -509,162 +506,162 @@ function updateSyncIndicator(status) {
     },
   };
 
-  const config = statusConfig[status] || statusConfig.offline;
+  const config = statusConfig[ status ] || statusConfig.offline;
 
   statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 ${config.class}`;
   iconEl.className = `fas ${config.icon} mr-2`;
   textEl.textContent = config.text;
-  statusEl.classList.remove("hidden");
+  statusEl.classList.remove( "hidden" );
 
   // Auto-ocultar después de 3 segundos (excepto offline y pending)
-  if (!["offline", "pending"].includes(status)) {
-    setTimeout(() => {
-      if (textEl.textContent === config.text) {
+  if ( ![ "offline", "pending" ].includes( status ) ) {
+    setTimeout( () => {
+      if ( textEl.textContent === config.text ) {
         // Solo ocultar si no cambió
-        statusEl.classList.add("hidden");
+        statusEl.classList.add( "hidden" );
       }
-    }, 3000);
+    }, 3000 );
   }
 }
 
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
-  if (!currentUser || !isOnline) {
-    showNotification("No hay conexión disponible", "error");
+  if ( !currentUser || !isOnline ) {
+    showNotification( "No hay conexión disponible", "error" );
     return;
   }
 
-  if (isSyncing) {
-    showNotification("Sincronización en progreso...", "info");
+  if ( isSyncing ) {
+    showNotification( "Sincronización en progreso...", "info" );
     return;
   }
 
-  const syncBtn = document.getElementById("syncBtn");
+  const syncBtn = document.getElementById( "syncBtn" );
   const originalHTML = syncBtn ? syncBtn.innerHTML : "";
 
   try {
     // Cambiar visual del botón
-    if (syncBtn) {
+    if ( syncBtn ) {
       syncBtn.disabled = true;
       syncBtn.innerHTML =
         '<i class="fas fa-spinner fa-spin mr-2"></i>Sincronizando...';
     }
 
     // Primero procesar cola pendiente
-    if (syncQueue.size > 0) {
-      console.log("🔄 Procesando cola pendiente antes del sync manual");
+    if ( syncQueue.size > 0 ) {
+      console.log( "🔄 Procesando cola pendiente antes del sync manual" );
       await processSyncQueue();
     }
 
     // Hacer sync completo bidireccional
     isSyncing = true;
-    updateSyncIndicator("syncing");
+    updateSyncIndicator( "syncing" );
 
     // 1. Sync local → remoto (subir cambios)
     const userTasksRef = db
-      .collection("users")
-      .doc(currentUser.uid)
-      .collection("tasks");
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "tasks" );
     const allLocalTasks = [];
 
-    Object.entries(tasks).forEach(([date, dayTasks]) => {
-      dayTasks.forEach((task) => {
-        allLocalTasks.push({
+    Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+      dayTasks.forEach( ( task ) => {
+        allLocalTasks.push( {
           ...task,
           date,
           lastModified: new Date(),
-        });
-      });
-    });
+        } );
+      } );
+    } );
 
-    if (allLocalTasks.length > 0) {
+    if ( allLocalTasks.length > 0 ) {
       const uploadBatch = db.batch();
-      allLocalTasks.forEach((task) => {
-        const taskRef = userTasksRef.doc(`${task.date}_${task.id}`);
-        uploadBatch.set(taskRef, task, { merge: true });
-      });
+      allLocalTasks.forEach( ( task ) => {
+        const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
+        uploadBatch.set( taskRef, task, { merge: true } );
+      } );
 
       await uploadBatch.commit();
-      console.log(`📤 ${allLocalTasks.length} tareas locales subidas`);
+      console.log( `📤 ${allLocalTasks.length} tareas locales subidas` );
     }
 
     // 2. Sync remoto → local (bajar cambios)
     const snapshot = await userTasksRef.get();
     let tasksDownloaded = 0;
 
-    if (!snapshot.empty) {
+    if ( !snapshot.empty ) {
       const remoteTasks = {};
-      snapshot.forEach((doc) => {
+      snapshot.forEach( ( doc ) => {
         const task = doc.data();
         const date = task.date;
 
-        if (!remoteTasks[date]) {
-          remoteTasks[date] = [];
+        if ( !remoteTasks[ date ] ) {
+          remoteTasks[ date ] = [];
         }
 
-        remoteTasks[date].push({
+        remoteTasks[ date ].push( {
           id: task.id,
           title: task.title,
           description: task.description || "",
           time: task.time || "",
           completed: task.completed || false,
-        });
-      });
+        } );
+      } );
 
       // Mergear con tareas locales
-      Object.keys(remoteTasks).forEach((date) => {
-        if (!tasks[date]) {
-          tasks[date] = [];
+      Object.keys( remoteTasks ).forEach( ( date ) => {
+        if ( !tasks[ date ] ) {
+          tasks[ date ] = [];
         }
 
-        remoteTasks[date].forEach((remoteTask) => {
-          const existsLocally = tasks[date].some(
-            (localTask) =>
+        remoteTasks[ date ].forEach( ( remoteTask ) => {
+          const existsLocally = tasks[ date ].some(
+            ( localTask ) =>
               localTask.id === remoteTask.id ||
-              (localTask.title === remoteTask.title &&
-                localTask.time === remoteTask.time)
+              ( localTask.title === remoteTask.title &&
+                localTask.time === remoteTask.time )
           );
 
-          if (!existsLocally) {
-            tasks[date].push(remoteTask);
+          if ( !existsLocally ) {
+            tasks[ date ].push( remoteTask );
             tasksDownloaded++;
           }
-        });
-      });
+        } );
+      } );
 
-      if (tasksDownloaded > 0) {
+      if ( tasksDownloaded > 0 ) {
         saveTasks();
         renderCalendar();
         updateProgress();
       }
     }
 
-    updateSyncIndicator("success");
+    updateSyncIndicator( "success" );
 
     const totalSynced = allLocalTasks.length + tasksDownloaded;
-    if (totalSynced > 0) {
+    if ( totalSynced > 0 ) {
       showNotification(
         `Sincronización completa: ${allLocalTasks.length} subidas, ${tasksDownloaded} descargadas`,
         "success"
       );
     } else {
-      showNotification("Todo está sincronizado", "success");
+      showNotification( "Todo está sincronizado", "success" );
     }
 
     // Reiniciar notificaciones si están habilitadas
-    if (notificationsEnabled && Notification.permission === "granted") {
+    if ( notificationsEnabled && Notification.permission === "granted" ) {
       stopNotificationService();
-      setTimeout(() => startNotificationService(), 1000);
+      setTimeout( () => startNotificationService(), 1000 );
     }
-  } catch (error) {
-    console.error("Error en sync manual:", error);
-    updateSyncIndicator("error");
-    showNotification("Error en sincronización: " + error.message, "error");
+  } catch ( error ) {
+    console.error( "Error en sync manual:", error );
+    updateSyncIndicator( "error" );
+    showNotification( "Error en sincronización: " + error.message, "error" );
   } finally {
     isSyncing = false;
 
     // Restaurar botón
-    if (syncBtn) {
+    if ( syncBtn ) {
       syncBtn.disabled = false;
       syncBtn.innerHTML =
         originalHTML || '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
@@ -674,16 +671,16 @@ async function syncToFirebase() {
 
 // función para mostrar estadísticas de sync (OPCIONAL)
 function showSyncStats() {
-  const totalTasks = Object.values(tasks).reduce(
-    (sum, dayTasks) => sum + dayTasks.length,
+  const totalTasks = Object.values( tasks ).reduce(
+    ( sum, dayTasks ) => sum + dayTasks.length,
     0
   );
   const pendingOps = syncQueue.size;
   const lastSync = lastSyncTime
-    ? new Date(lastSyncTime).toLocaleTimeString()
+    ? new Date( lastSyncTime ).toLocaleTimeString()
     : "Nunca";
 
-  const statsModal = document.createElement("div");
+  const statsModal = document.createElement( "div" );
   statsModal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
   statsModal.innerHTML = `
@@ -735,31 +732,31 @@ function showSyncStats() {
         </div>
     `;
 
-  document.body.appendChild(statsModal);
+  document.body.appendChild( statsModal );
 }
 
 // FUNCIÓN única para obtener fecha actual en formato local
 function getTodayString() {
   const now = new Date();
   const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
+  const month = String( now.getMonth() + 1 ).padStart( 2, "0" );
+  const day = String( now.getDate() ).padStart( 2, "0" );
   return `${year}-${month}-${day}`;
 }
 
 // FUNCIÓN para comparar fechas correctamente
-function isDatePast(dateStr) {
+function isDatePast( dateStr ) {
   const today = new Date();
-  const checkDate = new Date(dateStr + "T00:00:00");
+  const checkDate = new Date( dateStr + "T00:00:00" );
 
-  today.setHours(0, 0, 0, 0);
-  checkDate.setHours(0, 0, 0, 0);
+  today.setHours( 0, 0, 0, 0 );
+  checkDate.setHours( 0, 0, 0, 0 );
 
   return checkDate < today;
 }
 
 // Inicialización
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener( "DOMContentLoaded", function () {
   initFirebase();
   loadTasks();
   renderCalendar();
@@ -771,23 +768,23 @@ document.addEventListener("DOMContentLoaded", function () {
   setupTaskTooltips();
   setupNetworkListeners();
   setupDateInput();
-});
+} );
 
 // Configurar input de fecha
 function setupDateInput() {
-  const taskDateInput = document.getElementById("taskDate");
-  const taskTimeInput = document.getElementById("taskTime");
+  const taskDateInput = document.getElementById( "taskDate" );
+  const taskTimeInput = document.getElementById( "taskTime" );
 
-  if (taskDateInput) {
+  if ( taskDateInput ) {
     const today = getTodayString();
-    taskDateInput.setAttribute("min", today);
+    taskDateInput.setAttribute( "min", today );
     taskDateInput.value = today;
   }
 
-  if (taskTimeInput) {
+  if ( taskTimeInput ) {
     const now = new Date();
-    const currentHour = String(now.getHours()).padStart(2, "0");
-    const currentMinute = String(now.getMinutes()).padStart(2, "0");
+    const currentHour = String( now.getHours() ).padStart( 2, "0" );
+    const currentMinute = String( now.getMinutes() ).padStart( 2, "0" );
     taskTimeInput.value = `${currentHour}:${currentMinute}`;
   }
 }
@@ -795,49 +792,49 @@ function setupDateInput() {
 // Inicializar Firebase
 function initFirebase() {
   try {
-    firebase.initializeApp(firebaseConfig);
+    firebase.initializeApp( firebaseConfig );
     db = firebase.firestore();
     auth = firebase.auth();
 
-    db.enablePersistence({
+    db.enablePersistence( {
       synchronizeTabs: true,
-    }).catch((error) => {
-      if (error.code == "failed-precondition") {
-        console.warn("Persistencia falló: múltiples tabs abiertas");
-      } else if (error.code == "unimplemented") {
-        console.warn("Persistencia no soportada en este navegador");
+    } ).catch( ( error ) => {
+      if ( error.code == "failed-precondition" ) {
+        console.warn( "Persistencia falló: múltiples tabs abiertas" );
+      } else if ( error.code == "unimplemented" ) {
+        console.warn( "Persistencia no soportada en este navegador" );
       } else {
-        console.warn("Error en persistencia de Firebase:", error);
+        console.warn( "Error en persistencia de Firebase:", error );
       }
-    });
+    } );
 
-    auth.onAuthStateChanged((user) => {
+    auth.onAuthStateChanged( ( user ) => {
       currentUser = user;
       updateUI();
 
-      if (user) {
-        updateSyncIndicator("success");
-        setTimeout(() => {
-          if (isOnline && !isSyncing) {
+      if ( user ) {
+        updateSyncIndicator( "success" );
+        setTimeout( () => {
+          if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
-        }, 1000);
+        }, 1000 );
       } else {
-        updateSyncIndicator("offline");
+        updateSyncIndicator( "offline" );
       }
-    });
+    } );
 
     hideLoadingScreen();
-  } catch (error) {
-    console.error("Error initializing Firebase:", error);
-    updateSyncIndicator("error");
+  } catch ( error ) {
+    console.error( "Error initializing Firebase:", error );
+    updateSyncIndicator( "error" );
     hideLoadingScreen();
   }
 }
 
 function initNotifications() {
-  if (!("Notification" in window)) {
-    console.warn("Este navegador no soporta notificaciones");
+  if ( !( "Notification" in window ) ) {
+    console.warn( "Este navegador no soporta notificaciones" );
     return;
   }
 
@@ -847,7 +844,7 @@ function initNotifications() {
       navigator.userAgent
     );
 
-  if (Notification.permission === "granted") {
+  if ( Notification.permission === "granted" ) {
     notificationsEnabled = true;
     updateNotificationButton();
     startNotificationService();
@@ -857,159 +854,159 @@ function initNotifications() {
 }
 
 function setupNetworkListeners() {
-  window.addEventListener("online", () => {
+  window.addEventListener( "online", () => {
     isOnline = true;
-    updateSyncIndicator("success");
-    if (currentUser) {
+    updateSyncIndicator( "success" );
+    if ( currentUser ) {
       // Procesar cola pendiente al reconectar
-      setTimeout(() => processSyncQueue(), 1000);
+      setTimeout( () => processSyncQueue(), 1000 );
       syncFromFirebase();
     }
-  });
+  } );
 
-  window.addEventListener("offline", () => {
+  window.addEventListener( "offline", () => {
     isOnline = false;
-    updateSyncIndicator("offline");
-  });
+    updateSyncIndicator( "offline" );
+  } );
 }
 
 function hideLoadingScreen() {
-  const loadingScreen = document.getElementById("loadingScreen");
+  const loadingScreen = document.getElementById( "loadingScreen" );
   loadingScreen.style.opacity = "0";
-  setTimeout(() => {
+  setTimeout( () => {
     loadingScreen.style.display = "none";
-  }, 300);
+  }, 300 );
 }
 
 function updateUI() {
-  const loginBtn = document.getElementById("loginBtn");
-  const userInfo = document.getElementById("userInfo");
-  const syncBtn = document.getElementById("syncBtn");
+  const loginBtn = document.getElementById( "loginBtn" );
+  const userInfo = document.getElementById( "userInfo" );
+  const syncBtn = document.getElementById( "syncBtn" );
 
-  if (currentUser) {
-    loginBtn.classList.add("hidden");
-    userInfo.classList.remove("hidden");
+  if ( currentUser ) {
+    loginBtn.classList.add( "hidden" );
+    userInfo.classList.remove( "hidden" );
     syncBtn.disabled = false;
 
-    document.getElementById("userName").textContent =
+    document.getElementById( "userName" ).textContent =
       currentUser.displayName || "Usuario";
-    document.getElementById("userEmail").textContent = currentUser.email;
-    document.getElementById("userPhoto").src =
+    document.getElementById( "userEmail" ).textContent = currentUser.email;
+    document.getElementById( "userPhoto" ).src =
       currentUser.photoURL || "https://via.placeholder.com/32";
   } else {
-    loginBtn.classList.remove("hidden");
-    userInfo.classList.add("hidden");
+    loginBtn.classList.remove( "hidden" );
+    userInfo.classList.add( "hidden" );
     syncBtn.disabled = true;
   }
 }
 
 function signInWithGoogle() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  provider.addScope("profile");
-  provider.addScope("email");
+  provider.addScope( "profile" );
+  provider.addScope( "email" );
 
   auth
-    .signInWithPopup(provider)
-    .then((result) => {
-      showNotification("Sesión iniciada correctamente", "success");
+    .signInWithPopup( provider )
+    .then( ( result ) => {
+      showNotification( "Sesión iniciada correctamente", "success" );
       closeLoginModal();
-    })
-    .catch((error) => {
-      console.error("Error signing in:", error);
-      showNotification("Error al iniciar sesión", "error");
-    });
+    } )
+    .catch( ( error ) => {
+      console.error( "Error signing in:", error );
+      showNotification( "Error al iniciar sesión", "error" );
+    } );
 }
 
 function signOut() {
-  if (confirm("¿Estás seguro de que quieres cerrar sesión?")) {
+  if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
     auth
       .signOut()
-      .then(() => {
-        showNotification("Sesión cerrada", "info");
-      })
-      .catch((error) => {
-        console.error("Error signing out:", error);
-      });
+      .then( () => {
+        showNotification( "Sesión cerrada", "info" );
+      } )
+      .catch( ( error ) => {
+        console.error( "Error signing out:", error );
+      } );
   }
 }
 
 async function syncFromFirebase() {
-  if (!currentUser || !isOnline || isSyncing) return;
+  if ( !currentUser || !isOnline || isSyncing ) return;
 
   isSyncing = true;
-  updateSyncIndicator("syncing");
+  updateSyncIndicator( "syncing" );
 
   try {
     const userTasksRef = db
-      .collection("users")
-      .doc(currentUser.uid)
-      .collection("tasks");
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "tasks" );
     const snapshot = await userTasksRef.get();
 
-    if (snapshot.empty) {
-      console.log("No hay tareas remotas para sincronizar");
-      updateSyncIndicator("success");
+    if ( snapshot.empty ) {
+      console.log( "No hay tareas remotas para sincronizar" );
+      updateSyncIndicator( "success" );
       return;
     }
 
     const remoteTasks = {};
-    snapshot.forEach((doc) => {
+    snapshot.forEach( ( doc ) => {
       const task = doc.data();
       const date = task.date;
 
-      if (!remoteTasks[date]) {
-        remoteTasks[date] = [];
+      if ( !remoteTasks[ date ] ) {
+        remoteTasks[ date ] = [];
       }
 
-      remoteTasks[date].push({
+      remoteTasks[ date ].push( {
         id: task.id,
         title: task.title,
         description: task.description || "",
         time: task.time || "",
         completed: task.completed || false,
-      });
-    });
+      } );
+    } );
 
     let tasksAdded = 0;
-    Object.keys(remoteTasks).forEach((date) => {
-      if (!tasks[date]) {
-        tasks[date] = [];
+    Object.keys( remoteTasks ).forEach( ( date ) => {
+      if ( !tasks[ date ] ) {
+        tasks[ date ] = [];
       }
 
-      remoteTasks[date].forEach((remoteTask) => {
-        const existsLocally = tasks[date].some(
-          (localTask) =>
+      remoteTasks[ date ].forEach( ( remoteTask ) => {
+        const existsLocally = tasks[ date ].some(
+          ( localTask ) =>
             localTask.id === remoteTask.id ||
-            (localTask.title === remoteTask.title &&
-              localTask.time === remoteTask.time)
+            ( localTask.title === remoteTask.title &&
+              localTask.time === remoteTask.time )
         );
 
-        if (!existsLocally) {
-          tasks[date].push(remoteTask);
+        if ( !existsLocally ) {
+          tasks[ date ].push( remoteTask );
           tasksAdded++;
         }
-      });
-    });
+      } );
+    } );
 
-    if (tasksAdded > 0) {
+    if ( tasksAdded > 0 ) {
       saveTasks();
       renderCalendar();
       updateProgress();
-      showNotification(`${tasksAdded} tareas sincronizadas`, "success");
+      showNotification( `${tasksAdded} tareas sincronizadas`, "success" );
     }
 
-    updateSyncIndicator("success");
+    updateSyncIndicator( "success" );
 
-    if (notificationsEnabled && Notification.permission === "granted") {
+    if ( notificationsEnabled && Notification.permission === "granted" ) {
       stopNotificationService();
-      setTimeout(() => {
+      setTimeout( () => {
         startNotificationService();
-      }, 1000);
+      }, 1000 );
     }
-  } catch (error) {
-    console.error("Error syncing from Firebase:", error);
-    updateSyncIndicator("error");
-    showNotification("Error al sincronizar", "error");
+  } catch ( error ) {
+    console.error( "Error syncing from Firebase:", error );
+    updateSyncIndicator( "error" );
+    showNotification( "Error al sincronizar", "error" );
   } finally {
     isSyncing = false;
   }
@@ -1019,8 +1016,8 @@ async function syncFromFirebase() {
 function setupEventListeners() {
   const elements = {
     taskForm: addTask,
-    prevMonth: () => changeMonth(-1),
-    nextMonth: () => changeMonth(1),
+    prevMonth: () => changeMonth( -1 ),
+    nextMonth: () => changeMonth( 1 ),
     closeModal: closeModal,
     taskRepeat: toggleCustomDays,
     clearWeekBtn: clearWeek,
@@ -1036,139 +1033,139 @@ function setupEventListeners() {
     clearAllBtn: clearAll,
   };
 
-  Object.entries(elements).forEach(([id, handler]) => {
-    const element = document.getElementById(id);
-    if (element) {
+  Object.entries( elements ).forEach( ( [ id, handler ] ) => {
+    const element = document.getElementById( id );
+    if ( element ) {
       element.addEventListener(
         element.tagName === "FORM" ? "submit" : "click",
         handler
       );
     }
-  });
+  } );
 
-  const closePanelBtn = document.getElementById("closePanelBtn");
-  const addQuickTaskBtn = document.getElementById("addQuickTaskBtn");
+  const closePanelBtn = document.getElementById( "closePanelBtn" );
+  const addQuickTaskBtn = document.getElementById( "addQuickTaskBtn" );
 
-  if (closePanelBtn) {
-    closePanelBtn.addEventListener("click", closeDailyTaskPanel);
+  if ( closePanelBtn ) {
+    closePanelBtn.addEventListener( "click", closeDailyTaskPanel );
   }
 
-  if (addQuickTaskBtn) {
-    addQuickTaskBtn.addEventListener("click", addQuickTaskToSelectedDay);
+  if ( addQuickTaskBtn ) {
+    addQuickTaskBtn.addEventListener( "click", addQuickTaskToSelectedDay );
   }
 
-  const repeatDurationSelect = document.getElementById("repeatDuration");
+  const repeatDurationSelect = document.getElementById( "repeatDuration" );
   const customDaysInputs = document.querySelectorAll(
     '#customDays input[type="checkbox"]'
   );
-  const taskDateInput = document.getElementById("taskDate");
+  const taskDateInput = document.getElementById( "taskDate" );
 
-  if (repeatDurationSelect) {
-    repeatDurationSelect.addEventListener("change", updateRepeatPreview);
+  if ( repeatDurationSelect ) {
+    repeatDurationSelect.addEventListener( "change", updateRepeatPreview );
   }
 
-  if (taskDateInput) {
-    taskDateInput.addEventListener("change", updateRepeatPreview);
+  if ( taskDateInput ) {
+    taskDateInput.addEventListener( "change", updateRepeatPreview );
   }
 
-  customDaysInputs.forEach((input) => {
-    input.addEventListener("change", updateRepeatPreview);
-  });
+  customDaysInputs.forEach( ( input ) => {
+    input.addEventListener( "change", updateRepeatPreview );
+  } );
 }
 
 function resetForm() {
-  const form = document.getElementById("taskForm");
-  const advancedConfig = document.getElementById("advancedRepeatConfig");
-  const customDays = document.getElementById("customDays");
-  const repeatDuration = document.getElementById("repeatDuration");
+  const form = document.getElementById( "taskForm" );
+  const advancedConfig = document.getElementById( "advancedRepeatConfig" );
+  const customDays = document.getElementById( "customDays" );
+  const repeatDuration = document.getElementById( "repeatDuration" );
 
   form.reset();
-  advancedConfig?.classList.add("hidden");
-  customDays?.classList.add("hidden");
+  advancedConfig?.classList.add( "hidden" );
+  customDays?.classList.add( "hidden" );
 
-  if (repeatDuration) {
+  if ( repeatDuration ) {
     repeatDuration.value = "2";
   }
 
   const customDaysCheckboxes = document.querySelectorAll(
     '#customDays input[type="checkbox"]'
   );
-  customDaysCheckboxes.forEach((checkbox) => {
+  customDaysCheckboxes.forEach( ( checkbox ) => {
     checkbox.checked = false;
-  });
+  } );
 
   setupDateInput();
-  showNotification("Formulario reiniciado", "info");
+  showNotification( "Formulario reiniciado", "info" );
 
-  const taskTimeInput = document.getElementById("taskTime");
-  if (taskTimeInput) {
-    taskTimeInput.addEventListener("change", () => {
-      setTimeout(() => {
+  const taskTimeInput = document.getElementById( "taskTime" );
+  if ( taskTimeInput ) {
+    taskTimeInput.addEventListener( "change", () => {
+      setTimeout( () => {
         taskTimeInput.blur();
-      }, 100);
-    });
+      }, 100 );
+    } );
 
-    taskTimeInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+    taskTimeInput.addEventListener( "keydown", ( e ) => {
+      if ( e.key === "Enter" ) {
         taskTimeInput.blur();
       }
-    });
+    } );
   }
 
-  document.addEventListener("change", (e) => {
-    if (e.target.type === "time") {
-      setTimeout(() => {
+  document.addEventListener( "change", ( e ) => {
+    if ( e.target.type === "time" ) {
+      setTimeout( () => {
         e.target.blur();
-      }, 100);
+      }, 100 );
     }
-  });
+  } );
 
-  document.addEventListener("keydown", (e) => {
-    if (e.target.type === "time" && e.key === "Enter") {
+  document.addEventListener( "keydown", ( e ) => {
+    if ( e.target.type === "time" && e.key === "Enter" ) {
       e.target.blur();
     }
-  });
+  } );
 }
 
 function showLoginModal() {
-  document.getElementById("loginModal").classList.remove("hidden");
+  document.getElementById( "loginModal" ).classList.remove( "hidden" );
 }
 
 function closeLoginModal() {
-  document.getElementById("loginModal").classList.add("hidden");
+  document.getElementById( "loginModal" ).classList.add( "hidden" );
 }
 
 function loadTasks() {
   try {
-    const storedTasks = localStorage.getItem("tasks");
-    tasks = storedTasks ? JSON.parse(storedTasks) : {};
-  } catch (error) {
+    const storedTasks = localStorage.getItem( "tasks" );
+    tasks = storedTasks ? JSON.parse( storedTasks ) : {};
+  } catch ( error ) {
     tasks = {};
-    console.warn("Error loading tasks from localStorage:", error);
+    console.warn( "Error loading tasks from localStorage:", error );
   }
 }
 
 function toggleCustomDays() {
-  const select = document.getElementById("taskRepeat");
-  const advancedConfig = document.getElementById("advancedRepeatConfig");
-  const customDays = document.getElementById("customDays");
+  const select = document.getElementById( "taskRepeat" );
+  const advancedConfig = document.getElementById( "advancedRepeatConfig" );
+  const customDays = document.getElementById( "customDays" );
 
-  if (select.value === "none") {
-    advancedConfig?.classList.add("hidden");
+  if ( select.value === "none" ) {
+    advancedConfig?.classList.add( "hidden" );
   } else {
-    advancedConfig?.classList.remove("hidden");
-    customDays?.classList.toggle("hidden", select.value !== "custom");
+    advancedConfig?.classList.remove( "hidden" );
+    customDays?.classList.toggle( "hidden", select.value !== "custom" );
     updateRepeatPreview();
   }
 }
 
 function updateRepeatPreview() {
-  const repeatType = document.getElementById("taskRepeat").value;
-  const duration = document.getElementById("repeatDuration").value;
-  const previewText = document.getElementById("previewText");
-  const taskDate = document.getElementById("taskDate").value;
+  const repeatType = document.getElementById( "taskRepeat" ).value;
+  const duration = document.getElementById( "repeatDuration" ).value;
+  const previewText = document.getElementById( "previewText" );
+  const taskDate = document.getElementById( "taskDate" ).value;
 
-  if (!previewText || repeatType === "none") return;
+  if ( !previewText || repeatType === "none" ) return;
 
   const durationText = {
     1: "lo que resta del mes actual",
@@ -1186,18 +1183,18 @@ function updateRepeatPreview() {
     custom: "días personalizados",
   };
 
-  let preview = `Se creará ${typeText[repeatType]} durante ${durationText[duration]}`;
+  let preview = `Se creará ${typeText[ repeatType ]} durante ${durationText[ duration ]}`;
 
-  if (repeatType === "custom") {
+  if ( repeatType === "custom" ) {
     const selectedDays = Array.from(
-      document.querySelectorAll("#customDays input:checked")
+      document.querySelectorAll( "#customDays input:checked" )
     );
-    if (selectedDays.length > 0) {
-      const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+    if ( selectedDays.length > 0 ) {
+      const dayNames = [ "Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb" ];
       const selectedDayNames = selectedDays.map(
-        (cb) => dayNames[parseInt(cb.value)]
+        ( cb ) => dayNames[ parseInt( cb.value ) ]
       );
-      preview = `Se creará los ${selectedDayNames.join(", ")} durante ${durationText[duration]}`;
+      preview = `Se creará los ${selectedDayNames.join( ", " )} durante ${durationText[ duration ]}`;
     } else {
       preview = "Selecciona al menos un día";
     }
@@ -1205,47 +1202,47 @@ function updateRepeatPreview() {
 
   const approxTasks = calculateExactTaskCount(
     repeatType,
-    parseInt(duration),
+    parseInt( duration ),
     taskDate
   );
 
-  if (approxTasks > 0) {
+  if ( approxTasks > 0 ) {
     preview += ` (~${approxTasks} tareas)`;
   }
 
   previewText.textContent = preview;
 }
 
-function calculateExactTaskCount(repeatType, durationMonths, startDateStr) {
+function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
   const startDate = startDateStr
-    ? new Date(startDateStr + "T00:00:00")
+    ? new Date( startDateStr + "T00:00:00" )
     : new Date();
 
   let endDate;
-  if (durationMonths === 1) {
-    endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+  if ( durationMonths === 1 ) {
+    endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
   } else {
-    endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + durationMonths);
-    endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
+    endDate = new Date( startDate );
+    endDate.setMonth( endDate.getMonth() + durationMonths );
+    endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
   }
 
   let count = 0;
-  let currentDate = new Date(startDate);
+  let currentDate = new Date( startDate );
 
   let selectedDays = [];
-  if (repeatType === "custom") {
+  if ( repeatType === "custom" ) {
     selectedDays = Array.from(
-      document.querySelectorAll("#customDays input:checked")
-    ).map((cb) => parseInt(cb.value));
-    if (selectedDays.length === 0) return 0;
+      document.querySelectorAll( "#customDays input:checked" )
+    ).map( ( cb ) => parseInt( cb.value ) );
+    if ( selectedDays.length === 0 ) return 0;
   }
 
-  while (currentDate <= endDate) {
+  while ( currentDate <= endDate ) {
     const dayOfWeek = currentDate.getDay();
     let shouldCount = false;
 
-    switch (repeatType) {
+    switch ( repeatType ) {
       case "daily":
         shouldCount = true;
         break;
@@ -1259,39 +1256,39 @@ function calculateExactTaskCount(repeatType, durationMonths, startDateStr) {
         shouldCount = dayOfWeek === startDate.getDay();
         break;
       case "custom":
-        shouldCount = selectedDays.includes(dayOfWeek);
+        shouldCount = selectedDays.includes( dayOfWeek );
         break;
     }
 
-    const currentDateStr = currentDate.toISOString().split("T")[0];
-    if (shouldCount && !isDatePast(currentDateStr)) {
+    const currentDateStr = currentDate.toISOString().split( "T" )[ 0 ];
+    if ( shouldCount && !isDatePast( currentDateStr ) ) {
       count++;
     }
 
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setDate( currentDate.getDate() + 1 );
   }
 
   return count;
 }
 
 //addTask con sync automático
-function addTask(e) {
+function addTask( e ) {
   e.preventDefault();
 
   const formData = {
-    title: document.getElementById("taskTitle").value.trim(),
-    description: document.getElementById("taskDescription").value.trim(),
-    date: document.getElementById("taskDate").value,
-    time: document.getElementById("taskTime").value,
-    repeat: document.getElementById("taskRepeat").value,
-    priority: parseInt(document.getElementById("taskPriority").value) || 3,
+    title: document.getElementById( "taskTitle" ).value.trim(),
+    description: document.getElementById( "taskDescription" ).value.trim(),
+    date: document.getElementById( "taskDate" ).value,
+    time: document.getElementById( "taskTime" ).value,
+    repeat: document.getElementById( "taskRepeat" ).value,
+    priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
     initialState:
-      document.getElementById("taskInitialState")?.value || "pending", // NUEVO
+      document.getElementById( "taskInitialState" )?.value || "pending", // NUEVO
   };
 
-  if (!formData.title) return;
+  if ( !formData.title ) return;
 
-  if (formData.date && isDatePast(formData.date)) {
+  if ( formData.date && isDatePast( formData.date ) ) {
     showNotification(
       "No puedes agregar tareas a fechas anteriores. Por favor selecciona hoy o una fecha futura.",
       "error"
@@ -1309,91 +1306,91 @@ function addTask(e) {
     completed: formData.initialState === "completed", // Mantener compatibilidad
   };
 
-  if (formData.date && formData.repeat === "none") {
-    addTaskToDate(formData.date, task);
-    enqueueSync("upsert", formData.date, task);
+  if ( formData.date && formData.repeat === "none" ) {
+    addTaskToDate( formData.date, task );
+    enqueueSync( "upsert", formData.date, task );
 
     // NUEVO: Registrar creación de tarea
-    addToChangeLog("created", task.title, formData.date);
-  } else if (formData.repeat !== "none") {
+    addToChangeLog( "created", task.title, formData.date );
+  } else if ( formData.repeat !== "none" ) {
     const startDate = formData.date
-      ? new Date(formData.date + "T00:00:00")
+      ? new Date( formData.date + "T00:00:00" )
       : new Date();
-    addRecurringTasks(task, formData.repeat, startDate);
+    addRecurringTasks( task, formData.repeat, startDate );
   }
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  document.getElementById("taskForm").reset();
+  document.getElementById( "taskForm" ).reset();
   setupDateInput();
-  showNotification("Tarea agregada exitosamente");
+  showNotification( "Tarea agregada exitosamente" );
 
-  const advancedConfig = document.getElementById("advancedRepeatConfig");
-  const customDays = document.getElementById("customDays");
-  const repeatDuration = document.getElementById("repeatDuration");
+  const advancedConfig = document.getElementById( "advancedRepeatConfig" );
+  const customDays = document.getElementById( "customDays" );
+  const repeatDuration = document.getElementById( "repeatDuration" );
 
-  advancedConfig?.classList.add("hidden");
-  customDays?.classList.add("hidden");
+  advancedConfig?.classList.add( "hidden" );
+  customDays?.classList.add( "hidden" );
 
-  if (repeatDuration) {
+  if ( repeatDuration ) {
     repeatDuration.value = "2";
   }
 
   // Reset priority and state to default
-  const prioritySelect = document.getElementById("taskPriority");
-  const stateSelect = document.getElementById("taskInitialState");
-  if (prioritySelect) prioritySelect.value = "3";
-  if (stateSelect) stateSelect.value = "pending";
+  const prioritySelect = document.getElementById( "taskPriority" );
+  const stateSelect = document.getElementById( "taskInitialState" );
+  if ( prioritySelect ) prioritySelect.value = "3";
+  if ( stateSelect ) stateSelect.value = "pending";
 }
 
-function addTaskToDate(dateStr, task) {
-  if (!tasks[dateStr]) tasks[dateStr] = [];
+function addTaskToDate( dateStr, task ) {
+  if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
   const newTask = { ...task, id: `${dateStr}-${Date.now()}` };
-  tasks[dateStr].push(newTask);
+  tasks[ dateStr ].push( newTask );
 
   // Actualizar panel si está abierto para este día
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 
   return newTask;
 }
 
 //addRecurringTasks con sync automático optimizado
-function addRecurringTasks(task, repeatType, startDate) {
-  const durationSelect = document.getElementById("repeatDuration");
-  const durationMonths = durationSelect ? parseInt(durationSelect.value) : 2;
+function addRecurringTasks( task, repeatType, startDate ) {
+  const durationSelect = document.getElementById( "repeatDuration" );
+  const durationMonths = durationSelect ? parseInt( durationSelect.value ) : 2;
 
   let endDate;
-  let currentDate = new Date(startDate);
+  let currentDate = new Date( startDate );
   let tasksAdded = 0;
 
-  if (durationMonths === 1) {
-    endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+  if ( durationMonths === 1 ) {
+    endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
   } else {
-    endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + durationMonths);
-    endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
+    endDate = new Date( startDate );
+    endDate.setMonth( endDate.getMonth() + durationMonths );
+    endDate = new Date( endDate.getFullYear(), endDate.getMonth(), 0 );
   }
 
   let selectedDays = [];
-  if (repeatType === "custom") {
+  if ( repeatType === "custom" ) {
     selectedDays = Array.from(
-      document.querySelectorAll("#customDays input:checked")
-    ).map((cb) => parseInt(cb.value));
+      document.querySelectorAll( "#customDays input:checked" )
+    ).map( ( cb ) => parseInt( cb.value ) );
   }
 
   // Recopilar todas las tareas antes de sincronizar
   const newTasks = [];
 
-  while (currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split("T")[0];
+  while ( currentDate <= endDate ) {
+    const dateStr = currentDate.toISOString().split( "T" )[ 0 ];
     const dayOfWeek = currentDate.getDay();
     let shouldAdd = false;
 
-    switch (repeatType) {
+    switch ( repeatType ) {
       case "daily":
         shouldAdd = true;
         break;
@@ -1407,23 +1404,23 @@ function addRecurringTasks(task, repeatType, startDate) {
         shouldAdd = dayOfWeek === startDate.getDay();
         break;
       case "custom":
-        shouldAdd = selectedDays.includes(dayOfWeek) && selectedDays.length > 0;
+        shouldAdd = selectedDays.includes( dayOfWeek ) && selectedDays.length > 0;
         break;
     }
 
-    if (shouldAdd && !isDatePast(dateStr)) {
-      const newTask = addTaskToDate(dateStr, task);
-      newTasks.push({ dateStr, task: newTask });
+    if ( shouldAdd && !isDatePast( dateStr ) ) {
+      const newTask = addTaskToDate( dateStr, task );
+      newTasks.push( { dateStr, task: newTask } );
       tasksAdded++;
     }
 
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setDate( currentDate.getDate() + 1 );
   }
 
   // Sync automático batch para todas las tareas recurrentes
-  newTasks.forEach(({ dateStr, task }) => {
-    enqueueSync("upsert", dateStr, task);
-  });
+  newTasks.forEach( ( { dateStr, task } ) => {
+    enqueueSync( "upsert", dateStr, task );
+  } );
 
   const durationText = {
     1: "lo que resta del mes actual",
@@ -1434,32 +1431,32 @@ function addRecurringTasks(task, repeatType, startDate) {
   };
 
   showNotification(
-    `${tasksAdded} tareas agregadas para ${durationText[durationMonths.toString()] || `${durationMonths} meses`}`,
+    `${tasksAdded} tareas agregadas para ${durationText[ durationMonths.toString() ] || `${durationMonths} meses`}`,
     "success"
   );
 }
 
 function renderCalendar() {
-  const calendar = document.getElementById("calendar");
-  const monthYear = document.getElementById("currentMonth");
+  const calendar = document.getElementById( "calendar" );
+  const monthYear = document.getElementById( "currentMonth" );
 
-  if (!calendar || !monthYear) return;
+  if ( !calendar || !monthYear ) return;
 
   calendar.innerHTML = "";
   monthYear.textContent = currentDate
-    .toLocaleDateString("es-ES", {
+    .toLocaleDateString( "es-ES", {
       month: "long",
       year: "numeric",
-    })
-    .replace(/^\w/, (c) => c.toUpperCase());
+    } )
+    .replace( /^\w/, ( c ) => c.toUpperCase() );
 
-  const dayHeaders = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-  dayHeaders.forEach((day) => {
-    const dayElement = document.createElement("div");
+  const dayHeaders = [ "Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb" ];
+  dayHeaders.forEach( ( day ) => {
+    const dayElement = document.createElement( "div" );
     dayElement.className = "text-center font-semibold text-gray-600 py-2";
     dayElement.textContent = day;
-    calendar.appendChild(dayElement);
-  });
+    calendar.appendChild( dayElement );
+  } );
 
   const firstDay = new Date(
     currentDate.getFullYear(),
@@ -1474,31 +1471,31 @@ function renderCalendar() {
   const daysInMonth = lastDay.getDate();
   const startingDayOfWeek = firstDay.getDay();
 
-  for (let i = 0; i < startingDayOfWeek; i++) {
-    const emptyDay = document.createElement("div");
+  for ( let i = 0; i < startingDayOfWeek; i++ ) {
+    const emptyDay = document.createElement( "div" );
     emptyDay.className = "h-24 border border-gray-200";
-    calendar.appendChild(emptyDay);
+    calendar.appendChild( emptyDay );
   }
 
-  for (let day = 1; day <= daysInMonth; day++) {
+  for ( let day = 1; day <= daysInMonth; day++ ) {
     const date = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),
       day
     );
-    const dateStr = date.toISOString().split("T")[0];
-    const dayTasks = tasks[dateStr] || [];
+    const dateStr = date.toISOString().split( "T" )[ 0 ];
+    const dayTasks = tasks[ dateStr ] || [];
 
-    calendar.appendChild(createDayElement(day, dateStr, dayTasks));
+    calendar.appendChild( createDayElement( day, dateStr, dayTasks ) );
   }
 }
 
-function createDayElement(day, dateStr, dayTasks) {
-  const dayElement = document.createElement("div");
+function createDayElement( day, dateStr, dayTasks ) {
+  const dayElement = document.createElement( "div" );
 
   const todayStr = getTodayString();
   const isToday = dateStr === todayStr;
-  const isPastDate = isDatePast(dateStr);
+  const isPastDate = isDatePast( dateStr );
 
   dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
   dayElement.dataset.date = dateStr;
@@ -1507,59 +1504,57 @@ function createDayElement(day, dateStr, dayTasks) {
         <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
         <div class="space-y-1">
             ${dayTasks
-              .slice(0, 2)
-              .map((task) => createTaskElement(task, dateStr))
-              .join("")}
-            ${
-              dayTasks.length > 2
-                ? `
+      .slice( 0, 2 )
+      .map( ( task ) => createTaskElement( task, dateStr ) )
+      .join( "" )}
+            ${dayTasks.length > 2
+      ? `
                 <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
                      onclick="showDailyTaskPanel('${dateStr}', ${day})">
                     +${dayTasks.length - 2} más
                 </div>
             `
-                : ""
-            }
+      : ""
+    }
         </div>
-        ${
-          !isPastDate
-            ? `
+        ${!isPastDate
+      ? `
             <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
                     class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
                     title="Agregar tarea rápida">
                 <i class="fas fa-plus"></i>
             </button>
         `
-            : ""
-        }
+      : ""
+    }
     `;
 
-  dayElement.addEventListener("click", (e) => {
-    if (!e.target.closest(".task-item") && !e.target.closest("button")) {
-      showDailyTaskPanel(dateStr, day);
+  dayElement.addEventListener( "click", ( e ) => {
+    if ( !e.target.closest( ".task-item" ) && !e.target.closest( "button" ) ) {
+      showDailyTaskPanel( dateStr, day );
     }
-  });
+  } );
 
   return dayElement;
 }
 
 function updatePanelDateHeader( dateStr, day, dayTasks ) {
-    const panelDate = document.getElementById( 'panelDate' );
-    const date = new Date( dateStr + 'T12:00:00' );
-    const dayLogs = dailyTaskLogs[ dateStr ] || [];
+  const panelDate = document.getElementById( 'panelDate' );
+  const date = new Date( dateStr + 'T12:00:00' );
+  const dayLogs = dailyTaskLogs[ dateStr ] || [];
 
-    const dateOptions = {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    };
+  const dateOptions = {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  };
 
-    panelDate.innerHTML = `
+  panelDate.innerHTML = `
     <div class="flex items-center justify-between w-full">
         <div class="flex items-center">
             <i class="fas fa-tasks text-indigo-600 mr-2"></i>
-            Tareas del ${day} - ${date.toLocaleDateString( 'es-ES', dateOptions )}
+            Tareas del ${date.toLocaleDateString( 'es-ES', dateOptions )}
         </div>
         <div class="flex items-center space-x-2">
             ${dayTasks.length > 0 ? `
@@ -1582,18 +1577,18 @@ function updatePanelDateHeader( dateStr, day, dayTasks ) {
 `;
 }
 
-function showDailyTaskPanel(dateStr, day) {
-  const panel = document.getElementById("dailyTaskPanel");
-  const panelDate = document.getElementById("panelDate");
-  const taskList = document.getElementById("panelTaskList");
+function showDailyTaskPanel( dateStr, day ) {
+  const panel = document.getElementById( "dailyTaskPanel" );
+  const panelDate = document.getElementById( "panelDate" );
+  const taskList = document.getElementById( "panelTaskList" );
 
-  if (!panel || !panelDate || !taskList) return;
+  if ( !panel || !panelDate || !taskList ) return;
 
   selectedDateForPanel = dateStr;
-  const dayTasks = tasks[dateStr] || [];
+  const dayTasks = tasks[ dateStr ] || [];
 
-  const date = new Date(dateStr + "T12:00:00");
-  const isPastDate = isDatePast(dateStr);
+  const date = new Date( dateStr + "T12:00:00" );
+  const isPastDate = isDatePast( dateStr );
 
   const dateOptions = {
     weekday: "long",
@@ -1602,9 +1597,9 @@ function showDailyTaskPanel(dateStr, day) {
     day: "numeric",
   };
 
-    updatePanelDateHeader( dateStr, day, dayTasks );
+  updatePanelDateHeader( dateStr, day, dayTasks );
 
-  if (dayTasks.length === 0) {
+  if ( dayTasks.length === 0 ) {
     taskList.innerHTML = `
             <div class="text-center py-8 text-gray-500">
                 <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
@@ -1613,49 +1608,49 @@ function showDailyTaskPanel(dateStr, day) {
             </div>
         `;
   } else {
-    const sortedTasks = sortTasksByPriority(dayTasks);
+    const sortedTasks = sortTasksByPriority( dayTasks );
     taskList.innerHTML = sortedTasks
-      .map((task) => createPanelTaskElement(task, dateStr))
-      .join("");
+      .map( ( task ) => createPanelTaskElement( task, dateStr ) )
+      .join( "" );
   }
 
-  updatePanelProgress(dayTasks);
+  updatePanelProgress( dayTasks );
 
-  const addQuickTaskBtn = document.getElementById("addQuickTaskBtn");
-  if (addQuickTaskBtn) {
+  const addQuickTaskBtn = document.getElementById( "addQuickTaskBtn" );
+  if ( addQuickTaskBtn ) {
     addQuickTaskBtn.style.display = isPastDate ? "none" : "flex";
   }
 
-  panel.classList.remove("hidden");
+  panel.classList.remove( "hidden" );
 
-  if (window.innerWidth < 768) {
-    setTimeout(() => {
-      panel.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
+  if ( window.innerWidth < 768 ) {
+    setTimeout( () => {
+      panel.scrollIntoView( { behavior: "smooth", block: "start" } );
+    }, 100 );
   }
 }
 
-function sortTasksByPriority(tasks) {
-  return tasks.sort((a, b) => {
+function sortTasksByPriority( tasks ) {
+  return tasks.sort( ( a, b ) => {
     // Primero por prioridad (1=más importante, 4=menos importante)
-    if (a.priority !== b.priority) {
+    if ( a.priority !== b.priority ) {
       return a.priority - b.priority;
     }
     // Luego por hora si tienen la misma prioridad
-    if (a.time && b.time) {
-      return a.time.localeCompare(b.time);
+    if ( a.time && b.time ) {
+      return a.time.localeCompare( b.time );
     }
-    if (a.time && !b.time) return -1;
-    if (!a.time && b.time) return 1;
+    if ( a.time && !b.time ) return -1;
+    if ( !a.time && b.time ) return 1;
     // Finalmente por título
-    return a.title.localeCompare(b.title);
-  });
+    return a.title.localeCompare( b.title );
+  } );
 }
 
-function createPanelTaskElement(task, dateStr) {
-  const isPastDate = isDatePast(dateStr);
-  const priority = PRIORITY_LEVELS[task.priority] || PRIORITY_LEVELS[3];
-  const state = TASK_STATES[task.state] || TASK_STATES.pending;
+function createPanelTaskElement( task, dateStr ) {
+  const isPastDate = isDatePast( dateStr );
+  const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+  const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
 
   const canPause = task.state === "inProgress";
   const canResume = task.state === "paused";
@@ -1664,12 +1659,13 @@ function createPanelTaskElement(task, dateStr) {
         <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5" 
              style="border-left-color: ${priority.color}" 
              data-priority="${task.priority}">
-            <div class="flex items-center justify-between">
-                <div class="flex items-start space-x-3 flex-1">
-                    <div class="flex flex-col space-y-2">
-                        ${
-                          !isPastDate
-                            ? `
+            <div class="flex sm:items-center sm:justify-between">
+                <!-- En móvil: Primera columna con contenido. En desktop: Layout horizontal -->
+                <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
+                    <!-- Select de estado y prioridad -->
+                    <div class="flex flex-col space-y-2 mb-3 sm:mb-0">
+                        ${!isPastDate
+      ? `
                             <select onchange="changeTaskStateDirect('${dateStr}', '${task.id}', this.value)" 
                                     class="text-xs p-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
                                     title="Cambiar estado de la tarea">
@@ -1679,12 +1675,12 @@ function createPanelTaskElement(task, dateStr) {
                                 <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
                             </select>
                         `
-                            : `
+      : `
                             <div class="text-xs p-2 rounded-lg ${state.class} font-medium">
                                 <i class="fas ${state.icon}"></i> ${state.label}
                             </div>
                         `
-                        }
+    }
                         <div class="flex items-center space-x-2">
                             <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm" 
                                   style="background-color: ${priority.color}" 
@@ -1692,6 +1688,8 @@ function createPanelTaskElement(task, dateStr) {
                             <span class="text-xs text-gray-600 font-medium">${priority.label}</span>
                         </div>
                     </div>
+                    
+                    <!-- Información de la tarea -->
                     <div class="flex-1">
                         <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
                         ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
@@ -1701,13 +1699,13 @@ function createPanelTaskElement(task, dateStr) {
                         </div>
                     </div>
                 </div>
-                ${
-                  !isPastDate
-                    ? `
-                    <div class="task-actions flex items-center space-x-1">
-                        ${
-                          canPause
-                            ? `
+                
+                <!-- Botones de acción: Verticales en móvil, horizontales en desktop -->
+                ${!isPastDate
+      ? `
+                    <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
+                        ${canPause
+        ? `
                             <button onclick="pauseTask('${dateStr}', '${task.id}')"
                                     class="flex items-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm"
                                     title="Pausar tarea activa">
@@ -1715,11 +1713,10 @@ function createPanelTaskElement(task, dateStr) {
                                 <span>Pausar</span>
                             </button>
                         `
-                            : ""
-                        }
-                        ${
-                          canResume
-                            ? `
+        : ""
+      }
+                        ${canResume
+        ? `
                             <button onclick="resumeTask('${dateStr}', '${task.id}')"
                                     class="flex items-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm"
                                     title="Reanudar tarea pausada">
@@ -1727,18 +1724,18 @@ function createPanelTaskElement(task, dateStr) {
                                 <span>Reanudar</span>
                             </button>
                         `
-                            : ""
-                        }
+        : ""
+      }
                         <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
                                 class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
                                 title="Editar título, descripción, hora y prioridad">
                             <i class="fas fa-edit text-sm"></i>
                         </button>
                         <button onclick="showDayChangeLog('${dateStr}')"
-        class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
-        title="Ver registro de cambios del día">
-    <i class="fas fa-history text-sm"></i>
-</button>
+                                class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
+                                title="Ver registro de cambios del día">
+                            <i class="fas fa-history text-sm"></i>
+                        </button>
                         <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
                                 class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
                                 title="Eliminar tarea permanentemente">
@@ -1746,18 +1743,18 @@ function createPanelTaskElement(task, dateStr) {
                         </button>
                     </div>
                 `
-                    : ""
-                }
+      : ""
+    }
             </div>
         </div>
     `;
 }
 
 // FUNCIONES PARA PAUSAR Y REANUDAR
-function pauseTask(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task || task.state !== "inProgress") {
-    showNotification("Solo se pueden pausar tareas en proceso", "error");
+function pauseTask( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task || task.state !== "inProgress" ) {
+    showNotification( "Solo se pueden pausar tareas en proceso", "error" );
     return;
   }
 
@@ -1766,26 +1763,26 @@ function pauseTask(dateStr, taskId) {
   task.completed = false;
 
   // Registrar pausa específica
-  addToChangeLog("paused", task.title, dateStr, oldState, "paused", taskId);
+  addToChangeLog( "paused", task.title, dateStr, oldState, "paused", taskId );
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, task);
+  enqueueSync( "upsert", dateStr, task );
 
   // Actualizar panel si está abierto
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 
-  showNotification("Tarea pausada", "info");
+  showNotification( "Tarea pausada", "info" );
 }
 
-function resumeTask(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task || task.state !== "paused") {
-    showNotification("Solo se pueden reanudar tareas pausadas", "error");
+function resumeTask( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task || task.state !== "paused" ) {
+    showNotification( "Solo se pueden reanudar tareas pausadas", "error" );
     return;
   }
 
@@ -1806,23 +1803,23 @@ function resumeTask(dateStr, taskId) {
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, task);
+  enqueueSync( "upsert", dateStr, task );
 
   // Actualizar panel si está abierto
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 
-  showNotification("Tarea reanudada", "success");
+  showNotification( "Tarea reanudada", "success" );
 }
 
 function showDeletedTasksModal() {
   closeAllModals();
 
-  const deletedTasks = JSON.parse(localStorage.getItem("deletedTasks") || "[]");
+  const deletedTasks = JSON.parse( localStorage.getItem( "deletedTasks" ) || "[]" );
 
-  const modal = document.createElement("div");
+  const modal = document.createElement( "div" );
   modal.id = "deletedTasksModal";
   modal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -1838,19 +1835,18 @@ function showDeletedTasksModal() {
                 </button>
             </div>
             <div class="p-6 overflow-y-auto max-h-96">
-                ${
-                  deletedTasks.length === 0
-                    ? `
+                ${deletedTasks.length === 0
+      ? `
                     <div class="text-center py-8 text-gray-500">
                         <i class="fas fa-check-circle text-4xl mb-3 opacity-50"></i>
                         <p>No hay tareas eliminadas</p>
                     </div>
                 `
-                    : `
+      : `
                     <div class="space-y-3">
                         ${deletedTasks
-                          .map(
-                            (task, index) => `
+        .map(
+          ( task, index ) => `
                             <div class="bg-red-50 rounded-lg p-3 border-l-4 border-red-500">
                                 <div class="flex justify-between items-start">
                                     <div class="flex-1">
@@ -1868,21 +1864,20 @@ function showDeletedTasksModal() {
                                 </div>
                             </div>
                         `
-                          )
-                          .join("")}
+        )
+        .join( "" )}
                     </div>
                 `
-                }
+    }
                 <div class="mt-6 flex justify-end space-x-3">
-                    ${
-                      deletedTasks.length > 0
-                        ? `
+                    ${deletedTasks.length > 0
+      ? `
                         <button onclick="clearDeletedTasks()" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition">
                             <i class="fas fa-eraser mr-2"></i>Limpiar Lista
                         </button>
                     `
-                        : ""
-                    }
+      : ""
+    }
                     <button onclick="closeAllModals()" class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition">
                         Cerrar
                     </button>
@@ -1891,7 +1886,7 @@ function showDeletedTasksModal() {
         </div>
     `;
 
-  document.body.appendChild(modal);
+  document.body.appendChild( modal );
 }
 
 // FUNCIÓN PARA LIMPIAR TAREAS ELIMINADAS
@@ -1901,60 +1896,60 @@ function clearDeletedTasks() {
       "¿Estás seguro de que quieres limpiar la lista de tareas eliminadas?"
     )
   ) {
-    localStorage.removeItem("deletedTasks");
-    showNotification("Lista de tareas eliminadas limpiada", "success");
+    localStorage.removeItem( "deletedTasks" );
+    showNotification( "Lista de tareas eliminadas limpiada", "success" );
     closeAllModals();
   }
 }
 
 function clearDayTasks( dateStr ) {
-    const dayTasks = tasks[ dateStr ] || [];
+  const dayTasks = tasks[ dateStr ] || [];
 
-    if ( dayTasks.length === 0 ) {
-        showNotification( "No hay tareas para eliminar en este día", "info" );
-        return;
-    }
+  if ( dayTasks.length === 0 ) {
+    showNotification( "No hay tareas para eliminar en este día", "info" );
+    return;
+  }
 
-    const date = new Date( dateStr + "T12:00:00" );
-    const formattedDate = date.toLocaleDateString( "es-ES", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-    } );
+  const date = new Date( dateStr + "T12:00:00" );
+  const formattedDate = date.toLocaleDateString( "es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  } );
 
-    if ( !confirm( `¿Estás seguro de que quieres eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
-        return;
-    }
+  if ( !confirm( `¿Estás seguro de que quieres eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
+    return;
+  }
 
-    // Registrar eliminación masiva
-    dayTasks.forEach( task => {
-        addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
-    } );
+  // Registrar eliminación masiva
+  dayTasks.forEach( task => {
+    addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
+  } );
 
-    // Guardar para sync
-    const tasksToDelete = [ ...dayTasks ];
+  // Guardar para sync
+  const tasksToDelete = [ ...dayTasks ];
 
-    // Eliminar del estado local
-    delete tasks[ dateStr ];
+  // Eliminar del estado local
+  delete tasks[ dateStr ];
 
-    // Auto-sync: eliminar todas las tareas del día
-    tasksToDelete.forEach( task => {
-        enqueueSync( "delete", dateStr, { id: task.id } );
-    } );
+  // Auto-sync: eliminar todas las tareas del día
+  tasksToDelete.forEach( task => {
+    enqueueSync( "delete", dateStr, { id: task.id } );
+  } );
 
-    saveTasks();
-    renderCalendar();
-    updateProgress();
+  saveTasks();
+  renderCalendar();
+  updateProgress();
 
-    // Cerrar panel
-    closeDailyTaskPanel();
+  // Cerrar panel
+  closeDailyTaskPanel();
 
-    showNotification( `${tasksToDelete.length} tareas eliminadas del ${formattedDate}`, "success" );
+  showNotification( `${tasksToDelete.length} tareas eliminadas del ${formattedDate}`, "success" );
 }
 
-function createTaskElement(task, dateStr) {
-  const priority = PRIORITY_LEVELS[task.priority] || PRIORITY_LEVELS[3];
-  const state = TASK_STATES[task.state] || TASK_STATES.pending;
+function createTaskElement( task, dateStr ) {
+  const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+  const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
 
   return `
         <div class="task-item-wrapper relative group/task">
@@ -1984,27 +1979,27 @@ function createTaskElement(task, dateStr) {
     `;
 }
 
-function updatePanelProgress(dayTasks) {
-  const progressBar = document.getElementById("panelProgressBar");
-  const progressText = document.getElementById("panelProgressText");
+function updatePanelProgress( dayTasks ) {
+  const progressBar = document.getElementById( "panelProgressBar" );
+  const progressText = document.getElementById( "panelProgressText" );
 
-  if (!progressBar || !progressText) return;
+  if ( !progressBar || !progressText ) return;
 
   const completedTasks = dayTasks.filter(
-    (task) => task.state === "completed"
+    ( task ) => task.state === "completed"
   ).length;
   const inProgressTasks = dayTasks.filter(
-    (task) => task.state === "inProgress"
+    ( task ) => task.state === "inProgress"
   ).length;
-  const pausedTasks = dayTasks.filter((task) => task.state === "paused").length;
+  const pausedTasks = dayTasks.filter( ( task ) => task.state === "paused" ).length;
   const pendingTasks = dayTasks.filter(
-    (task) => task.state === "pending"
+    ( task ) => task.state === "pending"
   ).length;
 
   const progress =
     dayTasks.length === 0
       ? 0
-      : Math.round((completedTasks / dayTasks.length) * 100);
+      : Math.round( ( completedTasks / dayTasks.length ) * 100 );
 
   progressBar.style.width = `${progress}%`;
   progressText.innerHTML = `
@@ -2017,14 +2012,14 @@ function updatePanelProgress(dayTasks) {
 }
 
 //toggleTaskFromPanel con sync automático
-function toggleTaskFromPanel(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (task) {
+function toggleTaskFromPanel( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( task ) {
     task.completed = !task.completed;
 
     // Limpiar notificaciones si se completa la tarea
-    if (task.completed) {
-      clearTaskNotifications(taskId);
+    if ( task.completed ) {
+      clearTaskNotifications( taskId );
     }
 
     saveTasks();
@@ -2032,18 +2027,18 @@ function toggleTaskFromPanel(dateStr, taskId) {
     updateProgress();
 
     // Auto-sync
-    enqueueSync("upsert", dateStr, task);
+    enqueueSync( "upsert", dateStr, task );
 
-    if (selectedDateForPanel === dateStr) {
-      const dayTasks = tasks[dateStr] || [];
-      updatePanelProgress(dayTasks);
+    if ( selectedDateForPanel === dateStr ) {
+      const dayTasks = tasks[ dateStr ] || [];
+      updatePanelProgress( dayTasks );
 
       const taskElement = document.querySelector(
         `input[onchange="toggleTaskFromPanel('${dateStr}', '${taskId}')"]`
       );
-      if (taskElement) {
-        const container = taskElement.closest("div.border");
-        if (container) {
+      if ( taskElement ) {
+        const container = taskElement.closest( "div.border" );
+        if ( container ) {
           container.className = container.className.replace(
             task.completed
               ? "bg-gray-50 border-gray-200"
@@ -2053,8 +2048,8 @@ function toggleTaskFromPanel(dateStr, taskId) {
               : "bg-gray-50 border-gray-200"
           );
 
-          const titleElement = container.querySelector(".font-medium");
-          if (titleElement) {
+          const titleElement = container.querySelector( ".font-medium" );
+          if ( titleElement ) {
             titleElement.className = `font-medium ${task.completed ? "line-through text-green-600" : "text-gray-800"}`;
           }
         }
@@ -2064,88 +2059,88 @@ function toggleTaskFromPanel(dateStr, taskId) {
 }
 
 //deleteTaskFromPanel con sync automático
-function deleteTaskFromPanel(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) return;
+function deleteTaskFromPanel( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) return;
 
-  if (confirm(`¿Eliminar la tarea "${task.title}"?`)) {
+  if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
     // Usar la función mejorada que registra la eliminación
-    deleteTaskWithUndoImproved(dateStr, taskId);
+    deleteTaskWithUndoImproved( dateStr, taskId );
 
-    if (selectedDateForPanel === dateStr) {
-      const day = new Date(dateStr + "T12:00:00").getDate();
-      showDailyTaskPanel(dateStr, day);
+    if ( selectedDateForPanel === dateStr ) {
+      const day = new Date( dateStr + "T12:00:00" ).getDate();
+      showDailyTaskPanel( dateStr, day );
     }
   }
 }
 
 // Función para cambiar estados de tarea
-function toggleTaskState(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) return;
+function toggleTaskState( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) return;
 
   const oldState = task.state || "pending";
   let newState;
 
   // Lógica especial para pausar/reanudar
-  if (oldState === "inProgress") {
+  if ( oldState === "inProgress" ) {
     // Si está en proceso, puede ir a pausada o completada
     // Por defecto va a pausada, el usuario puede elegir completada desde el dropdown
     newState = "paused";
-  } else if (oldState === "paused") {
+  } else if ( oldState === "paused" ) {
     // Si está pausada, vuelve a proceso
     newState = "inProgress";
   } else {
     // Flujo normal: pendiente -> proceso -> completada
-    const stateOrder = ["pending", "inProgress", "completed"];
-    const currentIndex = stateOrder.indexOf(oldState);
-    const nextIndex = (currentIndex + 1) % stateOrder.length;
-    newState = stateOrder[nextIndex];
+    const stateOrder = [ "pending", "inProgress", "completed" ];
+    const currentIndex = stateOrder.indexOf( oldState );
+    const nextIndex = ( currentIndex + 1 ) % stateOrder.length;
+    newState = stateOrder[ nextIndex ];
   }
 
   task.state = newState;
   task.completed = task.state === "completed";
 
   // Registrar cambio
-  addToChangeLog("stateChanged", task.title, dateStr, oldState, newState);
+  addToChangeLog( "stateChanged", task.title, dateStr, oldState, newState );
 
   // Limpiar notificaciones si se completa
-  if (task.state === "completed") {
-    clearTaskNotifications(taskId);
+  if ( task.state === "completed" ) {
+    clearTaskNotifications( taskId );
   }
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, task);
+  enqueueSync( "upsert", dateStr, task );
 
   // Actualizar panel si está abierto
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 
-  const stateInfo = TASK_STATES[task.state];
-  showNotification(`Tarea cambiada a: ${stateInfo.label}`, "success");
+  const stateInfo = TASK_STATES[ task.state ];
+  showNotification( `Tarea cambiada a: ${stateInfo.label}`, "success" );
 }
 
 // Modal de edición avanzada
-function showAdvancedEditModal(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) {
-    showNotification("Tarea no encontrada", "error");
+function showAdvancedEditModal( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Tarea no encontrada", "error" );
     return;
   }
 
-  if (isDatePast(dateStr)) {
-    showNotification("No puedes editar tareas de fechas pasadas", "error");
+  if ( isDatePast( dateStr ) ) {
+    showNotification( "No puedes editar tareas de fechas pasadas", "error" );
     return;
   }
 
   // Cerrar cualquier modal existente
   closeAllModals();
 
-  const modal = document.createElement("div");
+  const modal = document.createElement( "div" );
   modal.id = "advancedEditModal";
   modal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -2191,7 +2186,7 @@ function showAdvancedEditModal(dateStr, taskId) {
                 <div class="bg-blue-50 p-3 rounded-lg">
                     <p class="text-sm text-blue-700">
                         <i class="fas fa-info-circle mr-1"></i>
-                        Estado actual: <strong>${TASK_STATES[task.state].label}</strong>
+                        Estado actual: <strong>${TASK_STATES[ task.state ].label}</strong>
                         <br>
                         <span class="text-xs">Usa los controles en el panel principal para cambiar el estado.</span>
                     </p>
@@ -2209,39 +2204,39 @@ function showAdvancedEditModal(dateStr, taskId) {
         </div>
     `;
 
-  document.body.appendChild(modal);
+  document.body.appendChild( modal );
 
   // Event listener para el formulario
   document
-    .getElementById("advancedEditTaskForm")
-    .addEventListener("submit", (e) => {
+    .getElementById( "advancedEditTaskForm" )
+    .addEventListener( "submit", ( e ) => {
       e.preventDefault();
-      updateAdvancedTaskFromPanelImproved(dateStr, taskId);
-    });
+      updateAdvancedTaskFromPanelImproved( dateStr, taskId );
+    } );
 }
 
-function canMoveTask(task) {
+function canMoveTask( task ) {
   return task.priority > 2; // Solo prioridad 3 (Moderado) y 4 (No Prioritario) pueden moverse
 }
 
-function changeTaskStateDirect(dateStr, taskId, newState) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) return;
+function changeTaskStateDirect( dateStr, taskId, newState ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) return;
 
   const oldState = task.state || "pending";
 
-  if (oldState === newState) {
+  if ( oldState === newState ) {
     return; // No hacer nada si es el mismo estado
   }
 
   // Validaciones de transición de estados
-  if (oldState === "completed" && newState !== "completed") {
+  if ( oldState === "completed" && newState !== "completed" ) {
     if (
-      !confirm("¿Estás seguro de que quieres cambiar una tarea completada?")
+      !confirm( "¿Estás seguro de que quieres cambiar una tarea completada?" )
     ) {
       // Revertir el dropdown
-      const dropdown = document.querySelector(`select[onchange*="${taskId}"]`);
-      if (dropdown) dropdown.value = oldState;
+      const dropdown = document.querySelector( `select[onchange*="${taskId}"]` );
+      if ( dropdown ) dropdown.value = oldState;
       return;
     }
   }
@@ -2251,46 +2246,46 @@ function changeTaskStateDirect(dateStr, taskId, newState) {
 
   // Registrar cambio de estado con tipo específico
   let actionType = "stateChanged";
-  if (oldState === "inProgress" && newState === "paused") {
+  if ( oldState === "inProgress" && newState === "paused" ) {
     actionType = "paused";
-  } else if (oldState === "paused" && newState === "inProgress") {
+  } else if ( oldState === "paused" && newState === "inProgress" ) {
     actionType = "resumed";
   }
 
-  addToChangeLog(actionType, task.title, dateStr, oldState, newState, taskId);
+  addToChangeLog( actionType, task.title, dateStr, oldState, newState, taskId );
 
   // Limpiar notificaciones si se completa
-  if (task.state === "completed") {
-    clearTaskNotifications(taskId);
+  if ( task.state === "completed" ) {
+    clearTaskNotifications( taskId );
   }
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, task);
+  enqueueSync( "upsert", dateStr, task );
 
   // Actualizar panel si está abierto
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 
-  const stateInfo = TASK_STATES[task.state];
-  showNotification(`Tarea cambiada a: ${stateInfo.label}`, "success");
+  const stateInfo = TASK_STATES[ task.state ];
+  showNotification( `Tarea cambiada a: ${stateInfo.label}`, "success" );
 }
 
 //función para actualizar tareas desde el panel
-function updateAdvancedTaskFromPanelImproved(dateStr, taskId) {
-  const title = document.getElementById("advancedEditTaskTitle").value.trim();
+function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
+  const title = document.getElementById( "advancedEditTaskTitle" ).value.trim();
   const description = document
-    .getElementById("advancedEditTaskDescription")
+    .getElementById( "advancedEditTaskDescription" )
     .value.trim();
-  const time = document.getElementById("advancedEditTaskTime").value;
+  const time = document.getElementById( "advancedEditTaskTime" ).value;
   const priority = parseInt(
-    document.getElementById("advancedEditTaskPriority").value
+    document.getElementById( "advancedEditTaskPriority" ).value
   );
 
-  if (!title || !time || !priority) {
+  if ( !title || !time || !priority ) {
     showNotification(
       "Por favor completa todos los campos obligatorios",
       "error"
@@ -2298,22 +2293,22 @@ function updateAdvancedTaskFromPanelImproved(dateStr, taskId) {
     return;
   }
 
-  if (!tasks[dateStr]) {
-    showNotification("Error: No se encontró la fecha de la tarea", "error");
+  if ( !tasks[ dateStr ] ) {
+    showNotification( "Error: No se encontró la fecha de la tarea", "error" );
     return;
   }
 
-  const taskIndex = tasks[dateStr].findIndex((t) => t.id === taskId);
-  if (taskIndex === -1) {
-    showNotification("Error: No se encontró la tarea", "error");
+  const taskIndex = tasks[ dateStr ].findIndex( ( t ) => t.id === taskId );
+  if ( taskIndex === -1 ) {
+    showNotification( "Error: No se encontró la tarea", "error" );
     return;
   }
 
-  const oldTask = { ...tasks[dateStr][taskIndex] }; // Copia para registro
+  const oldTask = { ...tasks[ dateStr ][ taskIndex ] }; // Copia para registro
 
   // Actualizar la tarea manteniendo el estado actual
   const updatedTask = {
-    ...tasks[dateStr][taskIndex],
+    ...tasks[ dateStr ][ taskIndex ],
     title: title,
     description: description,
     time: time,
@@ -2322,45 +2317,45 @@ function updateAdvancedTaskFromPanelImproved(dateStr, taskId) {
   };
 
   // Guardar la tarea actualizada
-  tasks[dateStr][taskIndex] = updatedTask;
+  tasks[ dateStr ][ taskIndex ] = updatedTask;
 
   // Registrar edición
-  addToChangeLog("edited", title, dateStr, null, null, taskId);
+  addToChangeLog( "edited", title, dateStr, null, null, taskId );
 
   // Persistir cambios
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, updatedTask);
+  enqueueSync( "upsert", dateStr, updatedTask );
 
   // Cerrar modal y actualizar UI
   closeAllModals();
-  showNotification("Tarea actualizada exitosamente", "success");
+  showNotification( "Tarea actualizada exitosamente", "success" );
 
   // Actualizar panel si está abierto para esta fecha
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 }
 
 // Edición rápida mejorada
-function quickEditTaskAdvanced(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) {
-    showNotification("Tarea no encontrada", "error");
+function quickEditTaskAdvanced( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Tarea no encontrada", "error" );
     return;
   }
 
-  if (isDatePast(dateStr)) {
-    showNotification("No puedes editar tareas de fechas pasadas", "error");
+  if ( isDatePast( dateStr ) ) {
+    showNotification( "No puedes editar tareas de fechas pasadas", "error" );
     return;
   }
 
   // Cerrar cualquier modal existente
   closeAllModals();
 
-  const modal = document.createElement("div");
+  const modal = document.createElement( "div" );
   modal.id = "quickEditModal";
   modal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -2407,32 +2402,32 @@ function quickEditTaskAdvanced(dateStr, taskId) {
         </div>
     `;
 
-  document.body.appendChild(modal);
+  document.body.appendChild( modal );
 
   // Event listener para el formulario
-  document.getElementById("quickEditForm").addEventListener("submit", (e) => {
+  document.getElementById( "quickEditForm" ).addEventListener( "submit", ( e ) => {
     e.preventDefault();
-    saveQuickEditImproved(dateStr, taskId);
-  });
+    saveQuickEditImproved( dateStr, taskId );
+  } );
 }
 
-function saveQuickEditImproved(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) {
-    showNotification("Error: No se encontró la tarea", "error");
+function saveQuickEditImproved( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Error: No se encontró la tarea", "error" );
     return;
   }
 
-  const newTitle = document.getElementById("quickEditTitle").value.trim();
+  const newTitle = document.getElementById( "quickEditTitle" ).value.trim();
   const newDescription = document
-    .getElementById("quickEditDescription")
+    .getElementById( "quickEditDescription" )
     .value.trim();
-  const newTime = document.getElementById("quickEditTime").value;
+  const newTime = document.getElementById( "quickEditTime" ).value;
   const newPriority = parseInt(
-    document.getElementById("quickEditPriority").value
+    document.getElementById( "quickEditPriority" ).value
   );
 
-  if (!newTitle || !newTime || !newPriority) {
+  if ( !newTitle || !newTime || !newPriority ) {
     showNotification(
       "Por favor completa todos los campos obligatorios",
       "error"
@@ -2450,59 +2445,59 @@ function saveQuickEditImproved(dateStr, taskId) {
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync("upsert", dateStr, task);
+  enqueueSync( "upsert", dateStr, task );
 
   // Cerrar modal y mostrar notificación
   closeAllModals();
-  showNotification("Tarea actualizada exitosamente", "success");
+  showNotification( "Tarea actualizada exitosamente", "success" );
 
   // Actualizar panel si está abierto
-  if (selectedDateForPanel === dateStr) {
-    const day = new Date(dateStr + "T12:00:00").getDate();
-    showDailyTaskPanel(dateStr, day);
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
   }
 }
 
 //addQuickTaskToSelectedDay con sync automático
 function addQuickTaskToSelectedDay() {
-  if (!selectedDateForPanel) return;
+  if ( !selectedDateForPanel ) return;
 
-  if (isDatePast(selectedDateForPanel)) {
-    showNotification("No puedes agregar tareas a fechas anteriores", "error");
+  if ( isDatePast( selectedDateForPanel ) ) {
+    showNotification( "No puedes agregar tareas a fechas anteriores", "error" );
     return;
   }
 
-  showQuickAddTask(selectedDateForPanel);
+  showQuickAddTask( selectedDateForPanel );
 }
 
 function closeDailyTaskPanel() {
-  const panel = document.getElementById("dailyTaskPanel");
-  if (panel) {
-    panel.classList.add("hidden");
+  const panel = document.getElementById( "dailyTaskPanel" );
+  if ( panel ) {
+    panel.classList.add( "hidden" );
     selectedDateForPanel = null;
   }
 }
 
-function quickDeleteTask(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (!task) return;
+function quickDeleteTask( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( !task ) return;
 
-  if (confirm(`¿Eliminar la tarea "${task.title}"?`)) {
-    deleteTaskWithUndoImproved(dateStr, taskId);
+  if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
+    deleteTaskWithUndoImproved( dateStr, taskId );
   }
 }
 
 //showQuickAddTask con sync automático
-function showQuickAddTask(dateStr) {
-  if (isDatePast(dateStr)) {
-    showNotification("No puedes agregar tareas a fechas anteriores", "error");
+function showQuickAddTask( dateStr ) {
+  if ( isDatePast( dateStr ) ) {
+    showNotification( "No puedes agregar tareas a fechas anteriores", "error" );
     return;
   }
 
   // Cerrar cualquier modal existente
   closeAllModals();
 
-  const modal = document.createElement("div");
+  const modal = document.createElement( "div" );
   modal.id = "quickAddTaskModal";
   modal.className =
     "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -2558,29 +2553,29 @@ function showQuickAddTask(dateStr) {
         </div>
     `;
 
-  document.body.appendChild(modal);
+  document.body.appendChild( modal );
 
   // 🔹 Establecer hora actual por defecto
   const now = new Date();
-  document.getElementById("quickAddTaskTime").value = now
+  document.getElementById( "quickAddTaskTime" ).value = now
     .toTimeString()
-    .slice(0, 5);
+    .slice( 0, 5 );
 
   // Event listener para el formulario
   document
-    .getElementById("quickAddTaskForm")
-    .addEventListener("submit", (e) => {
+    .getElementById( "quickAddTaskForm" )
+    .addEventListener( "submit", ( e ) => {
       e.preventDefault();
-      const title = document.getElementById("quickAddTaskTitle").value.trim();
+      const title = document.getElementById( "quickAddTaskTitle" ).value.trim();
       const description = document
-        .getElementById("quickAddTaskDescription")
+        .getElementById( "quickAddTaskDescription" )
         .value.trim();
-      const time = document.getElementById("quickAddTaskTime").value;
+      const time = document.getElementById( "quickAddTaskTime" ).value;
       const priority = parseInt(
-        document.getElementById("quickAddTaskPriority").value
+        document.getElementById( "quickAddTaskPriority" ).value
       );
 
-      if (!title || !time || !priority) {
+      if ( !title || !time || !priority ) {
         showNotification(
           "Por favor completa todos los campos obligatorios",
           "error"
@@ -2598,21 +2593,21 @@ function showQuickAddTask(dateStr) {
         completed: false,
       };
 
-      addTaskToDate(dateStr, task);
+      addTaskToDate( dateStr, task );
       saveTasks();
       renderCalendar();
       updateProgress();
-      enqueueSync("upsert", dateStr, task);
+      enqueueSync( "upsert", dateStr, task );
 
       closeAllModals();
-      showNotification("Tarea agregada exitosamente", "success");
+      showNotification( "Tarea agregada exitosamente", "success" );
 
       // Actualizar panel si está abierto
-      if (selectedDateForPanel === dateStr) {
-        const day = new Date(dateStr + "T12:00:00").getDate();
-        showDailyTaskPanel(dateStr, day);
+      if ( selectedDateForPanel === dateStr ) {
+        const day = new Date( dateStr + "T12:00:00" ).getDate();
+        showDailyTaskPanel( dateStr, day );
       }
-    });
+    } );
 }
 
 // NUEVA función para cerrar todos los modales
@@ -2625,53 +2620,53 @@ function closeAllModals() {
     "taskModal",
   ];
 
-  modals.forEach((modalId) => {
-    const modal = document.getElementById(modalId);
-    if (modal) {
+  modals.forEach( ( modalId ) => {
+    const modal = document.getElementById( modalId );
+    if ( modal ) {
       modal.remove();
     }
-  });
+  } );
 
   // También cerrar modales por clase
   document
-    .querySelectorAll(".fixed.inset-0.bg-black.bg-opacity-50")
-    .forEach((modal) => {
+    .querySelectorAll( ".fixed.inset-0.bg-black.bg-opacity-50" )
+    .forEach( ( modal ) => {
       modal.remove();
-    });
+    } );
 }
 
 function setupTaskTooltips() {
   let tooltip = createTaskTooltip();
 
-  document.addEventListener("mouseover", function (e) {
-    if (e.target.classList.contains("task-item")) {
+  document.addEventListener( "mouseover", function ( e ) {
+    if ( e.target.classList.contains( "task-item" ) ) {
       const taskId = e.target.dataset.taskId;
       const dateStr = e.target.dataset.date;
-      const task = tasks[dateStr]?.find((t) => t.id === taskId);
+      const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
 
-      if (task) {
-        showTooltip(tooltip, e.target, task);
+      if ( task ) {
+        showTooltip( tooltip, e.target, task );
       }
     }
-  });
+  } );
 
-  document.addEventListener("mouseout", function (e) {
-    if (e.target.classList.contains("task-item")) {
-      tooltip.classList.add("opacity-0");
+  document.addEventListener( "mouseout", function ( e ) {
+    if ( e.target.classList.contains( "task-item" ) ) {
+      tooltip.classList.add( "opacity-0" );
     }
-  });
+  } );
 }
 
 function createTaskTooltip() {
-  const tooltip = document.createElement("div");
+  const tooltip = document.createElement( "div" );
   tooltip.id = "task-tooltip";
   tooltip.className =
     "fixed bg-gray-800 text-white text-xs rounded px-2 py-1 z-50 pointer-events-none opacity-0 transition-opacity duration-200 max-w-xs";
-  document.body.appendChild(tooltip);
+  document.body.appendChild( tooltip );
   return tooltip;
 }
 
-function showTooltip(tooltip, target, task) {
+function showTooltip( tooltip, target, task ) {
   const rect = target.getBoundingClientRect();
   tooltip.innerHTML = `
         <div class="font-semibold">${task.title}</div>
@@ -2683,24 +2678,24 @@ function showTooltip(tooltip, target, task) {
     `;
 
   tooltip.style.left =
-    Math.min(rect.left, window.innerWidth - tooltip.offsetWidth - 10) + "px";
+    Math.min( rect.left, window.innerWidth - tooltip.offsetWidth - 10 ) + "px";
   tooltip.style.top = rect.top - tooltip.offsetHeight - 5 + "px";
-  tooltip.classList.remove("opacity-0");
+  tooltip.classList.remove( "opacity-0" );
 }
 
 function setupDragAndDrop() {
-  const calendar = document.getElementById("calendar");
-  if (!calendar) return;
+  const calendar = document.getElementById( "calendar" );
+  if ( !calendar ) return;
 
-  calendar.addEventListener("dragstart", handleDragStart);
-  calendar.addEventListener("dragend", handleDragEnd);
-  calendar.addEventListener("dragover", handleDragOver);
-  calendar.addEventListener("dragleave", handleDragLeave);
-  calendar.addEventListener("drop", handleDrop);
+  calendar.addEventListener( "dragstart", handleDragStart );
+  calendar.addEventListener( "dragend", handleDragEnd );
+  calendar.addEventListener( "dragover", handleDragOver );
+  calendar.addEventListener( "dragleave", handleDragLeave );
+  calendar.addEventListener( "drop", handleDrop );
 }
 
-function handleDragStart(e) {
-  if (e.target.classList.contains("task-item")) {
+function handleDragStart( e ) {
+  if ( e.target.classList.contains( "task-item" ) ) {
     e.stopPropagation();
     draggedTask = e.target.dataset.taskId;
     draggedFromDate = e.target.dataset.date;
@@ -2708,93 +2703,93 @@ function handleDragStart(e) {
   }
 }
 
-function handleDragEnd(e) {
-  if (e.target.classList.contains("task-item")) {
+function handleDragEnd( e ) {
+  if ( e.target.classList.contains( "task-item" ) ) {
     e.target.style.opacity = "1";
     draggedTask = null;
     draggedFromDate = null;
   }
 }
 
-function handleDragOver(e) {
+function handleDragOver( e ) {
   e.preventDefault();
-  const dayElement = e.target.closest(".calendar-day");
-  if (dayElement) {
-    dayElement.classList.add("bg-yellow-100");
+  const dayElement = e.target.closest( ".calendar-day" );
+  if ( dayElement ) {
+    dayElement.classList.add( "bg-yellow-100" );
   }
 }
 
-function handleDragLeave(e) {
-  const dayElement = e.target.closest(".calendar-day");
-  if (dayElement) {
-    dayElement.classList.remove("bg-yellow-100");
+function handleDragLeave( e ) {
+  const dayElement = e.target.closest( ".calendar-day" );
+  if ( dayElement ) {
+    dayElement.classList.remove( "bg-yellow-100" );
   }
 }
 
-function handleDrop(e) {
+function handleDrop( e ) {
   e.preventDefault();
-  const dropTarget = e.target.closest(".calendar-day");
+  const dropTarget = e.target.closest( ".calendar-day" );
 
-  if (dropTarget && draggedTask && draggedFromDate) {
+  if ( dropTarget && draggedTask && draggedFromDate ) {
     const targetDate = dropTarget.dataset.date;
 
     // Verificar si la fecha destino es pasada
-    if (isDatePast(targetDate)) {
-      showNotification("No puedes mover tareas a fechas anteriores", "error");
-      document.querySelectorAll(".bg-yellow-100").forEach((el) => {
-        el.classList.remove("bg-yellow-100");
-      });
+    if ( isDatePast( targetDate ) ) {
+      showNotification( "No puedes mover tareas a fechas anteriores", "error" );
+      document.querySelectorAll( ".bg-yellow-100" ).forEach( ( el ) => {
+        el.classList.remove( "bg-yellow-100" );
+      } );
       return;
     }
 
     // NUEVA RESTRICCIÓN: Verificar si la tarea puede moverse
-    const task = tasks[draggedFromDate]?.find((t) => t.id === draggedTask);
-    if (task && !canMoveTask(task)) {
-      const priority = PRIORITY_LEVELS[task.priority] || PRIORITY_LEVELS[3];
+    const task = tasks[ draggedFromDate ]?.find( ( t ) => t.id === draggedTask );
+    if ( task && !canMoveTask( task ) ) {
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
       showNotification(
         `Las tareas "${priority.label}" no se pueden mover. Solo se pueden editar o eliminar.`,
         "error"
       );
-      document.querySelectorAll(".bg-yellow-100").forEach((el) => {
-        el.classList.remove("bg-yellow-100");
-      });
+      document.querySelectorAll( ".bg-yellow-100" ).forEach( ( el ) => {
+        el.classList.remove( "bg-yellow-100" );
+      } );
       return;
     }
 
-    if (targetDate !== draggedFromDate) {
-      moveTask(draggedFromDate, targetDate, draggedTask);
-      showNotification("Tarea movida exitosamente", "success");
+    if ( targetDate !== draggedFromDate ) {
+      moveTask( draggedFromDate, targetDate, draggedTask );
+      showNotification( "Tarea movida exitosamente", "success" );
     }
   }
 
-  document.querySelectorAll(".bg-yellow-100").forEach((el) => {
-    el.classList.remove("bg-yellow-100");
-  });
+  document.querySelectorAll( ".bg-yellow-100" ).forEach( ( el ) => {
+    el.classList.remove( "bg-yellow-100" );
+  } );
 }
 
 // 5. ACTUALIZAR función handleDragStart para mostrar indicador visual de restricción
-function handleDragStart(e) {
-  if (e.target.classList.contains("task-item")) {
+function handleDragStart( e ) {
+  if ( e.target.classList.contains( "task-item" ) ) {
     e.stopPropagation();
     draggedTask = e.target.dataset.taskId;
     draggedFromDate = e.target.dataset.date;
 
     // Verificar si la tarea puede moverse
-    const task = tasks[draggedFromDate]?.find((t) => t.id === draggedTask);
-    if (task && !canMoveTask(task)) {
+    const task = tasks[ draggedFromDate ]?.find( ( t ) => t.id === draggedTask );
+    if ( task && !canMoveTask( task ) ) {
       e.target.style.opacity = "0.3";
       e.target.style.cursor = "not-allowed";
       // Mostrar tooltip temporal
-      const tooltip = document.createElement("div");
+      const tooltip = document.createElement( "div" );
       tooltip.className =
         "fixed bg-red-600 text-white text-xs px-2 py-1 rounded z-50 pointer-events-none";
       tooltip.textContent = "Esta tarea no se puede mover";
       const rect = e.target.getBoundingClientRect();
       tooltip.style.left = rect.left + "px";
       tooltip.style.top = rect.top - 30 + "px";
-      document.body.appendChild(tooltip);
+      document.body.appendChild( tooltip );
 
-      setTimeout(() => tooltip.remove(), 2000);
+      setTimeout( () => tooltip.remove(), 2000 );
     } else {
       e.target.style.opacity = "0.5";
     }
@@ -2802,78 +2797,78 @@ function handleDragStart(e) {
 }
 
 //moveTask con sync automático
-function moveTask(fromDate, toDate, taskId) {
-  const fromTasks = tasks[fromDate];
-  const taskIndex = fromTasks?.findIndex((t) => t.id === taskId);
+function moveTask( fromDate, toDate, taskId ) {
+  const fromTasks = tasks[ fromDate ];
+  const taskIndex = fromTasks?.findIndex( ( t ) => t.id === taskId );
 
-  if (taskIndex !== -1) {
-    const task = fromTasks.splice(taskIndex, 1)[0];
+  if ( taskIndex !== -1 ) {
+    const task = fromTasks.splice( taskIndex, 1 )[ 0 ];
     const taskTitle = task.title; // Guardar título para registro
 
-    if (fromTasks.length === 0) {
-      delete tasks[fromDate];
+    if ( fromTasks.length === 0 ) {
+      delete tasks[ fromDate ];
     }
 
-    if (!tasks[toDate]) tasks[toDate] = [];
+    if ( !tasks[ toDate ] ) tasks[ toDate ] = [];
 
     task.id = `${toDate}-${Date.now()}`;
-    tasks[toDate].push(task);
+    tasks[ toDate ].push( task );
 
     // NUEVO: Registrar movimiento
-    addToChangeLog("moved", taskTitle, toDate, fromDate, toDate);
+    addToChangeLog( "moved", taskTitle, toDate, fromDate, toDate );
 
     saveTasks();
     renderCalendar();
     updateProgress();
 
     // Auto-sync: eliminar de fecha origen y agregar a fecha destino
-    enqueueSync("delete", fromDate, { id: taskId });
-    enqueueSync("upsert", toDate, task);
+    enqueueSync( "delete", fromDate, { id: taskId } );
+    enqueueSync( "upsert", toDate, task );
   }
 }
 
 function closeModal() {
-  const modal = document.getElementById("taskModal");
-  if (modal) {
-    modal.classList.add("opacity-0");
-    modal.querySelector("#modal-content-wrapper").classList.add("scale-95");
-    setTimeout(() => modal.classList.add("hidden"), 300);
+  const modal = document.getElementById( "taskModal" );
+  if ( modal ) {
+    modal.classList.add( "opacity-0" );
+    modal.querySelector( "#modal-content-wrapper" ).classList.add( "scale-95" );
+    setTimeout( () => modal.classList.add( "hidden" ), 300 );
   }
 }
 
-function toggleTask(dateStr, taskId) {
-  const task = tasks[dateStr]?.find((t) => t.id === taskId);
-  if (task) {
+function toggleTask( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
+  if ( task ) {
     task.completed = !task.completed;
     saveTasks();
     renderCalendar();
     updateProgress();
 
     // Auto-sync
-    enqueueSync("upsert", dateStr, task);
+    enqueueSync( "upsert", dateStr, task );
   }
 }
 
 //deleteTaskWithUndoImprovedcon sync automático
-function deleteTaskWithUndoImproved(dateStr, taskId) {
-  const dayTasks = tasks[dateStr];
-  const taskIndex = dayTasks?.findIndex((t) => t.id === taskId);
+function deleteTaskWithUndoImproved( dateStr, taskId ) {
+  const dayTasks = tasks[ dateStr ];
+  const taskIndex = dayTasks?.findIndex( ( t ) => t.id === taskId );
 
-  if (taskIndex !== -1) {
-    const task = dayTasks[taskIndex];
+  if ( taskIndex !== -1 ) {
+    const task = dayTasks[ taskIndex ];
     lastDeletedTask = { ...task };
     lastDeletedDate = dateStr;
 
     // Registrar eliminación con ID
-    addToChangeLog("deleted", task.title, dateStr, null, null, taskId);
+    addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
-    tasks[dateStr] = tasks[dateStr].filter((t) => t.id !== taskId);
-    if (tasks[dateStr].length === 0) {
-      delete tasks[dateStr];
+    tasks[ dateStr ] = tasks[ dateStr ].filter( ( t ) => t.id !== taskId );
+    if ( tasks[ dateStr ].length === 0 ) {
+      delete tasks[ dateStr ];
     }
 
     // Auto-sync delete
-    enqueueSync("delete", dateStr, { id: taskId });
+    enqueueSync( "delete", dateStr, { id: taskId } );
 
     saveTasks();
     renderCalendar();
@@ -2883,7 +2878,7 @@ function deleteTaskWithUndoImproved(dateStr, taskId) {
 }
 
 function showUndoNotification() {
-  const notification = document.createElement("div");
+  const notification = document.createElement( "div" );
   notification.className =
     "fixed bottom-4 left-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center space-x-3";
   notification.innerHTML = `
@@ -2896,19 +2891,19 @@ function showUndoNotification() {
         </button>
     `;
 
-  document.body.appendChild(notification);
-  setTimeout(() => notification.remove(), 5000);
+  document.body.appendChild( notification );
+  setTimeout( () => notification.remove(), 5000 );
 }
 
 //undoDelete con sync automático
 function undoDelete() {
-  if (lastDeletedTask && lastDeletedDate) {
-    if (!tasks[lastDeletedDate]) tasks[lastDeletedDate] = [];
+  if ( lastDeletedTask && lastDeletedDate ) {
+    if ( !tasks[ lastDeletedDate ] ) tasks[ lastDeletedDate ] = [];
 
-    tasks[lastDeletedDate].push(lastDeletedTask);
+    tasks[ lastDeletedDate ].push( lastDeletedTask );
 
     // Auto-sync restore
-    enqueueSync("upsert", lastDeletedDate, lastDeletedTask);
+    enqueueSync( "upsert", lastDeletedDate, lastDeletedTask );
 
     saveTasks();
     renderCalendar();
@@ -2917,13 +2912,13 @@ function undoDelete() {
     lastDeletedTask = null;
     lastDeletedDate = null;
 
-    showNotification("Tarea restaurada exitosamente", "success");
-    document.querySelector(".fixed.bottom-4.left-4")?.remove();
+    showNotification( "Tarea restaurada exitosamente", "success" );
+    document.querySelector( ".fixed.bottom-4.left-4" )?.remove();
   }
 }
 
-function changeMonth(delta) {
-  currentDate.setMonth(currentDate.getMonth() + delta);
+function changeMonth( delta ) {
+  currentDate.setMonth( currentDate.getMonth() + delta );
   renderCalendar();
   updateProgress();
 }
@@ -2938,34 +2933,34 @@ function clearWeek() {
     return;
 
   const today = new Date();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay());
+  const startOfWeek = new Date( today );
+  startOfWeek.setDate( today.getDate() - today.getDay() );
 
   const deletedTasks = [];
 
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(startOfWeek);
-    date.setDate(startOfWeek.getDate() + i);
-    const dateStr = date.toISOString().split("T")[0];
+  for ( let i = 0; i < 7; i++ ) {
+    const date = new Date( startOfWeek );
+    date.setDate( startOfWeek.getDate() + i );
+    const dateStr = date.toISOString().split( "T" )[ 0 ];
 
-    if (tasks[dateStr]) {
+    if ( tasks[ dateStr ] ) {
       // Guardar tareas para sync
-      tasks[dateStr].forEach((task) => {
-        deletedTasks.push({ dateStr, taskId: task.id });
-      });
-      delete tasks[dateStr];
+      tasks[ dateStr ].forEach( ( task ) => {
+        deletedTasks.push( { dateStr, taskId: task.id } );
+      } );
+      delete tasks[ dateStr ];
     }
   }
 
   // Auto-sync batch delete
-  deletedTasks.forEach(({ dateStr, taskId }) => {
-    enqueueSync("delete", dateStr, { id: taskId });
-  });
+  deletedTasks.forEach( ( { dateStr, taskId } ) => {
+    enqueueSync( "delete", dateStr, { id: taskId } );
+  } );
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  showNotification("Semana limpiada exitosamente");
+  showNotification( "Semana limpiada exitosamente" );
 }
 
 //clearMonth con sync automático optimizado
@@ -2981,54 +2976,54 @@ function clearMonth() {
   const month = currentDate.getMonth();
   const deletedTasks = [];
 
-  Object.keys(tasks).forEach((dateStr) => {
-    const date = new Date(dateStr + "T12:00:00");
-    if (date.getFullYear() === year && date.getMonth() === month) {
+  Object.keys( tasks ).forEach( ( dateStr ) => {
+    const date = new Date( dateStr + "T12:00:00" );
+    if ( date.getFullYear() === year && date.getMonth() === month ) {
       // Guardar tareas para sync
-      tasks[dateStr].forEach((task) => {
-        deletedTasks.push({ dateStr, taskId: task.id });
-      });
-      delete tasks[dateStr];
+      tasks[ dateStr ].forEach( ( task ) => {
+        deletedTasks.push( { dateStr, taskId: task.id } );
+      } );
+      delete tasks[ dateStr ];
     }
-  });
+  } );
 
   // Auto-sync batch delete
-  deletedTasks.forEach(({ dateStr, taskId }) => {
-    enqueueSync("delete", dateStr, { id: taskId });
-  });
+  deletedTasks.forEach( ( { dateStr, taskId } ) => {
+    enqueueSync( "delete", dateStr, { id: taskId } );
+  } );
 
   saveTasks();
   renderCalendar();
   updateProgress();
-  showNotification("Mes limpiado exitosamente");
+  showNotification( "Mes limpiado exitosamente" );
 }
 
 function updateProgress() {
   const today = getTodayString();
-  const todayTasks = tasks[today] || [];
+  const todayTasks = tasks[ today ] || [];
   const completedTasks = todayTasks.filter(
-    (task) => task.state === "completed"
+    ( task ) => task.state === "completed"
   ).length;
   const inProgressTasks = todayTasks.filter(
-    (task) => task.state === "inProgress"
+    ( task ) => task.state === "inProgress"
   ).length;
   const pausedTasks = todayTasks.filter(
-    (task) => task.state === "paused"
+    ( task ) => task.state === "paused"
   ).length;
   const pendingTasks = todayTasks.filter(
-    (task) => task.state === "pending"
+    ( task ) => task.state === "pending"
   ).length;
 
   const progress =
     todayTasks.length === 0
       ? 0
-      : Math.round((completedTasks / todayTasks.length) * 100);
+      : Math.round( ( completedTasks / todayTasks.length ) * 100 );
 
-  const progressBar = document.getElementById("progressBar");
-  const progressText = document.getElementById("progressText");
+  const progressBar = document.getElementById( "progressBar" );
+  const progressText = document.getElementById( "progressText" );
 
-  if (progressBar) progressBar.style.width = `${progress}%`;
-  if (progressText) {
+  if ( progressBar ) progressBar.style.width = `${progress}%`;
+  if ( progressText ) {
     progressText.innerHTML = `
             ${progress}% | 
             <span class="text-green-600">${completedTasks} ✓</span> 
@@ -3040,77 +3035,77 @@ function updateProgress() {
 }
 
 function exportToExcel() {
-  if (typeof XLSX === "undefined") {
-    showNotification("Error: XLSX library not loaded", "error");
+  if ( typeof XLSX === "undefined" ) {
+    showNotification( "Error: XLSX library not loaded", "error" );
     return;
   }
 
   const wb = XLSX.utils.book_new();
-  const data = [["Fecha", "Título", "Descripción", "Hora", "Completada"]];
+  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Completada" ] ];
 
-  Object.entries(tasks).forEach(([date, dayTasks]) => {
-    dayTasks.forEach((task) => {
-      data.push([
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    dayTasks.forEach( ( task ) => {
+      data.push( [
         date,
         task.title,
         task.description || "",
         task.time || "",
         task.completed ? "Sí" : "No",
-      ]);
-    });
-  });
+      ] );
+    } );
+  } );
 
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  XLSX.utils.book_append_sheet(wb, ws, "Tareas");
-  XLSX.writeFile(wb, `tareas_${getTodayString()}.xlsx`);
+  const ws = XLSX.utils.aoa_to_sheet( data );
+  XLSX.utils.book_append_sheet( wb, ws, "Tareas" );
+  XLSX.writeFile( wb, `tareas_${getTodayString()}.xlsx` );
 
-  showNotification("Excel exportado exitosamente");
+  showNotification( "Excel exportado exitosamente" );
 }
 
 function requestNotificationPermission() {
-  if (!("Notification" in window)) {
-    showNotification("Este navegador no soporta notificaciones", "error");
-    return Promise.resolve("denied");
+  if ( !( "Notification" in window ) ) {
+    showNotification( "Este navegador no soporta notificaciones", "error" );
+    return Promise.resolve( "denied" );
   }
 
-  if (Notification.permission === "granted") {
+  if ( Notification.permission === "granted" ) {
     notificationsEnabled = true;
     updateNotificationButton();
     startNotificationService();
-    return Promise.resolve("granted");
+    return Promise.resolve( "granted" );
   }
 
-  return Notification.requestPermission().then((permission) => {
-    if (permission === "granted") {
+  return Notification.requestPermission().then( ( permission ) => {
+    if ( permission === "granted" ) {
       notificationsEnabled = true;
       updateNotificationButton();
       startNotificationService();
-      showNotification("Notificaciones activadas correctamente", "success");
+      showNotification( "Notificaciones activadas correctamente", "success" );
     } else {
-      showNotification("Permisos de notificación denegados", "error");
+      showNotification( "Permisos de notificación denegados", "error" );
     }
     return permission;
-  });
+  } );
 }
 
 function toggleNotifications() {
-  if (!("Notification" in window)) {
-    showNotification("Este navegador no soporta notificaciones", "error");
+  if ( !( "Notification" in window ) ) {
+    showNotification( "Este navegador no soporta notificaciones", "error" );
     return;
   }
 
-  if (Notification.permission === "granted") {
+  if ( Notification.permission === "granted" ) {
     notificationsEnabled = !notificationsEnabled;
     updateNotificationButton();
 
-    if (notificationsEnabled) {
+    if ( notificationsEnabled ) {
       startNotificationService();
-      showNotification("Notificaciones activadas", "success");
+      showNotification( "Notificaciones activadas", "success" );
     } else {
       stopNotificationService();
-      showNotification("Notificaciones desactivadas", "info");
+      showNotification( "Notificaciones desactivadas", "info" );
     }
-  } else if (Notification.permission === "default") {
+  } else if ( Notification.permission === "default" ) {
     requestNotificationPermission();
   } else {
     showNotification(
@@ -3121,49 +3116,49 @@ function toggleNotifications() {
 }
 
 function startNotificationService() {
-  if (notificationInterval) {
-    clearInterval(notificationInterval);
+  if ( notificationInterval ) {
+    clearInterval( notificationInterval );
     notificationInterval = null;
   }
 
-  if (!notificationsEnabled || Notification.permission !== "granted") {
-    console.log("❌ Notificaciones no habilitadas o sin permisos");
+  if ( !notificationsEnabled || Notification.permission !== "granted" ) {
+    console.log( "❌ Notificaciones no habilitadas o sin permisos" );
     return;
   }
 
-  console.log("Iniciando servicio de notificaciones mejorado");
+  console.log( "Iniciando servicio de notificaciones mejorado" );
 
   // Reset de estado diario a las 00:01
   resetDailyNotificationStatus();
 
   // Verificación inmediata
-  setTimeout(() => {
+  setTimeout( () => {
     try {
       checkDailyTasksImproved();
-    } catch (error) {
-      console.error("Error en checkDailyTasks inicial:", error);
+    } catch ( error ) {
+      console.error( "Error en checkDailyTasks inicial:", error );
     }
-  }, 1000);
+  }, 1000 );
 
   // Intervalo más frecuente pero inteligente (cada 30 segundos)
-  notificationInterval = setInterval(() => {
+  notificationInterval = setInterval( () => {
     try {
-      if (notificationsEnabled && Notification.permission === "granted") {
+      if ( notificationsEnabled && Notification.permission === "granted" ) {
         checkDailyTasksImproved();
       } else {
-        console.log("⚠️ Notificaciones deshabilitadas en intervalo");
+        console.log( "⚠️ Notificaciones deshabilitadas en intervalo" );
         stopNotificationService();
       }
-    } catch (error) {
-      console.error("Error en intervalo de notificaciones:", error);
+    } catch ( error ) {
+      console.error( "Error en intervalo de notificaciones:", error );
     }
-  }, 30000); // 30 segundos
+  }, 30000 ); // 30 segundos
 
   // Verificación adicional cada 5 minutos para mayor seguridad
   setInterval(
     () => {
-      if (notificationsEnabled && Notification.permission === "granted") {
-        checkDailyTasksImproved(true); // Forzar verificación
+      if ( notificationsEnabled && Notification.permission === "granted" ) {
+        checkDailyTasksImproved( true ); // Forzar verificación
       }
     },
     5 * 60 * 1000
@@ -3173,7 +3168,7 @@ function startNotificationService() {
 // función mejorada para reset diario
 function resetDailyNotificationStatus() {
   const now = new Date();
-  if (now.getHours() === 0 && now.getMinutes() <= 1) {
+  if ( now.getHours() === 0 && now.getMinutes() <= 1 ) {
     notificationStatus = {
       morning: false,
       midday: false,
@@ -3182,30 +3177,30 @@ function resetDailyNotificationStatus() {
     };
     checkDailyTasksImproved;
     sentNotifications.clear();
-    console.log("🔄 Estado de notificaciones diarias reseteado");
+    console.log( "🔄 Estado de notificaciones diarias reseteado" );
   }
 }
 
 function stopNotificationService() {
-  if (notificationInterval) {
-    clearInterval(notificationInterval);
+  if ( notificationInterval ) {
+    clearInterval( notificationInterval );
     notificationInterval = null;
-    console.log("Servicio de notificaciones detenido");
+    console.log( "Servicio de notificaciones detenido" );
   }
 }
 
 function updateNotificationButton() {
-  const btn = document.getElementById("notificationsBtn");
-  if (!btn) return;
+  const btn = document.getElementById( "notificationsBtn" );
+  if ( !btn ) return;
 
   const hasPermission = Notification.permission === "granted";
 
-  if (notificationsEnabled && hasPermission) {
+  if ( notificationsEnabled && hasPermission ) {
     btn.className =
       "bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition duration-300";
     btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
     btn.title = "Notificaciones activadas - Click para desactivar";
-  } else if (hasPermission) {
+  } else if ( hasPermission ) {
     btn.className =
       "bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition duration-300";
     btn.innerHTML = '<i class="fas fa-bell-slash mr-2"></i>Notificaciones OFF';
@@ -3218,8 +3213,8 @@ function updateNotificationButton() {
   }
 }
 
-function checkDailyTasksImproved(forceCheck = false) {
-  if (!notificationsEnabled || Notification.permission !== "granted") {
+function checkDailyTasksImproved( forceCheck = false ) {
+  if ( !notificationsEnabled || Notification.permission !== "granted" ) {
     return;
   }
 
@@ -3227,28 +3222,28 @@ function checkDailyTasksImproved(forceCheck = false) {
   const today = getTodayString();
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
-  const currentTime = `${String(currentHour).padStart(2, "0")}:${String(currentMinute).padStart(2, "0")}`;
+  const currentTime = `${String( currentHour ).padStart( 2, "0" )}:${String( currentMinute ).padStart( 2, "0" )}`;
 
-  const todayTasks = tasks[today] || [];
-  const pendingTasks = todayTasks.filter((task) => task.state === "pending");
+  const todayTasks = tasks[ today ] || [];
+  const pendingTasks = todayTasks.filter( ( task ) => task.state === "pending" );
   const inProgressTasks = todayTasks.filter(
-    (task) => task.state === "inProgress"
+    ( task ) => task.state === "inProgress"
   );
 
   resetDailyNotificationStatus();
 
   // Notificaciones de tareas con hora específica
-  todayTasks.forEach((task) => {
-    if (!task.time || task.state === "completed") return;
+  todayTasks.forEach( ( task ) => {
+    if ( !task.time || task.state === "completed" ) return;
 
-    const [taskHours, taskMinutes] = task.time.split(":").map(Number);
+    const [ taskHours, taskMinutes ] = task.time.split( ":" ).map( Number );
     const taskTime = taskHours * 60 + taskMinutes;
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
     // Notificación de inicio - cambiar automáticamente a "en proceso"
     const nowKey = `${task.id}-now`;
     if (
-      !notificationStatus.taskReminders.has(nowKey) &&
+      !notificationStatus.taskReminders.has( nowKey ) &&
       currentTimeInMinutes >= taskTime &&
       currentTimeInMinutes <= taskTime + 2 &&
       task.state === "pending"
@@ -3258,18 +3253,18 @@ function checkDailyTasksImproved(forceCheck = false) {
       task.completed = false;
       saveTasks();
       renderCalendar();
-      enqueueSync("upsert", today, task);
+      enqueueSync( "upsert", today, task );
 
-      const priority = PRIORITY_LEVELS[task.priority] || PRIORITY_LEVELS[3];
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
       showDesktopNotification(
         `🚀 Iniciando: ${task.title}`,
         `Tarea ${priority.label.toLowerCase()} comenzó. Estado: En Proceso`,
         nowKey,
         true
       );
-      notificationStatus.taskReminders.add(nowKey);
+      notificationStatus.taskReminders.add( nowKey );
     }
-  });
+  } );
 
   // Notificaciones generales con información de estados
   const totalPending = pendingTasks.length;
@@ -3279,13 +3274,13 @@ function checkDailyTasksImproved(forceCheck = false) {
     !notificationStatus.morning &&
     currentHour === 9 &&
     currentMinute <= 30 &&
-    (totalPending > 0 || totalInProgress > 0)
+    ( totalPending > 0 || totalInProgress > 0 )
   ) {
     let message = "";
-    if (totalPending > 0)
+    if ( totalPending > 0 )
       message += `${totalPending} pendiente${totalPending > 1 ? "s" : ""}`;
-    if (totalInProgress > 0) {
-      if (message) message += " y ";
+    if ( totalInProgress > 0 ) {
+      if ( message ) message += " y ";
       message += `${totalInProgress} en proceso`;
     }
 
@@ -3299,23 +3294,23 @@ function checkDailyTasksImproved(forceCheck = false) {
 }
 
 // función para limpiar notificaciones cuando se completa una tarea
-function clearTaskNotifications(taskId) {
+function clearTaskNotifications( taskId ) {
   const keysToRemove = [
     `${taskId}-reminder-15`,
     `${taskId}-now`,
     `${taskId}-late`,
   ];
 
-  keysToRemove.forEach((key) => {
-    notificationStatus.taskReminders.delete(key);
-  });
+  keysToRemove.forEach( ( key ) => {
+    notificationStatus.taskReminders.delete( key );
+  } );
 }
 
-function showDesktopNotification(title, body, tag, requireInteraction = false) {
+function showDesktopNotification( title, body, tag, requireInteraction = false ) {
   try {
     // Evitar notificaciones duplicadas
-    if (sentNotifications.has(tag)) {
-      console.log("⏭️ Notificación duplicada evitada:", tag);
+    if ( sentNotifications.has( tag ) ) {
+      console.log( "⏭️ Notificación duplicada evitada:", tag );
       return;
     }
 
@@ -3333,36 +3328,36 @@ function showDesktopNotification(title, body, tag, requireInteraction = false) {
       silent: false,
       badge: getFaviconAsDataUrl(),
       timestamp: Date.now(),
-      vibrate: isMobile ? [200, 100, 200] : undefined, // Vibración en móviles
+      vibrate: isMobile ? [ 200, 100, 200 ] : undefined, // Vibración en móviles
       renotify: true, // Permitir re-notificación con mismo tag
       actions: isMobile
         ? [
-            {
-              action: "view",
-              title: "Ver tareas",
-            },
-            {
-              action: "close",
-              title: "Cerrar",
-            },
-          ]
+          {
+            action: "view",
+            title: "Ver tareas",
+          },
+          {
+            action: "close",
+            title: "Cerrar",
+          },
+        ]
         : undefined,
     };
 
-    const notification = new Notification(title, notificationOptions);
+    const notification = new Notification( title, notificationOptions );
 
     // Marcar como enviada
-    sentNotifications.add(tag);
+    sentNotifications.add( tag );
 
     // Para móviles, mostrar también alerta visual en la app
-    if (isMobile) {
-      showInAppNotification(title, body);
+    if ( isMobile ) {
+      showInAppNotification( title, body );
     }
 
     // Limpiar del set después de 3 minutos para móviles, 5 para desktop
     setTimeout(
       () => {
-        sentNotifications.delete(tag);
+        sentNotifications.delete( tag );
       },
       isMobile ? 3 * 60 * 1000 : 5 * 60 * 1000
     );
@@ -3373,10 +3368,10 @@ function showDesktopNotification(title, body, tag, requireInteraction = false) {
     };
 
     // Auto-close más rápido en móviles
-    if (!requireInteraction && !isMobile) {
-      setTimeout(() => {
+    if ( !requireInteraction && !isMobile ) {
+      setTimeout( () => {
         notification.close();
-      }, 8000);
+      }, 8000 );
     }
 
     console.log(
@@ -3387,15 +3382,15 @@ function showDesktopNotification(title, body, tag, requireInteraction = false) {
       "- Móvil:",
       isMobile
     );
-  } catch (error) {
-    console.error("❌ Error enviando notificación:", error);
+  } catch ( error ) {
+    console.error( "❌ Error enviando notificación:", error );
     // Fallback para móviles problemáticos
-    showInAppNotification(title, body);
+    showInAppNotification( title, body );
   }
 }
 
-function showInAppNotification(title, body) {
-  const notification = document.createElement("div");
+function showInAppNotification( title, body ) {
+  const notification = document.createElement( "div" );
   notification.className =
     "fixed top-20 left-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-2xl z-50 transform -translate-y-full transition-transform duration-500";
   notification.innerHTML = `
@@ -3410,18 +3405,18 @@ function showInAppNotification(title, body) {
         </div>
     `;
 
-  document.body.appendChild(notification);
+  document.body.appendChild( notification );
 
   // Mostrar animación
-  setTimeout(() => {
-    notification.classList.remove("-translate-y-full");
-  }, 100);
+  setTimeout( () => {
+    notification.classList.remove( "-translate-y-full" );
+  }, 100 );
 
   // Auto-ocultar después de 8 segundos
-  setTimeout(() => {
-    notification.classList.add("-translate-y-full");
-    setTimeout(() => notification.remove(), 500);
-  }, 8000);
+  setTimeout( () => {
+    notification.classList.add( "-translate-y-full" );
+    setTimeout( () => notification.remove(), 500 );
+  }, 8000 );
 }
 
 function getFaviconAsDataUrl() {
@@ -3432,11 +3427,11 @@ function getFaviconAsDataUrl() {
             <circle cx="48" cy="16" r="6" fill="#EF4444"/>
         </svg>
     `;
-  return `data:image/svg+xml;base64,${btoa(svg)}`;
+  return `data:image/svg+xml;base64,${btoa( svg )}`;
 }
 
-function showNotification(message, type = "success") {
-  const notification = document.createElement("div");
+function showNotification( message, type = "success" ) {
+  const notification = document.createElement( "div" );
   const typeClasses = {
     success: "bg-green-500 text-white fa-check-circle",
     error: "bg-red-500 text-white fa-exclamation-circle",
@@ -3446,9 +3441,9 @@ function showNotification(message, type = "success") {
   const { className, icon } =
     type in typeClasses
       ? {
-          className: typeClasses[type].split(" ").slice(0, -1).join(" "),
-          icon: typeClasses[type].split(" ").pop(),
-        }
+        className: typeClasses[ type ].split( " " ).slice( 0, -1 ).join( " " ),
+        icon: typeClasses[ type ].split( " " ).pop(),
+      }
       : { className: "bg-blue-500 text-white", icon: "fa-info-circle" };
 
   notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full ${className}`;
@@ -3459,34 +3454,34 @@ function showNotification(message, type = "success") {
         </div>
     `;
 
-  document.body.appendChild(notification);
+  document.body.appendChild( notification );
 
-  setTimeout(() => notification.classList.remove("translate-x-full"), 100);
+  setTimeout( () => notification.classList.remove( "translate-x-full" ), 100 );
 
-  setTimeout(() => {
-    notification.classList.add("translate-x-full");
-    setTimeout(() => notification.remove(), 300);
-  }, 3000);
+  setTimeout( () => {
+    notification.classList.add( "translate-x-full" );
+    setTimeout( () => notification.remove(), 300 );
+  }, 3000 );
 }
 
 function saveTasks() {
   try {
-    localStorage.setItem("tasks", JSON.stringify(tasks));
-  } catch (error) {
-    console.error("Error saving tasks to localStorage:", error);
-    showNotification("Error al guardar tareas", "error");
+    localStorage.setItem( "tasks", JSON.stringify( tasks ) );
+  } catch ( error ) {
+    console.error( "Error saving tasks to localStorage:", error );
+    showNotification( "Error al guardar tareas", "error" );
   }
 }
 
 //clearAll con sync automático optimizado
 function clearAll() {
-  const totalTasks = Object.values(tasks).reduce(
-    (sum, dayTasks) => sum + dayTasks.length,
+  const totalTasks = Object.values( tasks ).reduce(
+    ( sum, dayTasks ) => sum + dayTasks.length,
     0
   );
 
-  if (totalTasks === 0) {
-    showNotification("No hay tareas para eliminar", "info");
+  if ( totalTasks === 0 ) {
+    showNotification( "No hay tareas para eliminar", "info" );
     return;
   }
 
@@ -3498,18 +3493,18 @@ function clearAll() {
     return;
   }
 
-  if (!confirm("⚠️ ESTA ACCIÓN NO SE PUEDE DESHACER. ¿Continuar?")) {
+  if ( !confirm( "⚠️ ESTA ACCIÓN NO SE PUEDE DESHACER. ¿Continuar?" ) ) {
     return;
   }
 
   const deletedTasks = [];
 
   // Recopilar todas las tareas para sync
-  Object.entries(tasks).forEach(([dateStr, dayTasks]) => {
-    dayTasks.forEach((task) => {
-      deletedTasks.push({ dateStr, taskId: task.id });
-    });
-  });
+  Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
+    dayTasks.forEach( ( task ) => {
+      deletedTasks.push( { dateStr, taskId: task.id } );
+    } );
+  } );
 
   tasks = {};
   saveTasks();
@@ -3518,20 +3513,20 @@ function clearAll() {
   closeDailyTaskPanel();
 
   // Auto-sync batch delete
-  deletedTasks.forEach(({ dateStr, taskId }) => {
-    enqueueSync("delete", dateStr, { id: taskId });
-  });
+  deletedTasks.forEach( ( { dateStr, taskId } ) => {
+    enqueueSync( "delete", dateStr, { id: taskId } );
+  } );
 
-  showNotification(`${totalTasks} tareas eliminadas del calendario`, "success");
+  showNotification( `${totalTasks} tareas eliminadas del calendario`, "success" );
 }
 
 //Auto-sincronización periódica más inteligente
 setInterval(
   () => {
-    if (currentUser && isOnline && !isSyncing) {
+    if ( currentUser && isOnline && !isSyncing ) {
       // Solo hacer sync completo cada 10 minutos si no hay cambios pendientes
-      if (syncQueue.size === 0) {
-        console.log("🔄 Sync periódico: verificando cambios remotos");
+      if ( syncQueue.size === 0 ) {
+        console.log( "🔄 Sync periódico: verificando cambios remotos" );
         syncFromFirebase();
       } else {
         console.log(
@@ -3545,24 +3540,24 @@ setInterval(
 ); // Cada 10 minutos
 
 // Procesar cola al cerrar/recargar página
-window.addEventListener("beforeunload", () => {
-  if (syncQueue.size > 0 && currentUser && isOnline) {
+window.addEventListener( "beforeunload", () => {
+  if ( syncQueue.size > 0 && currentUser && isOnline ) {
     // Intentar sync inmediato antes de cerrar
     navigator.sendBeacon &&
       navigator.sendBeacon(
         "/sync-beacon",
-        JSON.stringify({
+        JSON.stringify( {
           uid: currentUser.uid,
-          operations: Array.from(syncQueue.values()),
-        })
+          operations: Array.from( syncQueue.values() ),
+        } )
       );
   }
-});
+} );
 
 // Manejar cambios de visibilidad de página
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && syncQueue.size > 0 && currentUser && isOnline) {
+document.addEventListener( "visibilitychange", () => {
+  if ( !document.hidden && syncQueue.size > 0 && currentUser && isOnline ) {
     // Procesar cola cuando la página vuelva a ser visible
-    setTimeout(() => processSyncQueue(), 1000);
+    setTimeout( () => processSyncQueue(), 1000 );
   }
-});
+} );
