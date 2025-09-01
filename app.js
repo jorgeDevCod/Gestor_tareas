@@ -205,7 +205,7 @@ function showDayChangeLog( dateStr ) {
             <div class="sticky top-0 bg-white border-b p-6 flex justify-between items-center">
                 <h3 class="text-lg font-semibold text-gray-800">
                     <i class="fas fa-history text-blue-500 mr-2"></i>
-                    Registro del ${date.toLocaleDateString( "es-ES", {
+                    Registro de actividad del ${date.toLocaleDateString( "es-ES", {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -502,7 +502,7 @@ function updateSyncIndicator( status ) {
     offline: {
       class: "bg-gray-500 text-white",
       icon: "fa-wifi",
-      text: "Sin conexión",
+      text: "Off line",
     },
   };
 
@@ -1540,6 +1540,7 @@ function createDayElement( day, dateStr, dayTasks ) {
 
 function updatePanelDateHeader( dateStr, day, dayTasks ) {
   const panelDate = document.getElementById( 'panelDate' );
+  const actionButtons = document.getElementById( 'panelActionButtons' );
   const date = new Date( dateStr + 'T12:00:00' );
   const dayLogs = dailyTaskLogs[ dateStr ] || [];
 
@@ -1550,31 +1551,48 @@ function updatePanelDateHeader( dateStr, day, dayTasks ) {
     day: 'numeric'
   };
 
+  // SOLO actualizar el título - mantenerlo simple y limpio
   panelDate.innerHTML = `
-    <div class="flex items-center justify-between w-full">
-        <div class="flex items-center">
-            <i class="fas fa-tasks text-indigo-600 mr-2"></i>
-            Tareas del ${date.toLocaleDateString( 'es-ES', dateOptions )}
-        </div>
-        <div class="flex items-center space-x-2">
-            ${dayTasks.length > 0 ? `
-                <button onclick="clearDayTasks('${dateStr}')" 
-                        class="flex items-center space-x-1 text-red-600 hover:text-red-700 text-sm px-2 py-1 rounded hover:bg-red-50 transition"
-                        title="Eliminar todas las tareas del día">
-                    <i class="fas fa-trash-alt"></i>
-                    <span class="hidden sm:inline">Limpiar Día</span>
-                </button>
-            ` : ''}
-            <button onclick="showDayChangeLog('${dateStr}')" 
-                    class="flex items-center space-x-1 text-purple-600 hover:text-purple-700 text-sm px-2 py-1 rounded hover:bg-purple-50 transition"
-                    title="Ver registro de cambios del día">
-                <i class="fas fa-history"></i>
-                <span class="hidden sm:inline">Registro</span>
-                ${dayLogs.length > 0 ? `<span class="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full ml-1">${dayLogs.length}</span>` : ''}
-            </button>
-        </div>
-    </div>
-`;
+        <i class="fas fa-tasks text-indigo-600 mr-2"></i>
+        Tareas del ${date.toLocaleDateString( 'es-ES', dateOptions )}
+    `;
+
+  // Limpiar botones existentes (excepto el botón de cierre)
+  const existingButtons = actionButtons.querySelectorAll( 'button:not(#closePanelBtn)' );
+  existingButtons.forEach( btn => btn.remove() );
+
+  // Crear contenedor para los nuevos botones
+  const buttonContainer = document.createElement( 'div' );
+  buttonContainer.className = 'flex items-center space-x-2';
+
+  // Botón de limpiar día (solo si hay tareas)
+  if ( dayTasks.length > 0 ) {
+    const clearBtn = document.createElement( 'button' );
+    clearBtn.onclick = () => clearDayTasks( dateStr );
+    clearBtn.className = 'flex items-center space-x-1 text-red-600 hover:text-red-700 text-sm px-2 py-1 rounded hover:bg-red-50 transition';
+    clearBtn.title = 'Eliminar todas las tareas del día';
+    clearBtn.innerHTML = `
+            <i class="fas fa-trash-alt"></i>
+            <span class="hidden sm:inline">Limpiar Día</span>
+        `;
+    buttonContainer.appendChild( clearBtn );
+  }
+
+  // Botón de registro
+  const logBtn = document.createElement( 'button' );
+  logBtn.onclick = () => showDayChangeLog( dateStr );
+  logBtn.className = 'flex items-center space-x-1 text-purple-600 hover:text-purple-700 text-sm px-2 py-1 rounded hover:bg-purple-50 transition';
+  logBtn.title = 'Ver registro de cambios del día';
+  logBtn.innerHTML = `
+        <i class="fas fa-history"></i>
+        <span class="hidden sm:inline">Registro</span>
+        ${dayLogs.length > 0 ? `<span class="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full ml-1">${dayLogs.length}</span>` : ''}
+    `;
+  buttonContainer.appendChild( logBtn );
+
+  // Insertar los botones ANTES del botón de cierre
+  const closePanelBtn = document.getElementById( 'closePanelBtn' );
+  actionButtons.insertBefore( buttonContainer, closePanelBtn );
 }
 
 function showDailyTaskPanel( dateStr, day ) {
@@ -1660,7 +1678,6 @@ function createPanelTaskElement( task, dateStr ) {
              style="border-left-color: ${priority.color}" 
              data-priority="${task.priority}">
             <div class="flex sm:items-center sm:justify-between">
-                <!-- En móvil: Primera columna con contenido. En desktop: Layout horizontal -->
                 <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
                     <!-- Select de estado y prioridad -->
                     <div class="flex flex-col space-y-2 mb-3 sm:mb-0">
@@ -2084,8 +2101,6 @@ function toggleTaskState( dateStr, taskId ) {
 
   // Lógica especial para pausar/reanudar
   if ( oldState === "inProgress" ) {
-    // Si está en proceso, puede ir a pausada o completada
-    // Por defecto va a pausada, el usuario puede elegir completada desde el dropdown
     newState = "paused";
   } else if ( oldState === "paused" ) {
     // Si está pausada, vuelve a proceso
