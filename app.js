@@ -902,13 +902,45 @@ function initOfflineMode() {
   isOnline = false;
   currentUser = getOfflineUser(); // Usuario offline persistente
 
-  updateSyncIndicator( "offline" );
-  updateUI();
+  // NO mostrar indicadores de Firebase en modo offline puro
+  const statusEl = document.getElementById( "firebaseStatus" );
+  if ( statusEl ) {
+    statusEl.classList.add( "force-hidden" );
+  }
+
+  updateUI(); // Esto ocultará el botón de sync automáticamente
   hideLoadingScreen();
-  showOfflineMessage();
+
+  // Mensaje más discreto para modo offline
+  showOfflineModeMessage();
 
   // Configurar funcionalidades offline
   setupOfflineFeatures();
+}
+
+function showOfflineModeMessage() {
+  // Crear un mensaje menos intrusivo
+  const offlineMessage = document.createElement( 'div' );
+  offlineMessage.id = 'offlineModeMessage';
+  offlineMessage.className = 'fixed bottom-4 right-4 bg-gray-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-30 transition-all duration-300';
+  offlineMessage.innerHTML = `
+    <div class="flex items-center space-x-2">
+      <i class="fas fa-hard-drive text-yellow-400"></i>
+      <span>Modo local activo</span>
+      <button onclick="this.parentElement.parentElement.remove()" class="ml-2 text-gray-300 hover:text-white">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild( offlineMessage );
+
+  // Auto-ocultar después de 5 segundos
+  setTimeout( () => {
+    if ( document.getElementById( 'offlineModeMessage' ) ) {
+      offlineMessage.remove();
+    }
+  }, 5000 );
 }
 
 function getOfflineUser() {
@@ -932,21 +964,19 @@ function getOfflineUser() {
 }
 
 function setupOfflineFeatures() {
-  // Deshabilitar sincronización automática
+  // Ya no deshabilitar el botón sync, simplemente ocultarlo (se hace en updateUI)
+
+  // Deshabilitar funciones que requieren internet
   if ( notificationInterval ) {
     clearInterval( notificationInterval );
   }
 
-  // Configurar elementos de UI para modo offline
-  const syncBtn = document.getElementById( "syncBtn" );
-  if ( syncBtn ) {
-    syncBtn.disabled = true;
-    syncBtn.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>Sin Conexión';
-    syncBtn.title = "Sincronización no disponible sin internet";
-  }
-
-  // Mostrar indicadores offline en botones
+  // El resto de la funcionalidad offline permanece igual
   updateOfflineUI();
+}
+
+function shouldShowSyncIndicators() {
+  return currentUser && !currentUser.isOffline && isOnline;
 }
 
 function updateOfflineUI() {
@@ -1070,39 +1100,75 @@ function handleOnline() {
   if ( currentUser && currentUser.isOffline ) {
     // Intentar reconectar con Firebase
     initFirebase();
-  } else {
+  } else if ( currentUser ) {
+    // Solo para usuarios logueados
     updateSyncIndicator( "success" );
     updateOfflineUI();
 
-    if ( currentUser ) {
-      // Procesar cola pendiente al reconectar
-      setTimeout( () => {
-        processSyncQueue();
-        syncFromFirebase();
-      }, 1000 );
-    }
-  }
+    // Procesar cola pendiente al reconectar
+    setTimeout( () => {
+      processSyncQueue();
+      syncFromFirebase();
+    }, 1000 );
 
-  showNotification( "Conexión restaurada. Sincronizando...", "success" );
+    showNotification( "Conexión restaurada. Sincronizando...", "success" );
+  }
 }
 
 function handleOffline() {
   console.log( "📵 Conexión perdida" );
   isOnline = false;
-  updateSyncIndicator( "offline" );
   updateOfflineUI();
-  showOfflineMessage();
 
-  showNotification( "Trabajando sin conexión. Los cambios se sincronizarán cuando vuelva internet.", "info" );
+  // Solo mostrar mensaje offline si hay un usuario activo
+  if ( currentUser && !currentUser.isOffline ) {
+    updateSyncIndicator( "offline" );
+    showOfflineMessage();
+    showNotification( "Trabajando sin conexión. Los cambios se sincronizarán cuando vuelva internet.", "info" );
+  }
 }
+
+function cleanupUIOnLogout() {
+  // Limpiar indicadores
+  const statusEl = document.getElementById( "firebaseStatus" );
+  if ( statusEl ) {
+    statusEl.classList.add( "hidden", "force-hidden" );
+  }
+
+  // Limpiar notificaciones relacionadas con sync
+  const existingNotifications = document.querySelectorAll( '.notification' );
+  existingNotifications.forEach( notification => {
+    const text = notification.textContent.toLowerCase();
+    if ( text.includes( 'sincroniz' ) || text.includes( 'firebase' ) || text.includes( 'conexión' ) ) {
+      notification.remove();
+    }
+  } );
+
+  // Detener servicios de sync
+  if ( syncTimeout ) {
+    clearTimeout( syncTimeout );
+    syncTimeout = null;
+  }
+
+  // Limpiar cola de sync
+  syncQueue.clear();
+}
+
+
 
 function updateSyncIndicator( status ) {
   const statusEl = document.getElementById( "firebaseStatus" );
   const iconEl = document.getElementById( "statusIcon" );
   const textEl = document.getElementById( "statusText" );
 
-  if ( !statusEl || !iconEl || !textEl ) {
-    console.warn( '⚠️ Elementos de indicador no encontrados' );
+  // No mostrar indicador si no hay usuario logueado
+  if ( !currentUser || currentUser.isOffline || !statusEl || !iconEl || !textEl ) {
+    if ( statusEl ) statusEl.classList.add( "hidden" );
+    return;
+  }
+
+  // Solo mostrar si el elemento no está forzado a oculto
+  if ( statusEl.classList.contains( "force-hidden" ) ) {
     return;
   }
 
@@ -1114,44 +1180,43 @@ function updateSyncIndicator( status ) {
       class: "bg-green-500 text-white",
       icon: "fa-check-circle",
       text: pendingCount > 0 ? `${pendingCount} pendientes` : "Sincronizado",
+      autoHide: pendingCount === 0
     },
     error: {
       class: "bg-red-500 text-white",
       icon: "fa-exclamation-triangle",
-      text: "Error de sync",
+      text: "Error de sincronización",
+      autoHide: false
     },
     syncing: {
       class: "bg-blue-500 text-white",
       icon: "fa-sync-alt fa-spin",
-      text: `Sincronizando ${pendingCount}...`,
+      text: `Sincronizando...`,
+      autoHide: false
     },
     pending: {
       class: "bg-orange-500 text-white",
       icon: "fa-clock",
       text: `${pendingCount} cambios pendientes`,
-    },
-    offline: {
-      class: "bg-gray-600 text-white",
-      icon: "fa-wifi-slash",
-      text: pendingCount > 0 ? `Sin conexión (${pendingCount} pendientes)` : "Sin conexión",
-    },
+      autoHide: false
+    }
   };
 
-  const config = statusConfig[ status ] || statusConfig.offline;
+  const config = statusConfig[ status ] || statusConfig.success;
 
-  // Aplicar cambios
+  // Aplicar cambios con mejor posicionamiento
   statusEl.className = `fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 transition-all duration-300 ${config.class}`;
   iconEl.className = `fas ${config.icon} mr-2`;
   textEl.textContent = config.text;
   statusEl.classList.remove( "hidden" );
 
-  // Auto-ocultar solo para estados temporales Y si no hay elementos pendientes
-  if ( status === "success" && pendingCount === 0 ) {
+  // Auto-ocultar inteligente
+  if ( config.autoHide ) {
     setTimeout( () => {
       if ( syncQueue.size === 0 && textEl.textContent === config.text ) {
         statusEl.classList.add( "hidden" );
       }
-    }, 2000 ); // Reducido a 2 segundos
+    }, 3000 );
   }
 }
 
@@ -1167,21 +1232,45 @@ function updateUI() {
   const loginBtn = document.getElementById( "loginBtn" );
   const userInfo = document.getElementById( "userInfo" );
   const syncBtn = document.getElementById( "syncBtn" );
+  const statusEl = document.getElementById( "firebaseStatus" );
 
-  if ( currentUser ) {
+  if ( currentUser && !currentUser.isOffline ) {
+    // Usuario logueado con Firebase
     loginBtn.classList.add( "hidden" );
     userInfo.classList.remove( "hidden" );
-    syncBtn.disabled = false;
 
-    document.getElementById( "userName" ).textContent =
-      currentUser.displayName || "Usuario";
+    // Mostrar botón de sync solo si está logueado
+    if ( syncBtn ) {
+      syncBtn.classList.remove( "hidden" );
+      syncBtn.disabled = false;
+      syncBtn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
+      syncBtn.title = "Sincronizar tareas con la nube";
+    }
+
+    // Mostrar indicador de estado solo para usuarios logueados
+    if ( statusEl ) {
+      statusEl.classList.remove( "force-hidden" );
+    }
+
+    // Actualizar info del usuario
+    document.getElementById( "userName" ).textContent = currentUser.displayName || "Usuario";
     document.getElementById( "userEmail" ).textContent = currentUser.email;
-    document.getElementById( "userPhoto" ).src =
-      currentUser.photoURL || "https://via.placeholder.com/32";
+    document.getElementById( "userPhoto" ).src = currentUser.photoURL || "https://via.placeholder.com/32";
+
   } else {
+    // Sin usuario o usuario offline
     loginBtn.classList.remove( "hidden" );
     userInfo.classList.add( "hidden" );
-    syncBtn.disabled = true;
+
+    // Ocultar completamente botón de sync
+    if ( syncBtn ) {
+      syncBtn.classList.add( "hidden" );
+    }
+
+    // Ocultar indicador de estado Firebase
+    if ( statusEl ) {
+      statusEl.classList.add( "force-hidden" );
+    }
   }
 }
 
@@ -1204,8 +1293,10 @@ function signInWithGoogle() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
-    auth
-      .signOut()
+    // Limpiar UI antes de cerrar sesión
+    cleanupUIOnLogout();
+
+    auth.signOut()
       .then( () => {
         showNotification( "Sesión cerrada", "info" );
       } )
