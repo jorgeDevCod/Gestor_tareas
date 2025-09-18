@@ -41,148 +41,259 @@
 
     <main class="container mx-auto px-4 py-8">
         <!-- Header -->
-        <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border-t-4 border-blue-500">
+        <div class="bg-white rounded-xl shadow-lg p-4 mb-6 border border-gray-200">
             <div class="flex flex-col md:flex-row justify-between items-center mb-4">
-                <h1 class="text-3xl font-bold text-gray-800 mb-4 md:mb-0">
-                    <i class="fas fa-calendar-check text-blue-500 mr-3"></i>
-                    Gestor de Tareas
-                </h1>
-                <div class="flex gap-3 flex-wrap">
-                    <button id="exportExcelBtn" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition duration-300">
-                        <i class="fas fa-file-export mr-2"></i>Exportar Excel
+                <!-- Título principal -->
+                <div class="mb-4 md:mb-0">
+                    <h1 class="text-2xl md:text-3xl font-bold text-gray-800 flex items-center">
+                        <svg class="w-8 h-8 text-blue-500 mr-3" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Gestor de Tareas Dinámico
+                    </h1>
+                    <h2 class="text-lg font-medium text-gray-600 mt-1">
+                        Gestiona tus tareas inteligentemente ¡gratis!
+                    </h2>
+                </div>
+
+                <!-- Botones de acción -->
+                <div class="flex gap-2 flex-wrap">
+                    <button id="exportExcelBtn" class="bg-green-500 text-white px-3 py-2 rounded-lg hover:bg-green-600 transition duration-300 text-sm">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Exportar Excel
                     </button>
-                    <button id="notificationsBtn" class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition duration-300">
-                        <i class="fas fa-bell mr-2"></i>Notificaciones
+
+                    <button id="notificationsBtn" class="bg-yellow-500 text-white px-3 py-2 rounded-lg hover:bg-yellow-600 transition duration-300 text-sm relative">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-5 5v-5zM10.07 2.82l3.93 3.93-8.49 8.49-3.93-3.93 8.49-8.49zM15 3l3 3-2 2-3-3 2-2z" />
+                        </svg>
+                        Notificaciones
+                        <span id="notificationBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">3</span>
                     </button>
-                    <button id="syncBtn" class="hidden bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition duration-300" title="Sincronizar tareas con Firebase">
-                        <i class="fas fa-sync mr-2"></i>Sincronizar
+
+                    <button id="syncBtn" class="hidden bg-purple-500 text-white px-3 py-2 rounded-lg hover:bg-purple-600 transition duration-300 text-sm" title="Sincronizar tareas con Firebase">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Sincronizar
                     </button>
-                    <button id="loginBtn" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-300">
-                        <i class="fas fa-sign-in-alt mr-2"></i>Iniciar Sesión
+
+                    <button id="loginBtn" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition duration-300 text-sm">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                        </svg>
+                        Iniciar Sesión
                     </button>
-                    <button id="install-button" style="display: none;" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-300">
-                        <i class="fas fa-download mr-2"></i>Instalar aplicación
+
+                    <button id="install-button" style="display: none;" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition duration-300 text-sm">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Instalar aplicación
                     </button>
                 </div>
             </div>
 
-            <!-- User Info -->
+            <!-- User Info (cuando está logueado) -->
             <div id="userInfo" class="hidden mb-4 p-3 bg-blue-50 rounded-lg">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center space-x-3">
-                        <img id="userPhoto" class="w-8 h-8 rounded-full" alt="Usuario">
+                        <img id="userPhoto" class="w-8 h-8 rounded-full border-2 border-blue-300" alt="Usuario">
                         <div>
                             <p class="font-medium text-blue-800" id="userName"></p>
                             <p class="text-sm text-blue-600" id="userEmail"></p>
                         </div>
                     </div>
-                    <button id="logoutBtn" class="text-red-500 hover:text-red-700 transition">
-                        <i class="fas fa-sign-out-alt mr-1"></i>Salir
+                    <button id="logoutBtn" class="text-red-500 hover:text-red-700 transition text-sm">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Salir
                     </button>
                 </div>
             </div>
 
             <!-- Progress Bar -->
-            <div class="mb-4">
+            <div class="mb-0">
                 <div class="flex justify-between text-sm text-gray-600 mb-2">
                     <span>Progreso del día</span>
-                    <span id="progressText">0%</span>
+                    <div class="flex items-center gap-2">
+                        <span id="progressText">0%</span>
+                        <span class="text-xs text-gray-500" id="taskCount">(0/0 completadas)</span>
+                    </div>
                 </div>
-                <div class="w-full bg-gray-200 rounded-full h-3">
+                <div class="w-full bg-gray-200 rounded-full h-3 mb-3">
                     <div id="progressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
+
             </div>
         </div>
 
+        <!-- Formulario -->
         <div class="grid lg:grid-cols-3 gap-8">
             <!-- Task Form -->
             <div class="lg:col-span-1">
                 <div class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-purple-500">
                     <h2 class="text-xl font-semibold text-gray-800 mb-4">
-                        <i class="fas fa-plus text-green-600 mr-2"></i>
+                        <svg class="w-5 h-5 text-green-600 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        </svg>
                         Nueva Tarea
                     </h2>
-                    <form id="taskForm" class="space-y-4">
-                        <div>
-                            <label for="taskTitle" class="block text-sm font-medium text-gray-700 mb-2">Título de la tarea</label>
-                            <input type="text" id="taskTitle" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        </div>
-                        <div>
-                            <label for="taskDescription" class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                            <textarea id="taskDescription" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
-                        </div>
-                        <div>
-                            <label for="taskDate" class="block text-sm font-medium text-gray-700 mb-2">Fecha específica</label>
-                            <input required type="date" id="taskDate" min="" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        </div>
-                        <div>
-                            <label for="taskTime" class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
-                            <input type="time" id="taskTime" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        </div>
-                        <div>
-                            <label for="taskPriority" class="block text-sm font-medium text-gray-700 mb-2">
-                                Prioridad
-                                <span class="text-xs text-gray-500 ml-1">(1=Muy importante, 4=No prioritario)</span>
-                            </label>
-                            <select id="taskPriority" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                                <option value="1">🔴 Muy Importante</option>
-                                <option value="2">🟠 Importante</option>
-                                <option value="3" selected>🔵 Moderado</option>
-                                <option value="4">⚫ No Prioritario</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="taskRepeat" class="block text-sm font-medium text-gray-700 mb-2">Repetir</label>
-                            <select id="taskRepeat" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                                <option value="none">Sin repetir</option>
-                                <option value="daily">Todos los días</option>
-                                <option value="weekdays">Solo días de semana</option>
-                                <option value="weekends">Solo fines de semana</option>
-                                <option value="weekly">Semanal</option>
-                                <option value="custom">Días personalizados</option>
-                            </select>
-                        </div>
-                        <div id="advancedRepeatConfig" class="hidden space-y-4 p-4 bg-gray-50 rounded-lg border">
-                            <!-- Duración de repetición -->
+                    <form id="taskForm" class="space-y-6">
+                        <!-- Información básica -->
+                        <div class="space-y-4">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Duración de repetición</label>
-                                <select id="repeatDuration" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                                    <option value="1">Solo este mes</option>
-                                    <option value="2" selected>Este mes y el siguiente</option>
-                                    <option value="3">Próximos 3 meses</option>
-                                    <option value="6">Próximos 6 meses</option>
-                                    <option value="12">Próximo año</option>
-                                </select>
+                                <label for="taskTitle" class="block text-sm font-medium text-gray-700 mb-2">Título de la tarea</label>
+                                <input type="text" id="taskTitle" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Ej: Reunión con el equipo">
                             </div>
+                            <div>
+                                <label for="taskDescription" class="block text-sm font-medium text-gray-700 mb-2">Descripción <span class="text-gray-400 text-xs">(opcional)</span></label>
+                                <textarea id="taskDescription" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Agregar detalles adicionales..."></textarea>
+                            </div>
+                        </div>
 
-                            <!-- Días personalizados (solo para opción custom) -->
-                            <div id="customDays" class="hidden">
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Seleccionar días</label>
-                                <div class="grid grid-cols-4 gap-2">
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="0" class="mr-1 rounded"> Dom</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="1" class="mr-1 rounded"> Lun</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="2" class="mr-1 rounded"> Mar</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="3" class="mr-1 rounded"> Mié</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="4" class="mr-1 rounded"> Jue</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="5" class="mr-1 rounded"> Vie</label>
-                                    <label class="flex items-center text-sm"><input type="checkbox" value="6" class="mr-1 rounded"> Sáb</label>
+                        <!-- Fecha y Hora agrupadas -->
+                        <div class="rounded-lg p-4 border border-200">
+                            <h3 class="text-sm font-semibold text-blue-800 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                Programación
+                            </h3>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label for="taskDate" class="block text-xs font-medium text-blue-700 mb-1">Fecha</label>
+                                    <input required type="date" id="taskDate" min="" class="w-full px-2 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white">
+                                </div>
+                                <div>
+                                    <label for="taskTime" class="block text-xs font-medium text-blue-700 mb-1">Hora <span class="text-blue-400">(opcional)</span></label>
+                                    <input type="time" id="taskTime" class="w-full px-2 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white">
                                 </div>
                             </div>
+                        </div>
 
-                            <!-- Vista previa -->
-                            <div id="repeatPreview" class="text-xs text-gray-600 bg-white p-2 rounded border">
-                                <span class="font-medium">Vista previa:</span>
-                                <span id="previewText">Selecciona opciones para ver vista previa</span>
+                        <!-- Prioridad y Repetición agrupadas -->
+                        <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                            <h3 class="text-xs font-semibold text-gray-700 mb-2 flex items-center">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                </svg>
+                                Configuración
+                            </h3>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label for="taskPriority" class="block text-xs font-medium text-gray-600 mb-1">
+                                        Prioridad
+                                    </label>
+                                    <select id="taskPriority" class="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs bg-white">
+                                        <option value="1">🔴 Muy Importante</option>
+                                        <option value="2">🟠 Importante</option>
+                                        <option value="3" selected>🔵 Moderado</option>
+                                        <option value="4">⚫ No Prioritario</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="taskRepeat" class="block text-xs font-medium text-gray-600 mb-1">Repetir</label>
+                                    <select id="taskRepeat" class="w-full px-2 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs bg-white">
+                                        <option value="none">Sin repetir</option>
+                                        <option value="daily">Todos los días</option>
+                                        <option value="weekdays">Solo días de semana</option>
+                                        <option value="weekends">Solo fines de semana</option>
+                                        <option value="weekly">Semanal</option>
+                                        <option value="custom">Días personalizados</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
-                        <!--Botones del formulario con reset -->
-                        <div class="flex space-x-3">
-                            <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300">
-                                <i class="fas fa-plus mr-2"></i>Agregar Tarea
+                        <!-- Configuración avanzada de repetición (colapsible) -->
+                        <div id="advancedRepeatConfig" class="hidden">
+                            <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                    Configuración Avanzada
+                                </h4>
+
+                                <!-- Duración de repetición -->
+                                <div class="mb-4">
+                                    <label class="block text-xs font-medium text-gray-700 mb-2">Duración de repetición</label>
+                                    <select id="repeatDuration" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                                        <option value="1">Solo este mes</option>
+                                        <option value="2" selected>Este mes y el siguiente</option>
+                                        <option value="3">Próximos 3 meses</option>
+                                        <option value="6">Próximos 6 meses</option>
+                                        <option value="12">Próximo año</option>
+                                    </select>
+                                </div>
+
+                                <!-- Días personalizados -->
+                                <div id="customDays" class="hidden mb-4">
+                                    <label class="block text-xs font-medium text-gray-700 mb-2">Seleccionar días</label>
+                                    <div class="grid grid-cols-4 gap-2 text-xs">
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="0" class="mr-2 rounded text-blue-600">
+                                            <span>Dom</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="1" class="mr-2 rounded text-blue-600">
+                                            <span>Lun</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="2" class="mr-2 rounded text-blue-600">
+                                            <span>Mar</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="3" class="mr-2 rounded text-blue-600">
+                                            <span>Mié</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="4" class="mr-2 rounded text-blue-600">
+                                            <span>Jue</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="5" class="mr-2 rounded text-blue-600">
+                                            <span>Vie</span>
+                                        </label>
+                                        <label class="flex items-center bg-white p-2 rounded border hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox" value="6" class="mr-2 rounded text-blue-600">
+                                            <span>Sáb</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- Vista previa mejorada -->
+                                <div id="repeatPreview" class="bg-white p-3 rounded border-l-4 border-blue-400 text-sm">
+                                    <div class="flex items-start">
+                                        <svg class="w-4 h-4 text-blue-500 mt-0.5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <div>
+                                            <span class="font-medium text-blue-800">Vista previa:</span>
+                                            <p class="text-gray-600 mt-1" id="previewText">Selecciona opciones para ver vista previa</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Botones del formulario -->
+                        <div class="flex space-x-3 pt-2">
+                            <button type="submit" class="flex-1 bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-300 font-medium shadow-sm">
+                                <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                                </svg>
+                                Agregar Tarea
                             </button>
-                            <button type="button" id="resetFormBtn" class="bg-red-400 text-white py-2 px-4 rounded-lg hover:bg-gray-500 transition duration-300" title="Limpiar formulario">
-                                <i class="fas fa-eraser"></i>
+                            <button type="button" id="resetFormBtn" class="bg-gray-500 hover:bg-gray-600 text-white py-3 px-4 rounded-lg transition duration-300 shadow-sm" title="Limpiar formulario">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
                             </button>
                         </div>
                     </form>
@@ -190,16 +301,30 @@
 
                 <!-- Quick Actions -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-red-500">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Acciones Rápidas</h3>
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg class="w-5 h-5 text-red-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Acciones Rápidas
+                    </h3>
                     <div class="space-y-2">
-                        <button id="clearWeekBtn" class="w-full bg-orange-500 text-white py-2 px-4 rounded-lg hover:bg-orange-600 transition">
-                            <i class="fas fa-trash-alt mr-2"></i>Limpiar Semana
+                        <button id="clearWeekBtn" class="w-full bg-orange-500 text-white py-2.5 px-4 rounded-lg hover:bg-orange-600 transition duration-200 text-sm font-medium">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Limpiar Semana
                         </button>
-                        <button id="clearMonthBtn" class="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition">
-                            <i class="fas fa-trash-alt mr-2"></i>Limpiar Mes
+                        <button id="clearMonthBtn" class="w-full bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-600 transition duration-200 text-sm font-medium">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Limpiar Mes
                         </button>
-                        <button id="clearAllBtn" class="w-full bg-gray-700 text-white py-2 px-4 rounded-lg hover:bg-gray-800 transition">
-                            <i class="fas fa-trash-alt mr-2"></i>Limpiar Todo
+                        <button id="clearAllBtn" class="w-full bg-gray-700 text-white py-2.5 px-4 rounded-lg hover:bg-gray-800 transition duration-200 text-sm font-medium">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Limpiar Todo
                         </button>
                     </div>
                 </div>
@@ -209,16 +334,22 @@
             <div class="lg:col-span-2">
                 <div class="bg-white rounded-2xl shadow-lg px-4 py-6 border-t-4 border-teal-500">
                     <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-xl font-semibold text-gray-800">
-                            <i class="fas fa-calendar text-blue-600 mr-2"></i>
+                        <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                            <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
                             <span id="currentMonth"></span>
                         </h2>
                         <div class="flex gap-2">
-                            <button id="prevMonth" class="px-3 py-1 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
-                                <i class="fas fa-chevron-left"></i>
+                            <button id="prevMonth" class="px-3 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-200">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                                </svg>
                             </button>
-                            <button id="nextMonth" class="px-3 py-1 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
-                                <i class="fas fa-chevron-right"></i>
+                            <button id="nextMonth" class="px-3 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-200">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                                </svg>
                             </button>
                         </div>
                     </div>
@@ -231,7 +362,7 @@
         </div>
 
         <!-- Panel de Tareas del Día -->
-        <div id="dailyTaskPanel" class="hidden">
+        <div id="dailyTaskPanel">
             <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 mt-6 border-t-4 border-indigo-500">
                 <div class="flex justify-between items-center mb-4">
                     <!-- Título simple, solo texto -->
