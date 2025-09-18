@@ -3,8 +3,7 @@ const CACHE_NAME = 'mi-app-cache-v1';
 const urlsToCache = [
     '/',
     '/index.html',
-    '/styles.css',
-    '/script.js',
+    '/app.js',
     '/images/favicon-192.png',
     '/images/favicon-512.png'
 ];
