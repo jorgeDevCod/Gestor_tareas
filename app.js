@@ -103,11 +103,9 @@ if ( 'serviceWorker' in navigator ) {
 }
 
 window.addEventListener( 'beforeinstallprompt', ( e ) => {
-  // Prevenir que el navegador muestre el prompt automáticamente
   e.preventDefault();
   deferredPrompt = e;
 
-  // Mostrar un botón o mensaje para que el usuario instale la app
   const installButton = document.getElementById( 'install-button' );
   if ( installButton ) {
     installButton.style.display = 'block';

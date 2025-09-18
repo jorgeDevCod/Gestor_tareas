@@ -8,6 +8,34 @@ const urlsToCache = [
     '/images/favicon-512.png'
 ];
 
+const serviceWorkerContent = `
+self.addEventListener('push', event => {
+  const data = event.data.json();
+  const options = {
+    body: data.body,
+    icon: '/favicon.png',
+    badge: '/favicon.png',
+    tag: data.tag,
+    requireInteraction: true,
+    vibrate: [200, 100, 200],
+    renotify: true,
+    actions: [
+      { action: 'view', title: 'Ver tareas' },
+      { action: 'close', title: 'Cerrar' },
+    ],
+    data: { url: data.url },
+  };
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  if (event.action === 'view') {
+    event.waitUntil(clients.openWindow(event.notification.data.url));
+  }
+});
+`;
+
 // Instalación del Service Worker
 self.addEventListener( 'activate', event => {
     event.waitUntil(
