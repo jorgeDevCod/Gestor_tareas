@@ -42,6 +42,7 @@ let isSyncing = false; // Flag para evitar múltiples syncs
 let lastSyncTime = 0; // Timestamp del último sync
 const SYNC_DEBOUNCE_TIME = 2000; // 2 segundos de debounce
 const MIN_SYNC_INTERVAL = 5000; // Mínimo 5 segundos entre syncs
+let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
 
 // constantes para estados y prioridades
 const TASK_STATES = {
@@ -86,8 +87,17 @@ const PRIORITY_LEVELS = {
   },
 };
 
-// Estructura mejorada para registro por día
-let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
+if ( 'serviceWorker' in navigator ) {
+  window.addEventListener( 'load', () => {
+    navigator.serviceWorker.register( '/sw.js' )
+      .then( registration => {
+        console.log( 'Service Worker registrado con éxito:', registration );
+      } )
+      .catch( error => {
+        console.log( 'Error al registrar el Service Worker:', error );
+      } );
+  } );
+}
 
 function addToChangeLog(
   action,
