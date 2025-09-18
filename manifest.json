@@ -1,6 +1,6 @@
 {
   "name": "Gestor de Tareas",
-  "short_name": "App",
+  "short_name": "TaskSmart Manager",
   "description": "Gestiona tus tareas de forma eficiente, rapida e inteligente.",
   "start_url": "/index.html",
   "display": "standalone",
