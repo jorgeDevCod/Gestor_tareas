@@ -8,11 +8,12 @@
     <title>Gestor de Tareas con Calendario Dinámico</title>
     <!-- Meta Description -->
     <meta name="description" content="Gestor de tareas con calendario visual, drag & drop y recordatorios. Organiza tu tiempo y aumenta tu productividad. ¡Gratis!">
+    <script defer src="minificApp.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="manifest" href="/manifest.json">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -68,7 +69,7 @@
                     <button id="loginBtn" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-300">
                         <i class="fas fa-user mr-2"></i>Iniciar Sesión
                     </button>
-                    <button id="install-button" style="display: none;">Instalar aplicación</button>
+                    <button id="install-button" style="display: none;" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition duration-300"> Instalar aplicación</button>
                 </div>
             </div>
 
@@ -325,8 +326,6 @@
             <span id="messageText"></span>
         </div>
     </main>
-
-    <script src="app.js"></script>
 
 </body>
 
