@@ -87,6 +87,9 @@ const PRIORITY_LEVELS = {
   },
 };
 
+// install sw
+let deferredPrompt;
+
 if ( 'serviceWorker' in navigator ) {
   window.addEventListener( 'load', () => {
     navigator.serviceWorker.register( '/sw.js' )
@@ -98,6 +101,34 @@ if ( 'serviceWorker' in navigator ) {
       } );
   } );
 }
+
+window.addEventListener( 'beforeinstallprompt', ( e ) => {
+  // Prevenir que el navegador muestre el prompt automáticamente
+  e.preventDefault();
+  deferredPrompt = e;
+
+  // Mostrar un botón o mensaje para que el usuario instale la app
+  const installButton = document.getElementById( 'install-button' );
+  if ( installButton ) {
+    installButton.style.display = 'block';
+    installButton.addEventListener( 'click', () => {
+      // Mostrar el prompt de instalación
+      deferredPrompt.prompt();
+
+      // Esperar la respuesta del usuario
+      deferredPrompt.userChoice.then( ( choiceResult ) => {
+        if ( choiceResult.outcome === 'accepted' ) {
+          console.log( 'Usuario instaló la PWA' );
+        } else {
+          console.log( 'Usuario rechazó la instalación' );
+        }
+        deferredPrompt = null;
+      } );
+    } );
+  } else {
+    console.warn( 'No se encontró el botón de instalación' );
+  }
+} );
 
 function addToChangeLog(
   action,
