@@ -3810,24 +3810,24 @@ function updateNotificationButton() {
   if ( !btn ) return;
 
   const hasPermission = Notification.permission === "granted";
+  const baseClasses =
+    "text-white px-3 py-2 rounded-lg transition duration-300 text-xs md:text-sm font-normal md:font-bold";
 
   if ( notificationsEnabled && hasPermission ) {
-    btn.className =
-      "bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition duration-300";
+    btn.className = `bg-green-500 hover:bg-green-600 ${baseClasses}`;
     btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
     btn.title = "Notificaciones activadas - Click para desactivar";
   } else if ( hasPermission ) {
-    btn.className =
-      "bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition duration-300";
+    btn.className = `bg-gray-500 hover:bg-gray-600 ${baseClasses}`;
     btn.innerHTML = '<i class="fas fa-bell-slash mr-2"></i>Notificaciones OFF';
     btn.title = "Notificaciones desactivadas - Click para activar";
   } else {
-    btn.className =
-      "bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition duration-300";
+    btn.className = `bg-yellow-500 hover:bg-yellow-600 ${baseClasses}`;
     btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Permitir Notificaciones';
     btn.title = "Click para solicitar permisos de notificación";
   }
 }
+
 
 function checkDailyTasksImproved( forceCheck = false ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
