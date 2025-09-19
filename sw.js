@@ -54,7 +54,7 @@ self.addEventListener( 'push', event => {
         silent: false,
         image: '/images/favicon-512.png',
         actions: [
-            { action: 'view', title: 'Ver Tareas', icon: '/images/favicon-192.png' },
+            { action: 'view', title: 'Ver Tareas', icon: 'favicon.png' },
             { action: 'close', title: 'Cerrar' }
         ],
         data: {
