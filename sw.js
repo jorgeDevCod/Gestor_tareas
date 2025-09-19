@@ -6,7 +6,6 @@ const urlsToCache = [
     '/images/favicon-192.png',
     '/images/favicon-512.png',
     '/images/IconLogo.png',
-    '/favicon.png',
 ];
 
 // URLs de Firebase que NO deben ser interceptadas
@@ -161,14 +160,14 @@ self.addEventListener( 'push', event => {
     const data = event.data ? event.data.json() : {};
     const options = {
         body: data.body || 'Tienes tareas pendientes',
-        icon: '/images/favicon-192.png',
-        badge: '/images/favicon-192.png',
+        icon: '/images/IconLogo.png',        // CORREGIDO: Logo principal
+        badge: '/images/favicon-192.png',     // Badge pequeño
         tag: data.tag || 'task-reminder',
-        requireInteraction: true,
-        vibrate: [ 200, 100, 200 ],
+        requireInteraction: data.requiresAction || false,
+        vibrate: getVibrationPattern( data.notificationType || 'default' ),
         renotify: true,
         silent: false,
-        image: '/images/favicon-512.png',
+        image: data.notificationType === 'task-start' ? '/images/favicon-512.png' : undefined,
         actions: [
             { action: 'view', title: 'Ver Tareas', icon: '/images/favicon-192.png' },
             { action: 'close', title: 'Cerrar' }
@@ -176,7 +175,8 @@ self.addEventListener( 'push', event => {
         data: {
             url: data.url || '/',
             timestamp: Date.now(),
-            tag: data.tag
+            tag: data.tag,
+            taskId: data.taskId
         }
     };
 
@@ -187,6 +187,20 @@ self.addEventListener( 'push', event => {
         )
     );
 } );
+
+function getVibrationPattern( type ) {
+    const patterns = {
+        'default': [ 200, 100, 200 ],
+        'task-reminder': [ 300, 100, 300 ],
+        'task-start': [ 200, 50, 200, 50, 400 ],
+        'task-late': [ 100, 100, 100, 100, 100 ],
+        'success': [ 200, 100, 200 ],
+        'morning': [ 300, 200, 300 ],
+        'midday': [ 200, 100, 200 ],
+        'evening': [ 400, 200, 400 ]
+    };
+    return patterns[ type ] || patterns.default;
+}
 
 // Manejar clicks en notificaciones
 self.addEventListener( 'notificationclick', event => {
@@ -215,17 +229,21 @@ self.addEventListener( 'message', event => {
     const data = event.data;
 
     if ( data && data.type === 'SHOW_NOTIFICATION' ) {
-        const { title, body, tag } = data;
         const options = {
-            body: body,
-            icon: '/images/favicon-192.png',
+            body: data.body,
+            icon: '/images/IconLogo.png',        // CORREGIDO
             badge: '/images/favicon-192.png',
-            tag: tag,
-            requireInteraction: true,
-            vibrate: [ 200, 100, 200 ],
-            data: { url: '/' }
+            tag: data.tag,
+            requireInteraction: data.requiresAction || false,
+            vibrate: getVibrationPattern( data.notificationType || 'default' ),
+            data: {
+                url: '/',
+                taskId: data.taskId,
+                timestamp: Date.now()
+            }
         };
-        self.registration.showNotification( title, options );
+
+        self.registration.showNotification( data.title, options );
     }
 
     if ( data && data.type === 'REGISTER_SYNC' ) {

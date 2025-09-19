@@ -159,35 +159,40 @@ let selectedDateForPanel = getTodayString();
 function showDesktopNotificationPWA( title, message, tag, requiresAction = false, notificationType = 'default' ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     console.log( '❌ Notificaciones PWA no habilitadas' );
+    showInAppNotification( title, message, 'info' ); // Fallback visual
     return false;
   }
 
-  // Evitar notificaciones duplicadas usando tag
+  // Evitar duplicados
   if ( tag && sentNotifications.has( tag ) ) {
     console.log( `⚠️ Notificación duplicada evitada: ${tag}` );
     return false;
   }
 
-  try {
-    const options = {
-      body: message,
-      icon: '/images/IconLogo.png',         // TU LOGO PRINCIPAL
-      badge: '/images/favicon-192.png',     // Badge pequeño
-      tag: tag || `notification-${Date.now()}`,
-      renotify: true,
-      requireInteraction: requiresAction,
-      silent: false,
-      image: '/images/favicon-512.png',
-      data: {
-        timestamp: Date.now(),
-        tag: tag,
-        requiresAction: requiresAction,
-        type: notificationType
-      }
-    };
+  const options = {
+    body: message,
+    icon: '/images/IconLogo.png',         // CORREGIDO: Logo principal
+    badge: '/images/favicon-192.png',
+    tag: tag || `notification-${Date.now()}`,
+    renotify: true,
+    requireInteraction: requiresAction,
+    silent: false,
+    vibrate: getVibrationPattern( notificationType ),
+    data: {
+      timestamp: Date.now(),
+      tag: tag,
+      requiresAction: requiresAction,
+      type: notificationType
+    }
+  };
 
-    // Para PWAs, usar Service Worker si está disponible
-    if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+  try {
+    // Detectar si es PWA instalada
+    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
+      window.navigator.standalone === true;
+
+    if ( isPWA && 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+      // Usar Service Worker para PWA
       navigator.serviceWorker.controller.postMessage( {
         type: 'SHOW_NOTIFICATION',
         title: title,
@@ -196,56 +201,58 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
         requiresAction: requiresAction,
         notificationType: notificationType
       } );
-
-      if ( tag ) sentNotifications.add( tag );
-      console.log( '✅ Notificación PWA enviada via Service Worker:', title );
+      console.log( '✅ Notificación PWA enviada via SW:', title );
     } else {
-      // Fallback a notificación estándar
-      fallbackToStandardNotification( title, options );
+      // Notificación directa para navegador
+      const notification = new Notification( title, options );
+
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+
+        // Manejar click según tipo
+        if ( tag && tag.includes( '-now' ) ) {
+          const today = getTodayString();
+          showDailyTaskPanel( today, new Date().getDate() );
+        }
+      };
+
+      // Auto-cerrar si no requiere interacción
+      if ( !requiresAction ) {
+        setTimeout( () => notification.close(), 8000 );
+      }
+
+      console.log( '✅ Notificación web enviada:', title );
+    }
+
+    if ( tag ) sentNotifications.add( tag );
+
+    // Vibración física si está disponible
+    if ( 'vibrate' in navigator ) {
+      navigator.vibrate( getVibrationPattern( notificationType ) );
     }
 
     return true;
   } catch ( error ) {
     console.error( '❌ Error en showDesktopNotificationPWA:', error );
+    showInAppNotification( title, message, 'info' ); // Fallback visual
     return false;
   }
 }
 
-function fallbackToStandardNotification( title, options ) {
-  try {
-    const notification = new Notification( title, {
-      ...options,
-      icon: '/images/IconLogo.png',        // Asegurar tu logo
-      badge: '/images/favicon-192.png'     // Badge pequeño
-    } );
-
-    if ( options.data.tag ) {
-      sentNotifications.add( options.data.tag );
-    }
-
-    // Auto-cerrar después de 8 segundos si no requiere acción
-    if ( !options.requireInteraction ) {
-      setTimeout( () => {
-        notification.close();
-      }, 8000 );
-    }
-
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-
-      // Si es notificación de tarea, abrir el panel del día
-      if ( options.data.tag && options.data.tag.includes( '-now' ) ) {
-        const today = getTodayString();
-        const todayDate = new Date();
-        showDailyTaskPanel( today, todayDate.getDate() );
-      }
-    };
-
-    console.log( '✅ Notificación estándar enviada:', title );
-  } catch ( error ) {
-    console.error( '❌ Error en notificación fallback:', error );
-  }
+// NUEVA función para patrones de vibración (también en app.js)
+function getVibrationPattern( type ) {
+  const patterns = {
+    'default': [ 200, 100, 200 ],
+    'task-reminder': [ 300, 100, 300 ],
+    'task-start': [ 200, 50, 200, 50, 400 ],
+    'task-late': [ 100, 100, 100, 100, 100 ],
+    'success': [ 200, 100, 200 ],
+    'morning': [ 300, 200, 300 ],
+    'midday': [ 200, 100, 200 ],
+    'evening': [ 400, 200, 400 ]
+  };
+  return patterns[ type ] || patterns.default;
 }
 
 // Función auxiliar para notificaciones web fallback
@@ -290,32 +297,6 @@ function showInAppNotification( title, message, type = 'info' ) {
     notification.classList.add( 'translate-x-full' );
     setTimeout( () => notification.remove(), 300 );
   }, 5000 );
-}
-
-function fallbackToWebNotification( title, options, tag ) {
-  const notification = new Notification( title, options );
-
-  notification.onclick = function ( event ) {
-    event.preventDefault();
-    window.focus();
-    notification.close();
-
-    // Si es PWA, enfocar la ventana correctamente
-    if ( window.matchMedia( '(display-mode: standalone)' ).matches ) {
-      // Navegación dentro de la PWA
-      if ( selectedDateForPanel ) {
-        const day = new Date( selectedDateForPanel + 'T12:00:00' ).getDate();
-        showDailyTaskPanel( selectedDateForPanel, day );
-      }
-    }
-  };
-
-  // Auto-close para navegadores web
-  if ( !options.requireInteraction ) {
-    setTimeout( () => notification.close(), 8000 );
-  }
-
-  console.log( '🌐 Notificación web enviada:', title );
 }
 
 function isPWAInstalled() {
@@ -4000,7 +3981,6 @@ function toggleNotifications() {
     updateNotificationButton();
 
     if ( notificationsEnabled ) {
-      // Vibración suave al activar
       if ( 'vibrate' in navigator ) {
         navigator.vibrate( getVibrationPattern( 'success' ) );
       }
@@ -4011,13 +3991,54 @@ function toggleNotifications() {
       showNotification( "Notificaciones desactivadas", "info" );
     }
   } else if ( Notification.permission === "default" ) {
-    requestNotificationPermissionWithVibration();
+    requestNotificationPermissionWithVibration(); // CORREGIDO
   } else {
     showNotification(
       "Los permisos de notificación fueron denegados. Actívalos en la configuración del navegador.",
       "error"
     );
   }
+}
+
+function requestNotificationPermissionWithVibration() {
+  if ( !( 'Notification' in window ) ) {
+    showNotification( "Este navegador no soporta notificaciones", "error" );
+    return Promise.resolve( "denied" );
+  }
+
+  // Vibración suave al solicitar
+  if ( 'vibrate' in navigator ) {
+    navigator.vibrate( [ 100, 50, 100 ] );
+  }
+
+  return Notification.requestPermission().then( permission => {
+    if ( permission === "granted" ) {
+      notificationsEnabled = true;
+      updateNotificationButton();
+      startNotificationService();
+
+      // Vibración de éxito
+      if ( 'vibrate' in navigator ) {
+        navigator.vibrate( getVibrationPattern( 'success' ) );
+      }
+
+      showNotification( "Notificaciones activadas correctamente", "success" );
+
+      // Notificación de bienvenida
+      setTimeout( () => {
+        showDesktopNotificationPWA(
+          "¡Notificaciones activadas!",
+          "Recibirás recordatorios de tus tareas",
+          "welcome",
+          false,
+          'success'
+        );
+      }, 1000 );
+    } else {
+      showNotification( "Permisos de notificación denegados", "error" );
+    }
+    return permission;
+  } );
 }
 
 function startNotificationService() {
