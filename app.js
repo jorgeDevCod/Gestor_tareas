@@ -1873,16 +1873,11 @@ function initializeTodayPanel() {
   const todayDate = new Date();
   const day = todayDate.getDate();
 
-  // Abrir panel del día actual automáticamente si hay tareas
-  const todayTasks = tasks[ today ] || [];
-  if ( todayTasks.length > 0 ) {
-    setTimeout( () => {
-      showDailyTaskPanel( today, day );
-    }, 500 ); // Pequeño delay para que se renderice el calendario primero
-  } else {
-    // Establecer la fecha seleccionada pero sin abrir el panel
-    selectedDateForPanel = today;
-  }
+  // Establecer la fecha seleccionada siempre
+  selectedDateForPanel = today;
+
+  showDailyTaskPanel( today, day );
+
 }
 
 function resetForm() {
@@ -2416,9 +2411,9 @@ function showDailyTaskPanel( dateStr, day ) {
 
   selectedDateForPanel = dateStr;
   const dayTasks = tasks[ dateStr ] || [];
-
   const date = new Date( dateStr + "T12:00:00" );
   const isPastDate = isDatePast( dateStr );
+  const isToday = dateStr === getTodayString();
 
   const dateOptions = {
     weekday: "long",
@@ -2431,12 +2426,12 @@ function showDailyTaskPanel( dateStr, day ) {
 
   if ( dayTasks.length === 0 ) {
     taskList.innerHTML = `
-            <div class="text-center py-8 text-gray-500">
-                <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
-                <p>No hay tareas para este día</p>
-                ${!isPastDate ? '<p class="text-sm mt-2">¡Agrega tu primera tarea!</p>' : ""}
-            </div>
-        `;
+      <div class="text-center py-8 text-gray-500">
+        <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+        <p>No hay tareas para este día</p>
+        ${!isPastDate ? `<p class="text-sm mt-2">${isToday ? '¡Agrega tu primera tarea de hoy!' : '¡Agrega tu primera tarea!'}</p>` : ""}
+      </div>
+    `;
   } else {
     const sortedTasks = sortTasksByPriority( dayTasks );
     taskList.innerHTML = sortedTasks
@@ -2451,8 +2446,10 @@ function showDailyTaskPanel( dateStr, day ) {
     addQuickTaskBtn.style.display = isPastDate ? "none" : "flex";
   }
 
+  // ASEGURAR que se muestre el panel
   panel.classList.remove( "hidden" );
 
+  // Scroll suave en móvil
   if ( window.innerWidth < 768 ) {
     setTimeout( () => {
       panel.scrollIntoView( { behavior: "smooth", block: "start" } );
