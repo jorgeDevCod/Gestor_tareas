@@ -25,10 +25,8 @@ function isFirebaseURL( url ) {
 
 // Función para verificar si es una petición que necesita red
 function needsNetwork( request ) {
-    // APIs que siempre necesitan red
     const networkAPIs = [ '/api/', '.php', '.json' ];
-    return networkAPIs.some( api => request.url.includes( api ) ) ||
-        isFirebaseURL( request.url );
+    return networkAPIs.some( api => request.url.includes( api ) ) || isFirebaseURL( request.url );
 }
 
 // Instalación
@@ -40,14 +38,11 @@ self.addEventListener( 'install', event => {
                 console.log( 'SW: Cache abierto' );
                 return cache.addAll( urlsToCache );
             } )
-            .then( () => {
-                // Forzar activación inmediata
-                return self.skipWaiting();
-            } )
+            .then( () => self.skipWaiting() )
     );
 } );
 
-// Activación mejorada
+// Activación
 self.addEventListener( 'activate', event => {
     console.log( 'SW: Activando...' );
     event.waitUntil(
@@ -59,25 +54,21 @@ self.addEventListener( 'activate', event => {
                         return caches.delete( name );
                     } )
             );
-        } ).then( () => {
-            console.log( 'SW: Tomando control de todas las páginas' );
-            return self.clients.claim();
-        } )
+        } ).then( () => self.clients.claim() )
     );
 } );
 
-// Interceptar solicitudes con estrategia mejorada
+// Interceptar solicitudes
 self.addEventListener( 'fetch', event => {
     const request = event.request;
     const url = request.url;
 
-    // NO interceptar peticiones de Firebase - dejarlas pasar directamente
+    // NO interceptar peticiones de Firebase
     if ( isFirebaseURL( url ) ) {
-        console.log( 'SW: Petición Firebase pasando directamente:', url );
-        return; // No hacer nada, dejar que la petición normal continue
+        return;
     }
 
-    // NO interceptar peticiones POST/PUT/DELETE
+    // NO interceptar peticiones que no sean GET
     if ( request.method !== 'GET' ) {
         return;
     }
@@ -89,31 +80,24 @@ self.addEventListener( 'fetch', event => {
         url.includes( '/images/' ) ) {
 
         event.respondWith(
-            caches.match( request )
-                .then( response => {
-                    if ( response ) {
-                        console.log( 'SW: Sirviendo desde cache:', url );
-                        return response;
+            caches.match( request ).then( response => {
+                if ( response ) {
+                    return response;
+                }
+                return fetch( request ).then( fetchResponse => {
+                    if ( fetchResponse.status === 200 && request.url.startsWith( 'http' ) ) {
+                        const responseClone = fetchResponse.clone();
+                        caches.open( CACHE_NAME ).then( cache => {
+                            cache.put( request, responseClone );
+                        } );
                     }
-                    console.log( 'SW: Descargando recurso:', url );
-                    return fetch( request ).then( fetchResponse => {
-                        // Guardar en cache si es exitoso
-                        if ( fetchResponse.status === 200 ) {
-                            const responseClone = fetchResponse.clone();
-                            caches.open( CACHE_NAME ).then( cache => {
-                                cache.put( request, responseClone );
-                            } );
-                        }
-                        return fetchResponse;
-                    } );
-                } )
-                .catch( () => {
-                    console.log( 'SW: Error cargando recurso:', url );
-                    // Retornar recurso por defecto si existe
-                    if ( request.destination === 'image' ) {
-                        return caches.match( '/images/favicon-192.png' );
-                    }
-                } )
+                    return fetchResponse;
+                } );
+            } ).catch( () => {
+                if ( request.destination === 'image' ) {
+                    return caches.match( '/images/favicon-192.png' );
+                }
+            } )
         );
         return;
     }
@@ -121,61 +105,44 @@ self.addEventListener( 'fetch', event => {
     // Estrategia Network First para HTML y APIs (excepto Firebase)
     if ( request.destination === 'document' || needsNetwork( request ) ) {
         event.respondWith(
-            fetch( request )
-                .then( response => {
-                    console.log( 'SW: Red exitosa para:', url );
-                    // Guardar en cache solo si es HTML
-                    if ( request.destination === 'document' && response.status === 200 ) {
-                        const responseClone = response.clone();
-                        caches.open( CACHE_NAME ).then( cache => {
-                            cache.put( request, responseClone );
-                        } );
-                    }
-                    return response;
-                } )
-                .catch( () => {
-                    console.log( 'SW: Red falló, intentando cache para:', url );
-                    return caches.match( request ).then( cachedResponse => {
-                        if ( cachedResponse ) {
-                            return cachedResponse;
-                        }
-                        // Fallback para documentos HTML
-                        if ( request.destination === 'document' ) {
-                            return caches.match( '/index.html' );
-                        }
-                        throw new Error( 'No hay cache disponible' );
+            fetch( request ).then( response => {
+                if ( request.destination === 'document' && response.status === 200 && request.url.startsWith( 'http' ) ) {
+                    const responseClone = response.clone();
+                    caches.open( CACHE_NAME ).then( cache => {
+                        cache.put( request, responseClone );
                     } );
-                } )
+                }
+                return response;
+            } ).catch( () => {
+                return caches.match( request ).then( cachedResponse => {
+                    if ( cachedResponse ) {
+                        return cachedResponse;
+                    }
+                    if ( request.destination === 'document' ) {
+                        return caches.match( '/index.html' );
+                    }
+                    throw new Error( 'No hay cache disponible' );
+                } );
+            } )
         );
         return;
     }
 
-    // Para todo lo demás, estrategia Cache First
+    // Para todo lo demás, Cache First simple
     event.respondWith(
-        caches.match( request )
-            .then( response => {
-                return response || fetch( request );
-            } )
+        caches.match( request ).then( response => response || fetch( request ) )
     );
 } );
 
 // Sincronización en segundo plano
 self.addEventListener( 'sync', event => {
-    console.log( 'SW: Evento de sincronización:', event.tag );
-
     if ( event.tag === 'sync-firebase-data' ) {
-        event.waitUntil(
-            // Aquí puedes sincronizar datos pendientes con Firebase
-            syncPendingData()
-        );
+        event.waitUntil( syncPendingData() );
     }
 } );
 
-// Función para sincronizar datos pendientes
 async function syncPendingData() {
     try {
-        console.log( 'SW: Sincronizando datos pendientes...' );
-        // Enviar mensaje a la app principal para que maneje la sincronización
         const clients = await self.clients.matchAll();
         clients.forEach( client => {
             client.postMessage( {
@@ -188,10 +155,9 @@ async function syncPendingData() {
     }
 }
 
-// Manejar notificaciones push mejoradas
+// Manejar notificaciones push
 self.addEventListener( 'push', event => {
     const data = event.data ? event.data.json() : {};
-
     const options = {
         body: data.body || 'Tienes tareas pendientes',
         icon: '/images/favicon-192.png',
@@ -229,14 +195,12 @@ self.addEventListener( 'notificationclick', event => {
         event.waitUntil(
             clients.matchAll( { type: 'window', includeUncontrolled: true } )
                 .then( clientList => {
-                    // Si ya hay una ventana abierta, enfocarla
                     for ( let i = 0; i < clientList.length; i++ ) {
                         const client = clientList[ i ];
                         if ( client.url === self.location.origin + '/' && 'focus' in client ) {
                             return client.focus();
                         }
                     }
-                    // Si no hay ventana abierta, abrir una nueva
                     if ( clients.openWindow ) {
                         return clients.openWindow( event.notification.data.url || '/' );
                     }
@@ -251,7 +215,6 @@ self.addEventListener( 'message', event => {
 
     if ( data && data.type === 'SHOW_NOTIFICATION' ) {
         const { title, body, tag } = data;
-
         const options = {
             body: body,
             icon: '/images/favicon-192.png',
@@ -261,22 +224,14 @@ self.addEventListener( 'message', event => {
             vibrate: [ 200, 100, 200 ],
             data: { url: '/' }
         };
-
         self.registration.showNotification( title, options );
     }
 
-    // Mensaje para registrar sincronización en segundo plano
     if ( data && data.type === 'REGISTER_SYNC' ) {
         self.registration.sync.register( 'sync-firebase-data' )
-            .then( () => {
-                console.log( 'SW: Sincronización registrada' );
-            } )
-            .catch( err => {
-                console.error( 'SW: Error registrando sincronización:', err );
-            } );
+            .catch( err => console.error( 'SW: Error registrando sincronización:', err ) );
     }
 
-    // Respuesta al ping de la app
     if ( data && data.type === 'PING' ) {
         event.ports[ 0 ].postMessage( {
             type: 'PONG',
