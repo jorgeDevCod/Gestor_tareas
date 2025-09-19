@@ -124,6 +124,42 @@ window.addEventListener( 'beforeinstallprompt', ( e ) => {
   }
 } );
 
+function handleInstallClick() {
+  if ( !deferredPrompt ) {
+    console.warn( 'No hay prompt de instalación disponible' );
+    return;
+  }
+
+  const installButton = document.getElementById( 'install-button' );
+
+  // Deshabilitar botón temporalmente
+  if ( installButton ) {
+    installButton.disabled = true;
+    installButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Instalando...';
+  }
+
+  deferredPrompt.prompt();
+
+  deferredPrompt.userChoice.then( ( choiceResult ) => {
+    if ( choiceResult.outcome === 'accepted' ) {
+      console.log( '✅ Usuario instaló la PWA' );
+      // Ocultar botón permanentemente
+      if ( installButton ) {
+        installButton.style.display = 'none';
+        installButton.classList.add( 'hidden' );
+      }
+    } else {
+      console.log( '❌ Usuario rechazó la instalación' );
+      // Restaurar botón
+      if ( installButton ) {
+        installButton.disabled = false;
+        installButton.innerHTML = '<i class="fas fa-download mr-2"></i>Instalar App';
+      }
+    }
+    deferredPrompt = null;
+  } );
+}
+
 
 function registerPWANotifications() {
   if ( 'serviceWorker' in navigator && 'PushManager' in window ) {
