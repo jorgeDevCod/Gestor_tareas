@@ -559,7 +559,7 @@ function enqueueSync( operation, dateStr, task ) {
 
   const key = `${operation}-${dateStr}-${task.id}`;
 
-  // Evitar duplicados recientes (últimos 1000ms)
+  // Evitar duplicados recientes
   const existing = syncQueue.get( key );
   if ( existing && ( Date.now() - existing.timestamp ) < 1000 ) {
     console.log( '⚠️ Operación duplicada reciente ignorada:', key );
@@ -587,7 +587,9 @@ function enqueueSync( operation, dateStr, task ) {
   } else if ( syncQueue.size > 0 ) {
     updateSyncIndicator( "pending" );
 
-    // Iniciar sync automático con debounce corto
+    // Usar debounce específico para PWA
+    const debounceTime = window.PWA_SYNC_DEBOUNCE_TIME || SYNC_DEBOUNCE_TIME;
+
     if ( syncTimeout ) {
       clearTimeout( syncTimeout );
     }
@@ -596,7 +598,7 @@ function enqueueSync( operation, dateStr, task ) {
       if ( syncQueue.size > 0 && !isSyncing ) {
         processSyncQueue();
       }
-    }, SYNC_DEBOUNCE_TIME ); // Usar la constante definida (2000ms)
+    }, debounceTime );
   }
 }
 
@@ -1045,34 +1047,59 @@ function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    // Mejorar configuración de persistencia
-    db.enablePersistence( {
+    // CONFIGURACIÓN MEJORADA DE PERSISTENCIA PARA PWA
+    const persistenceSettings = {
       synchronizeTabs: true,
-      experimentalTabSynchronization: true, // Mejor sync entre tabs
-    } ).then( () => {
-      console.log( "✅ Persistencia de Firebase habilitada" );
-    } ).catch( ( error ) => {
-      console.warn( "⚠️ Persistencia falló:", error.code );
-      if ( error.code === 'failed-precondition' ) {
-        console.warn( "Múltiples tabs abiertas" );
-      } else if ( error.code === 'unimplemented' ) {
-        console.warn( "Persistencia no soportada" );
-      }
-      // Continuar sin persistencia
-    } );
+      experimentalTabSynchronization: true,
+      // Configuraciones adicionales para PWA
+      experimentalAutoDetectLongPolling: true
+    };
 
-    // Listener de autenticación con manejo offline
+    // Configurar persistencia de Auth específica para PWA
+    auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL )
+      .then( () => {
+        console.log( "✅ Auth persistence configurada para PWA" );
+      } )
+      .catch( ( error ) => {
+        console.warn( "⚠️ Error configurando auth persistence:", error );
+      } );
+
+    // Configurar persistencia de Firestore con configuración PWA
+    db.enablePersistence( persistenceSettings )
+      .then( () => {
+        console.log( "✅ Persistencia de Firestore habilitada para PWA" );
+      } )
+      .catch( ( error ) => {
+        console.warn( "⚠️ Persistencia Firestore falló:", error.code );
+        if ( error.code === 'failed-precondition' ) {
+          console.warn( "Múltiples tabs abiertas - persistencia limitada" );
+        } else if ( error.code === 'unimplemented' ) {
+          console.warn( "Persistencia no soportada en este navegador" );
+        }
+        // Continuar sin persistencia
+      } );
+
+    // CONFIGURACIÓN ESPECÍFICA PARA PWA
+    if ( isPWAMode() ) {
+      console.log( "🚀 Configurando Firebase para modo PWA" );
+      configurePWAFirebase();
+    }
+
+    // Listener de autenticación con manejo PWA mejorado
     auth.onAuthStateChanged( ( user ) => {
       currentUser = user;
       updateUI();
 
       if ( user && navigator.onLine ) {
         updateSyncIndicator( "success" );
+
+        // Delay más corto para PWA
+        const syncDelay = isPWAMode() ? 500 : 1000;
         setTimeout( () => {
           if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
-        }, 1000 );
+        }, syncDelay );
       } else if ( user && !navigator.onLine ) {
         updateSyncIndicator( "offline" );
         showOfflineMessage();
@@ -1084,9 +1111,90 @@ function initFirebase() {
     hideLoadingScreen();
   } catch ( error ) {
     console.error( "❌ Error inicializando Firebase:", error );
-    // Inicializar en modo offline si Firebase falla
     initOfflineMode();
   }
+}
+
+// NUEVA FUNCIÓN: Detectar si está ejecutándose como PWA
+function isPWAMode() {
+  return window.matchMedia( '(display-mode: standalone)' ).matches ||
+    window.navigator.standalone === true ||
+    document.referrer.includes( 'android-app://' );
+}
+
+// NUEVA FUNCIÓN: Configuraciones específicas para PWA
+function configurePWAFirebase() {
+  // Configurar timeouts más agresivos para PWA
+  if ( db ) {
+    db.settings( {
+      cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED,
+      experimentalForceLongPolling: false, // Mejor para PWA
+    } );
+  }
+
+  // Configurar reconexión automática para PWA
+  setupPWAReconnection();
+
+  // Configurar sincronización en background
+  if ( 'serviceWorker' in navigator ) {
+    navigator.serviceWorker.ready.then( registration => {
+      // Registrar sync en background para PWA
+      if ( 'sync' in window.ServiceWorkerRegistration.prototype ) {
+        registration.sync.register( 'firebase-sync' )
+          .then( () => console.log( '🔄 Background sync registrado para PWA' ) )
+          .catch( err => console.warn( '⚠️ Error registrando background sync:', err ) );
+      }
+    } );
+  }
+}
+
+// NUEVA FUNCIÓN: Reconexión automática para PWA
+function setupPWAReconnection() {
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 5;
+  const reconnectDelay = 2000; // 2 segundos
+
+  const attemptReconnection = () => {
+    if ( reconnectAttempts >= maxReconnectAttempts ) {
+      console.log( '❌ Máximo de intentos de reconexión alcanzado' );
+      return;
+    }
+
+    if ( !navigator.onLine || !currentUser ) {
+      return;
+    }
+
+    reconnectAttempts++;
+    console.log( `🔄 Intento de reconexión ${reconnectAttempts}/${maxReconnectAttempts}` );
+
+    // Intentar una operación simple para verificar conectividad Firebase
+    db.collection( 'test' ).limit( 1 ).get()
+      .then( () => {
+        console.log( '✅ Reconexión Firebase exitosa' );
+        reconnectAttempts = 0; // Reset contador
+        updateSyncIndicator( 'success' );
+
+        // Procesar cola de sync después de reconectar
+        if ( syncQueue.size > 0 ) {
+          setTimeout( () => processSyncQueue(), 500 );
+        }
+      } )
+      .catch( ( error ) => {
+        console.warn( `⚠️ Reconexión fallida (${reconnectAttempts}):`, error.code );
+        if ( reconnectAttempts < maxReconnectAttempts ) {
+          setTimeout( attemptReconnection, reconnectDelay * reconnectAttempts );
+        }
+      } );
+  };
+
+  // Escuchar eventos de reconexión
+  window.addEventListener( 'online', () => {
+    reconnectAttempts = 0; // Reset contador al detectar conexión
+    setTimeout( attemptReconnection, 1000 ); // Dar tiempo para que se estabilice
+  } );
+
+  // Detectar desconexiones de Firebase
+  window.addEventListener( 'firebase-connection-lost', attemptReconnection );
 }
 
 function initOfflineMode() {
@@ -1305,6 +1413,71 @@ function handleOnline() {
     }, 1000 );
 
     showNotification( "Conexión restaurada. Sincronizando...", "success" );
+  }
+}
+
+function handleOnline() {
+  console.log( "🌐 Conexión restaurada" );
+  isOnline = true;
+  hideOfflineMessage();
+
+  if ( currentUser && currentUser.isOffline ) {
+    // Intentar reconectar con Firebase
+    initFirebase();
+  } else if ( currentUser ) {
+    updateSyncIndicator( "success" );
+    updateOfflineUI();
+
+    // Procesar cola pendiente al reconectar (delay menor para PWA)
+    const syncDelay = isPWAMode() ? 500 : 1000;
+    setTimeout( () => {
+      processSyncQueue();
+      syncFromFirebase();
+    }, syncDelay );
+
+    // Notificación específica para PWA
+    if ( isPWAMode() ) {
+      showDesktopNotificationPWA(
+        "Conexión restaurada",
+        "Sincronizando tareas...",
+        "connection-restored"
+      );
+    } else {
+      showNotification( "Conexión restaurada. Sincronizando...", "success" );
+    }
+  }
+}
+
+// NUEVA FUNCIÓN: Manejar mensajes del Service Worker específicos para Firebase
+function handleServiceWorkerMessages() {
+  if ( 'serviceWorker' in navigator ) {
+    navigator.serviceWorker.addEventListener( 'message', ( event ) => {
+      const { type, data } = event.data || {};
+
+      switch ( type ) {
+        case 'SYNC_FIREBASE_DATA':
+          console.log( '📨 SW: Solicitud de sync Firebase recibida' );
+          if ( currentUser && !currentUser.isOffline && isOnline ) {
+            processSyncQueue();
+          }
+          break;
+
+        case 'FIREBASE_CONNECTION_STATUS':
+          console.log( '📊 SW: Estado de conexión Firebase:', data );
+          if ( !data.connected && isOnline ) {
+            // Firebase desconectado pero internet disponible
+            window.dispatchEvent( new CustomEvent( 'firebase-connection-lost' ) );
+          }
+          break;
+
+        case 'PWA_SYNC_REQUEST':
+          console.log( '📱 SW: Solicitud de sync PWA' );
+          if ( syncQueue.size > 0 ) {
+            forceSyncNow();
+          }
+          break;
+      }
+    } );
   }
 }
 
@@ -1653,7 +1826,45 @@ function setupEventListeners() {
   setTimeout( () => {
     registerPWANotifications();
     initializeTodayPanel();
+
+    // NUEVA: Configurar mensajes del Service Worker
+    handleServiceWorkerMessages();
+
+    // NUEVA: Configurar detección de modo PWA
+    if ( isPWAMode() ) {
+      console.log( '🚀 PWA detectada - configurando características específicas' );
+      configurePWAFeatures();
+    }
+
   }, 100 );
+}
+
+// NUEVA FUNCIÓN: Configurar características específicas de PWA
+function configurePWAFeatures() {
+  // Prevenir zoom accidental en PWA
+  document.addEventListener( 'gesturestart', ( e ) => e.preventDefault() );
+  document.addEventListener( 'gesturechange', ( e ) => e.preventDefault() );
+  document.addEventListener( 'gestureend', ( e ) => e.preventDefault() );
+
+  // Mejorar rendimiento de scroll en PWA
+  document.body.style.overscrollBehavior = 'contain';
+
+  // Configurar viewport para PWA
+  const viewport = document.querySelector( 'meta[name="viewport"]' );
+  if ( viewport && isPWAMode() ) {
+    viewport.content = 'width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover';
+  }
+
+  // Configurar sincronización más frecuente en PWA
+  if ( syncTimeout ) {
+    clearTimeout( syncTimeout );
+  }
+
+  // PWA sync más agresivo (1 segundo vs 2 segundos)
+  const PWA_SYNC_DEBOUNCE_TIME = 1000;
+
+  // Override del debounce time para PWA
+  window.PWA_SYNC_DEBOUNCE_TIME = PWA_SYNC_DEBOUNCE_TIME;
 }
 
 // Función para abrir automáticamente el panel del día actual al cargar

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-app-cache-v2'; // Incrementa versión para actualizar
+const CACHE_NAME = 'mi-app-cache-v3'; // Incrementa versión para actualizar
 const urlsToCache = [
     '/',
     '/index.html',
