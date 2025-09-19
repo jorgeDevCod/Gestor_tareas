@@ -22,7 +22,6 @@ let isOnline = navigator.onLine;
 let currentUser = null;
 let db = null;
 let auth = null;
-let selectedDateForPanel = null;
 let notificationInterval = null;
 let lastNotificationCheck = 0;
 let sentNotifications = new Set();
@@ -127,6 +126,160 @@ window.addEventListener( 'beforeinstallprompt', ( e ) => {
     console.warn( 'No se encontró el botón de instalación' );
   }
 } );
+
+function registerPWANotifications() {
+  if ( 'serviceWorker' in navigator && 'PushManager' in window ) {
+    navigator.serviceWorker.ready.then( registration => {
+      console.log( 'Service Worker registrado para notificaciones PWA' );
+
+      // Configurar el service worker para manejar notificaciones
+      registration.addEventListener( 'message', event => {
+        if ( event.data && event.data.type === 'TASK_NOTIFICATION' ) {
+          handlePWANotification( event.data );
+        }
+      } );
+    } );
+  }
+}
+
+let selectedDateForPanel = getTodayString();
+
+function showDesktopNotificationPWA( title, body, tag, requireInteraction = false ) {
+  try {
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test( navigator.userAgent );
+    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
+      window.navigator.standalone === true;
+
+    // Evitar duplicados
+    if ( sentNotifications.has( tag ) ) {
+      console.log( '⏭️ Notificación duplicada evitada:', tag );
+      return;
+    }
+
+    // Configuración específica para PWA
+    const notificationOptions = {
+      body: body,
+      icon: '/images/favicon-192.png',
+      badge: '/images/favicon-192.png',
+      tag: tag,
+      requireInteraction: isPWA ? true : requireInteraction,
+      silent: false,
+      timestamp: Date.now(),
+      vibrate: isMobile ? [ 200, 100, 200 ] : undefined,
+      renotify: true,
+      image: isPWA ? '/images/favicon-512.png' : undefined,
+      data: {
+        url: window.location.origin,
+        timestamp: Date.now(),
+        tag: tag
+      }
+    };
+
+    // Para PWA, usar Service Worker si está disponible
+    if ( isPWA && 'serviceWorker' in navigator ) {
+      navigator.serviceWorker.ready.then( registration => {
+        registration.showNotification( title, notificationOptions );
+        console.log( '📱 Notificación PWA enviada:', title );
+      } ).catch( error => {
+        console.error( 'Error con Service Worker notification:', error );
+        // Fallback a notificación normal
+        fallbackToWebNotification( title, notificationOptions, tag );
+      } );
+    } else {
+      // Navegador web normal
+      fallbackToWebNotification( title, notificationOptions, tag );
+    }
+
+    // Marcar como enviada
+    sentNotifications.add( tag );
+
+    // Limpiar después de tiempo apropiado
+    setTimeout( () => {
+      sentNotifications.delete( tag );
+    }, isPWA && isMobile ? 2 * 60 * 1000 : 5 * 60 * 1000 );
+
+  } catch ( error ) {
+    console.error( '❌ Error enviando notificación PWA:', error );
+    showInAppNotification( title, body );
+  }
+}
+
+// Función auxiliar para notificaciones web fallback
+function showInAppNotification( title, body, type = 'info' ) {
+  const notification = document.createElement( 'div' );
+  const typeColors = {
+    info: 'bg-blue-600 border-blue-500',
+    success: 'bg-green-600 border-green-500',
+    warning: 'bg-orange-600 border-orange-500',
+    task: 'bg-indigo-600 border-indigo-500'
+  };
+
+  const colorClass = typeColors[ type ] || typeColors.info;
+
+  notification.className = `
+    fixed top-4 left-4 right-4 md:left-auto md:right-4 md:w-80
+    ${colorClass} text-white p-4 rounded-lg shadow-2xl border-l-4
+    z-50 transform -translate-y-full transition-all duration-500 ease-out
+  `;
+
+  notification.innerHTML = `
+    <div class="flex items-start justify-between">
+      <div class="flex-1">
+        <div class="font-semibold text-sm flex items-center">
+          <i class="fas fa-tasks mr-2"></i>
+          ${title}
+        </div>
+        <div class="text-xs mt-1 opacity-90">${body}</div>
+        <div class="text-xs mt-2 opacity-75">
+          ${new Date().toLocaleTimeString( 'es-ES', { hour: '2-digit', minute: '2-digit' } )}
+        </div>
+      </div>
+      <button onclick="this.closest('.fixed').remove()" 
+              class="ml-3 text-white hover:text-gray-200 transition-colors">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild( notification );
+
+  // Animación de entrada
+  setTimeout( () => {
+    notification.classList.remove( '-translate-y-full' );
+  }, 100 );
+
+  // Auto-ocultar con animación suave
+  setTimeout( () => {
+    notification.classList.add( '-translate-y-full' );
+    setTimeout( () => notification.remove(), 500 );
+  }, 6000 );
+}
+
+function fallbackToWebNotification( title, options, tag ) {
+  const notification = new Notification( title, options );
+
+  notification.onclick = function ( event ) {
+    event.preventDefault();
+    window.focus();
+    notification.close();
+
+    // Si es PWA, enfocar la ventana correctamente
+    if ( window.matchMedia( '(display-mode: standalone)' ).matches ) {
+      // Navegación dentro de la PWA
+      if ( selectedDateForPanel ) {
+        const day = new Date( selectedDateForPanel + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( selectedDateForPanel, day );
+      }
+    }
+  };
+
+  // Auto-close para navegadores web
+  if ( !options.requireInteraction ) {
+    setTimeout( () => notification.close(), 8000 );
+  }
+
+  console.log( '🌐 Notificación web enviada:', title );
+}
 
 function addToChangeLog(
   action,
@@ -856,6 +1009,7 @@ document.addEventListener( "DOMContentLoaded", function () {
   setupTaskTooltips();
   setupNetworkListeners();
   setupDateInput();
+  initializeTodayPanel();
 } );
 
 // Configurar input de fecha
@@ -1462,40 +1616,62 @@ function setupEventListeners() {
     const element = document.getElementById( id );
     if ( element ) {
       element.addEventListener(
-        element.tagName === "FORM" ? "submit" : "click",
+        element.tagName === 'FORM' ? 'submit' : 'click',
         handler
       );
     }
   } );
 
-  const closePanelBtn = document.getElementById( "closePanelBtn" );
-  const addQuickTaskBtn = document.getElementById( "addQuickTaskBtn" );
+  const closePanelBtn = document.getElementById( 'closePanelBtn' );
+  const addQuickTaskBtn = document.getElementById( 'addQuickTaskBtn' );
 
   if ( closePanelBtn ) {
-    closePanelBtn.addEventListener( "click", closeDailyTaskPanel );
+    closePanelBtn.addEventListener( 'click', closeDailyTaskPanel );
   }
 
   if ( addQuickTaskBtn ) {
-    addQuickTaskBtn.addEventListener( "click", addQuickTaskToSelectedDay );
+    addQuickTaskBtn.addEventListener( 'click', addQuickTaskToSelectedDay );
   }
 
-  const repeatDurationSelect = document.getElementById( "repeatDuration" );
-  const customDaysInputs = document.querySelectorAll(
-    '#customDays input[type="checkbox"]'
-  );
-  const taskDateInput = document.getElementById( "taskDate" );
+  const repeatDurationSelect = document.getElementById( 'repeatDuration' );
+  const customDaysInputs = document.querySelectorAll( '#customDays input[type="checkbox"]' );
+  const taskDateInput = document.getElementById( 'taskDate' );
 
   if ( repeatDurationSelect ) {
-    repeatDurationSelect.addEventListener( "change", updateRepeatPreview );
+    repeatDurationSelect.addEventListener( 'change', updateRepeatPreview );
   }
 
   if ( taskDateInput ) {
-    taskDateInput.addEventListener( "change", updateRepeatPreview );
+    taskDateInput.addEventListener( 'change', updateRepeatPreview );
   }
 
-  customDaysInputs.forEach( ( input ) => {
-    input.addEventListener( "change", updateRepeatPreview );
+  customDaysInputs.forEach( input => {
+    input.addEventListener( 'change', updateRepeatPreview );
   } );
+
+  // NUEVO: Inicializar PWA después de que DOM esté listo
+  setTimeout( () => {
+    registerPWANotifications();
+    initializeTodayPanel();
+  }, 100 );
+}
+
+// Función para abrir automáticamente el panel del día actual al cargar
+function initializeTodayPanel() {
+  const today = getTodayString();
+  const todayDate = new Date();
+  const day = todayDate.getDate();
+
+  // Abrir panel del día actual automáticamente si hay tareas
+  const todayTasks = tasks[ today ] || [];
+  if ( todayTasks.length > 0 ) {
+    setTimeout( () => {
+      showDailyTaskPanel( today, day );
+    }, 500 ); // Pequeño delay para que se renderice el calendario primero
+  } else {
+    // Establecer la fecha seleccionada pero sin abrir el panel
+    selectedDateForPanel = today;
+  }
 }
 
 function resetForm() {
@@ -3654,7 +3830,7 @@ function updateNotificationButton() {
 }
 
 function checkDailyTasksImproved( forceCheck = false ) {
-  if ( !notificationsEnabled || Notification.permission !== "granted" ) {
+  if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     return;
   }
 
@@ -3662,72 +3838,74 @@ function checkDailyTasksImproved( forceCheck = false ) {
   const today = getTodayString();
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
-  const currentTime = `${String( currentHour ).padStart( 2, "0" )}:${String( currentMinute ).padStart( 2, "0" )}`;
 
   const todayTasks = tasks[ today ] || [];
-  const pendingTasks = todayTasks.filter( ( task ) => task.state === "pending" );
-  const inProgressTasks = todayTasks.filter(
-    ( task ) => task.state === "inProgress"
-  );
+  const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
+  const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
 
   resetDailyNotificationStatus();
 
   // Notificaciones de tareas con hora específica
-  todayTasks.forEach( ( task ) => {
-    if ( !task.time || task.state === "completed" ) return;
+  todayTasks.forEach( task => {
+    if ( !task.time || task.state === 'completed' ) return;
 
-    const [ taskHours, taskMinutes ] = task.time.split( ":" ).map( Number );
+    const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
     const taskTime = taskHours * 60 + taskMinutes;
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
     // Notificación de inicio - cambiar automáticamente a "en proceso"
     const nowKey = `${task.id}-now`;
-    if (
-      !notificationStatus.taskReminders.has( nowKey ) &&
+    if ( !notificationStatus.taskReminders.has( nowKey ) &&
       currentTimeInMinutes >= taskTime &&
       currentTimeInMinutes <= taskTime + 2 &&
-      task.state === "pending"
-    ) {
+      task.state === 'pending' ) {
+
       // Cambiar estado a "en proceso" automáticamente
-      task.state = "inProgress";
+      task.state = 'inProgress';
       task.completed = false;
       saveTasks();
       renderCalendar();
-      enqueueSync( "upsert", today, task );
+      enqueueSync( 'upsert', today, task );
 
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      showDesktopNotification(
+
+      // Usar la nueva función PWA
+      showDesktopNotificationPWA(
         `🚀 Iniciando: ${task.title}`,
         `Tarea ${priority.label.toLowerCase()} comenzó. Estado: En Proceso`,
         nowKey,
         true
       );
       notificationStatus.taskReminders.add( nowKey );
+
+      // Mostrar también notificación in-app para mayor visibilidad
+      showInAppNotification(
+        `🚀 Tarea Iniciada`,
+        `${task.title} - ${priority.label}`,
+        'task'
+      );
     }
   } );
 
-  // Notificaciones generales con información de estados
+  // Notificaciones generales matutinas
   const totalPending = pendingTasks.length;
   const totalInProgress = inProgressTasks.length;
 
-  if (
-    !notificationStatus.morning &&
-    currentHour === 9 &&
-    currentMinute <= 30 &&
-    ( totalPending > 0 || totalInProgress > 0 )
-  ) {
-    let message = "";
-    if ( totalPending > 0 )
-      message += `${totalPending} pendiente${totalPending > 1 ? "s" : ""}`;
+  if ( !notificationStatus.morning &&
+    currentHour === 9 && currentMinute <= 30 &&
+    ( totalPending > 0 || totalInProgress > 0 ) ) {
+
+    let message = '';
+    if ( totalPending > 0 ) message += `${totalPending} pendiente${totalPending > 1 ? 's' : ''}`;
     if ( totalInProgress > 0 ) {
-      if ( message ) message += " y ";
+      if ( message ) message += ' y ';
       message += `${totalInProgress} en proceso`;
     }
 
-    showDesktopNotification(
-      "¡Buenos días! 🌅",
+    showDesktopNotificationPWA(
+      '¡Buenos días! 🌅',
       `Tienes ${message} para hoy`,
-      "morning-reminder"
+      'morning-reminder'
     );
     notificationStatus.morning = true;
   }
@@ -3744,119 +3922,6 @@ function clearTaskNotifications( taskId ) {
   keysToRemove.forEach( ( key ) => {
     notificationStatus.taskReminders.delete( key );
   } );
-}
-
-function showDesktopNotification( title, body, tag, requireInteraction = false ) {
-  try {
-    // Evitar notificaciones duplicadas
-    if ( sentNotifications.has( tag ) ) {
-      console.log( "⏭️ Notificación duplicada evitada:", tag );
-      return;
-    }
-
-    // Configuración específica para móviles
-    const isMobile =
-      /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-      );
-
-    const notificationOptions = {
-      body: body,
-      icon: getFaviconAsDataUrl(),
-      tag: tag,
-      requireInteraction: isMobile ? true : requireInteraction, // Móviles requieren interacción
-      silent: false,
-      badge: getFaviconAsDataUrl(),
-      timestamp: Date.now(),
-      vibrate: isMobile ? [ 200, 100, 200 ] : undefined, // Vibración en móviles
-      renotify: true, // Permitir re-notificación con mismo tag
-      actions: isMobile
-        ? [
-          {
-            action: "view",
-            title: "Ver tareas",
-          },
-          {
-            action: "close",
-            title: "Cerrar",
-          },
-        ]
-        : undefined,
-    };
-
-    const notification = new Notification( title, notificationOptions );
-
-    // Marcar como enviada
-    sentNotifications.add( tag );
-
-    // Para móviles, mostrar también alerta visual en la app
-    if ( isMobile ) {
-      showInAppNotification( title, body );
-    }
-
-    // Limpiar del set después de 3 minutos para móviles, 5 para desktop
-    setTimeout(
-      () => {
-        sentNotifications.delete( tag );
-      },
-      isMobile ? 3 * 60 * 1000 : 5 * 60 * 1000
-    );
-
-    notification.onclick = function () {
-      window.focus();
-      notification.close();
-    };
-
-    // Auto-close más rápido en móviles
-    if ( !requireInteraction && !isMobile ) {
-      setTimeout( () => {
-        notification.close();
-      }, 8000 );
-    }
-
-    console.log(
-      "Notificación enviada:",
-      title,
-      "- Tag:",
-      tag,
-      "- Móvil:",
-      isMobile
-    );
-  } catch ( error ) {
-    console.error( "❌ Error enviando notificación:", error );
-    // Fallback para móviles problemáticos
-    showInAppNotification( title, body );
-  }
-}
-
-function showInAppNotification( title, body ) {
-  const notification = document.createElement( "div" );
-  notification.className =
-    "fixed top-20 left-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-2xl z-50 transform -translate-y-full transition-transform duration-500";
-  notification.innerHTML = `
-        <div class="flex items-start justify-between">
-            <div class="flex-1">
-                <div class="font-semibold text-sm">${title}</div>
-                <div class="text-xs mt-1 opacity-90">${body}</div>
-            </div>
-            <button onclick="this.closest('.fixed').remove()" class="ml-2 text-white hover:text-gray-200">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-    `;
-
-  document.body.appendChild( notification );
-
-  // Mostrar animación
-  setTimeout( () => {
-    notification.classList.remove( "-translate-y-full" );
-  }, 100 );
-
-  // Auto-ocultar después de 8 segundos
-  setTimeout( () => {
-    notification.classList.add( "-translate-y-full" );
-    setTimeout( () => notification.remove(), 500 );
-  }, 8000 );
 }
 
 function getFaviconAsDataUrl() {
@@ -3951,6 +4016,7 @@ function clearAll() {
   renderCalendar();
   updateProgress();
   closeDailyTaskPanel();
+
 
   // Auto-sync batch delete
   deletedTasks.forEach( ( { dateStr, taskId } ) => {
