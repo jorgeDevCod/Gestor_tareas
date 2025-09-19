@@ -42,13 +42,12 @@
     </div>
 
     <main class="container mx-auto px-4 py-6">
-        <!-- Header -->
         <div class="bg-white rounded-xl shadow-lg p-4 mb-6 border border-gray-200">
             <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                 <!-- Titulo y logo -->
                 <div class="flex flex-col md:flex-row items-center gap-4">
                     <!-- logo -->
-                    <img class="w-24 md:w-12" src="images/IconLogo.png" alt="Logo de Gestoe de tareas">
+                    <img class="w-24 md:w-12" src="images/IconLogo.png" alt="Logo de Gestor de tareas">
                     <!-- Título principal -->
                     <div class="mb-4 md:mb-0">
                         <h1 class="text-xl md:text-2xl font-bold text-gray-800 flex items-center justify-center md:justify-start md:gap-2 whitespace-nowrap">
@@ -57,16 +56,16 @@
                                 GRATIS
                             </span>
                         </h1>
-
                         <h2 class="text-center md:text-start font-medium text-gray-600 mt-1 text-base md:text-lg">
                             Gestiona tus tareas con facilidad y eleva tu productividad.
                         </h2>
                     </div>
-
                 </div>
 
-                <!-- Botones de acción -->
+                <!-- BOTONES DE ACCIÓN CORREGIDOS -->
                 <div class="flex justify-center gap-2 flex-wrap">
+
+                    <!-- Botón Exportar Excel -->
                     <button id="exportExcelBtn" class="bg-green-500 text-white px-3 py-2 rounded-lg hover:bg-green-600 transition duration-300 text-sm font-normal md:font-bold">
                         <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -74,10 +73,12 @@
                         Exportar Excel
                     </button>
 
+                    <!-- Botón Notificaciones -->
                     <button id="notificationsBtn" class="bg-green-500 text-white px-3 py-2 rounded-lg hover:bg-green-600 transition duration-300 text-sm font-normal md:font-bold" title="Notificaciones activadas - Click para desactivar">
                         <i class="fas fa-bell mr-2"></i>Notificaciones ON
                     </button>
 
+                    <!-- Botón Sincronizar (solo visible cuando logueado) -->
                     <button id="syncBtn" class="hidden bg-purple-500 text-white px-3 py-2 rounded-lg hover:bg-purple-600 transition duration-300 text-sm font-normal md:font-bold" title="Sincronizar tareas con Firebase">
                         <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -85,14 +86,16 @@
                         Sincronizar
                     </button>
 
-                    <button id="loginBtn" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition duration-300 text-sm font-normal md:font-bold">
+                    <!-- BOTÓN INICIAR SESIÓN -->
+                    <button id="loginBtn" class="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition duration-300 text-sm font-normal md:font-bold">
                         <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
                         </svg>
                         Iniciar Sesión
                     </button>
 
-                    <button id="install-button" style="display: block;" class="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition duration-300 text-sm font-normal md:font-bold">
+                    <!-- BOTÓN INSTALACIÓN PWA-->
+                    <button id="install-button" class="hidden bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition duration-300 text-sm font-normal md:font-bold">
                         <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
                         </svg>
@@ -101,7 +104,7 @@
                 </div>
             </div>
 
-            <!-- User Info (cuando está logueado) -->
+            <!-- INFORMACIÓN DEL USUARIO (cuando está logueado)-->
             <div id="userInfo" class="hidden mb-4 p-3 bg-blue-50 rounded-lg">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center space-x-3">
@@ -118,6 +121,12 @@
                         Salir
                     </button>
                 </div>
+            </div>
+
+            <!-- INDICADOR DE ESTADO FIREBASE -->
+            <div id="firebaseStatus" class="fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 transition-all duration-300 hidden force-hidden">
+                <i id="statusIcon" class="fas fa-check-circle mr-2"></i>
+                <span id="statusText">Sincronizado</span>
             </div>
 
             <!-- Progress Bar -->
@@ -143,7 +152,6 @@
                     <div id="progressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
             </div>
-
         </div>
 
         <!-- Formulario -->

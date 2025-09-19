@@ -88,6 +88,8 @@ const PRIORITY_LEVELS = {
 
 // install sw
 let deferredPrompt;
+let installButtonShown = false;
+
 
 if ( 'serviceWorker' in navigator ) {
   window.addEventListener( 'load', () => {
@@ -102,30 +104,26 @@ if ( 'serviceWorker' in navigator ) {
 }
 
 window.addEventListener( 'beforeinstallprompt', ( e ) => {
+  // Verificar si ya está instalado ANTES de manejar el evento
+  if ( isPWAInstalled() ) {
+    console.log( '🚀 PWA ya instalada - ignorando prompt' );
+    return;
+  }
+
   e.preventDefault();
   deferredPrompt = e;
 
   const installButton = document.getElementById( 'install-button' );
-  if ( installButton ) {
+  if ( installButton && !installButtonShown ) {
+    console.log( '📱 Mostrando botón de instalación' );
     installButton.style.display = 'block';
-    installButton.addEventListener( 'click', () => {
-      // Mostrar el prompt de instalación
-      deferredPrompt.prompt();
+    installButton.classList.remove( 'hidden' );
+    installButtonShown = true;
 
-      // Esperar la respuesta del usuario
-      deferredPrompt.userChoice.then( ( choiceResult ) => {
-        if ( choiceResult.outcome === 'accepted' ) {
-          console.log( 'Usuario instaló la PWA' );
-        } else {
-          console.log( 'Usuario rechazó la instalación' );
-        }
-        deferredPrompt = null;
-      } );
-    } );
-  } else {
-    console.warn( 'No se encontró el botón de instalación' );
+    installButton.addEventListener( 'click', handleInstallClick );
   }
 } );
+
 
 function registerPWANotifications() {
   if ( 'serviceWorker' in navigator && 'PushManager' in window ) {
@@ -279,6 +277,13 @@ function fallbackToWebNotification( title, options, tag ) {
   }
 
   console.log( '🌐 Notificación web enviada:', title );
+}
+
+function isPWAInstalled() {
+  // Método más confiable para detectar instalación
+  return window.matchMedia( '(display-mode: standalone)' ).matches ||
+    window.navigator.standalone === true ||
+    document.referrer.includes( 'android-app://' );
 }
 
 function addToChangeLog(
@@ -1033,87 +1038,91 @@ function setupDateInput() {
   }
 }
 
+// Ocultar botón si PWA ya está instalada
+window.addEventListener( 'DOMContentLoaded', () => {
+  const installButton = document.getElementById( 'install-button' );
+
+  if ( isPWAInstalled() && installButton ) {
+    console.log( '🚀 PWA detectada - ocultando botón de instalación' );
+    installButton.style.display = 'none';
+    installButton.classList.add( 'hidden' );
+  }
+} );
+
 // Inicializar Firebase
 function initFirebase() {
   try {
-    // Verificar conectividad antes de inicializar Firebase
+    console.log( '🔥 Inicializando Firebase...' );
+
+    // Verificar conectividad
     if ( !navigator.onLine ) {
-      console.log( "🔧 Iniciando en modo offline" );
+      console.log( '📴 Sin conexión - iniciando modo offline' );
       initOfflineMode();
       return;
     }
 
-    firebase.initializeApp( firebaseConfig );
+    // Inicializar Firebase
+    if ( !firebase.apps.length ) {
+      firebase.initializeApp( firebaseConfig );
+    }
+
     db = firebase.firestore();
     auth = firebase.auth();
 
-    // CONFIGURACIÓN MEJORADA DE PERSISTENCIA PARA PWA
-    const persistenceSettings = {
-      synchronizeTabs: true,
-      experimentalTabSynchronization: true,
-      // Configuraciones adicionales para PWA
-      experimentalAutoDetectLongPolling: true
-    };
+    // CONFIGURACIÓN SIMPLIFICADA de persistencia
+    setupFirebasePersistence();
 
-    // Configurar persistencia de Auth específica para PWA
-    auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL )
-      .then( () => {
-        console.log( "✅ Auth persistence configurada para PWA" );
-      } )
-      .catch( ( error ) => {
-        console.warn( "⚠️ Error configurando auth persistence:", error );
-      } );
-
-    // Configurar persistencia de Firestore con configuración PWA
-    db.enablePersistence( persistenceSettings )
-      .then( () => {
-        console.log( "✅ Persistencia de Firestore habilitada para PWA" );
-      } )
-      .catch( ( error ) => {
-        console.warn( "⚠️ Persistencia Firestore falló:", error.code );
-        if ( error.code === 'failed-precondition' ) {
-          console.warn( "Múltiples tabs abiertas - persistencia limitada" );
-        } else if ( error.code === 'unimplemented' ) {
-          console.warn( "Persistencia no soportada en este navegador" );
-        }
-        // Continuar sin persistencia
-      } );
-
-    // CONFIGURACIÓN ESPECÍFICA PARA PWA
-    if ( isPWAMode() ) {
-      console.log( "🚀 Configurando Firebase para modo PWA" );
-      configurePWAFirebase();
-    }
-
-    // Listener de autenticación con manejo PWA mejorado
+    // LISTENER de autenticación SIMPLIFICADO
     auth.onAuthStateChanged( ( user ) => {
+      console.log( '🔐 Auth state changed:', user ? 'logged in' : 'logged out' );
+
       currentUser = user;
-      updateUI();
+      updateUI(); // Esta función debe manejar todo el UI correctamente
 
       if ( user && navigator.onLine ) {
+        console.log( '✅ Usuario autenticado, iniciando sync' );
         updateSyncIndicator( "success" );
 
-        // Delay más corto para PWA
-        const syncDelay = isPWAMode() ? 500 : 1000;
+        // Sync inicial con delay
         setTimeout( () => {
           if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
-        }, syncDelay );
-      } else if ( user && !navigator.onLine ) {
+        }, 1000 );
+      } else if ( !user ) {
+        // Usuario no autenticado
+        console.log( '❌ Usuario no autenticado' );
         updateSyncIndicator( "offline" );
-        showOfflineMessage();
-      } else {
-        updateSyncIndicator( "offline" );
+        cleanupUIOnLogout();
       }
     } );
 
     hideLoadingScreen();
+
   } catch ( error ) {
-    console.error( "❌ Error inicializando Firebase:", error );
+    console.error( '❌ Error inicializando Firebase:', error );
+    showNotification( 'Error conectando con el servidor', 'error' );
     initOfflineMode();
   }
 }
+
+// CORRECCIÓN 5: Función separada para configurar persistencia
+async function setupFirebasePersistence() {
+  try {
+    // Auth persistence
+    await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
+    console.log( '✅ Auth persistence configurada' );
+
+    // Firestore persistence
+    await db.enablePersistence( { synchronizeTabs: true } );
+    console.log( '✅ Firestore persistence habilitada' );
+
+  } catch ( error ) {
+    console.warn( '⚠️ Error configurando persistencia:', error.code );
+    // Continuar sin persistencia - no es crítico
+  }
+}
+
 
 // NUEVA FUNCIÓN: Detectar si está ejecutándose como PWA
 function isPWAMode() {
@@ -1599,62 +1608,138 @@ function updateUI() {
   const userInfo = document.getElementById( "userInfo" );
   const syncBtn = document.getElementById( "syncBtn" );
   const statusEl = document.getElementById( "firebaseStatus" );
+  const installBtn = document.getElementById( "install-button" );
+
+  console.log( '🎨 Actualizando UI - Usuario:', currentUser ? 'logged in' : 'not logged' );
 
   if ( currentUser && !currentUser.isOffline ) {
-    // Usuario logueado con Firebase
-    loginBtn.classList.add( "hidden" );
-    userInfo.classList.remove( "hidden" );
+    // Usuario logueado correctamente
+    if ( loginBtn ) {
+      loginBtn.classList.add( "hidden" );
+      // MANTENER estilos originales del botón
+      loginBtn.className = loginBtn.className.replace( /bg-\w+-\d+/g, '' );
+      loginBtn.className += ' bg-blue-600 hover:bg-blue-700'; // Azul consistente
+    }
 
-    // Mostrar botón de sync solo si está logueado
+    if ( userInfo ) {
+      userInfo.classList.remove( "hidden" );
+
+      // Actualizar información del usuario
+      const userName = document.getElementById( "userName" );
+      const userEmail = document.getElementById( "userEmail" );
+      const userPhoto = document.getElementById( "userPhoto" );
+
+      if ( userName ) userName.textContent = currentUser.displayName || "Usuario";
+      if ( userEmail ) userEmail.textContent = currentUser.email || "";
+      if ( userPhoto ) {
+        userPhoto.src = currentUser.photoURL || "https://via.placeholder.com/32";
+        userPhoto.onerror = () => userPhoto.src = "https://via.placeholder.com/32";
+      }
+    }
+
+    // Mostrar botón de sync
     if ( syncBtn ) {
       syncBtn.classList.remove( "hidden" );
       syncBtn.disabled = false;
-      syncBtn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
-      syncBtn.title = "Sincronizar tareas con la nube";
     }
 
-    // Mostrar indicador de estado solo para usuarios logueados
+    // Mostrar indicador de estado
     if ( statusEl ) {
       statusEl.classList.remove( "force-hidden" );
     }
 
-    // Actualizar info del usuario
-    document.getElementById( "userName" ).textContent = currentUser.displayName || "Usuario";
-    document.getElementById( "userEmail" ).textContent = currentUser.email;
-    document.getElementById( "userPhoto" ).src = currentUser.photoURL || "https://via.placeholder.com/32";
-
   } else {
-    // Sin usuario o usuario offline
-    loginBtn.classList.remove( "hidden" );
-    userInfo.classList.add( "hidden" );
+    // Usuario no logueado
+    if ( loginBtn ) {
+      loginBtn.classList.remove( "hidden" );
+      // ASEGURAR estilos consistentes (mismo azul que instalación)
+      loginBtn.className = loginBtn.className.replace( /bg-\w+-\d+/g, '' ).replace( /text-\w+-\d+/g, '' );
+      loginBtn.className += ' bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-200';
+    }
 
-    // Ocultar completamente botón de sync
+    if ( userInfo ) {
+      userInfo.classList.add( "hidden" );
+    }
+
+    // Ocultar botón de sync
     if ( syncBtn ) {
       syncBtn.classList.add( "hidden" );
     }
 
-    // Ocultar indicador de estado Firebase
+    // Ocultar indicador de estado
     if ( statusEl ) {
       statusEl.classList.add( "force-hidden" );
     }
   }
+
+  // MANEJAR botón de instalación independientemente
+  if ( installBtn ) {
+    if ( isPWAInstalled() ) {
+      installBtn.style.display = 'none';
+      installBtn.classList.add( 'hidden' );
+    } else if ( deferredPrompt && !installButtonShown ) {
+      installBtn.style.display = 'block';
+      installBtn.classList.remove( 'hidden' );
+    }
+  }
 }
 
-function signInWithGoogle() {
-  const provider = new firebase.auth.GoogleAuthProvider();
-  provider.addScope( "profile" );
-  provider.addScope( "email" );
+async function signInWithGoogle() {
+  try {
+    console.log( '🔑 Iniciando login con Google...' );
 
-  auth
-    .signInWithPopup( provider )
-    .then( ( result ) => {
-      showNotification( "Sesión iniciada correctamente", "success" );
-      closeLoginModal();
-    } )
-    .catch( ( error ) => {
-      console.error( "Error signing in:", error );
-      showNotification( "Error al iniciar sesión", "error" );
+    const loginBtn = document.getElementById( "loginBtn" );
+    if ( loginBtn ) {
+      loginBtn.disabled = true;
+      loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Conectando...';
+    }
+
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope( 'profile' );
+    provider.addScope( 'email' );
+
+    // Configurar provider para mejor experiencia
+    provider.setCustomParameters( {
+      prompt: 'select_account'
     } );
+
+    const result = await auth.signInWithPopup( provider );
+
+    if ( result.user ) {
+      console.log( '✅ Login exitoso:', result.user.email );
+      showNotification( 'Sesión iniciada correctamente', 'success' );
+      closeLoginModal();
+    }
+
+  } catch ( error ) {
+    console.error( '❌ Error en login:', error );
+
+    let errorMessage = 'Error al iniciar sesión';
+
+    switch ( error.code ) {
+      case 'auth/popup-closed-by-user':
+        errorMessage = 'Ventana de login cerrada';
+        break;
+      case 'auth/network-request-failed':
+        errorMessage = 'Error de conexión';
+        break;
+      case 'auth/too-many-requests':
+        errorMessage = 'Demasiados intentos. Intenta más tarde';
+        break;
+      default:
+        errorMessage = `Error: ${error.message}`;
+    }
+
+    showNotification( errorMessage, 'error' );
+
+  } finally {
+    // Restaurar botón
+    const loginBtn = document.getElementById( "loginBtn" );
+    if ( loginBtn ) {
+      loginBtn.disabled = false;
+      loginBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar Sesión';
+    }
+  }
 }
 
 function signOut() {
@@ -1763,6 +1848,21 @@ function forceSyncNow() {
   processSyncQueue();
 }
 
+window.addEventListener( 'appinstalled', () => {
+  console.log( '🎉 PWA instalada exitosamente' );
+
+  const installButton = document.getElementById( 'install-button' );
+  if ( installButton ) {
+    installButton.style.display = 'none';
+    installButton.classList.add( 'hidden' );
+  }
+
+  installButtonShown = false;
+  deferredPrompt = null;
+
+  // Opcional: mostrar mensaje de éxito
+  showNotification( 'Aplicación instalada correctamente', 'success' );
+} );
 
 // CONFIGURACIÓN de eventos con botón reset
 function setupEventListeners() {
@@ -1839,7 +1939,7 @@ function setupEventListeners() {
   }, 100 );
 }
 
-// NUEVA FUNCIÓN: Configurar características específicas de PWA
+// Configurar características específicas de PWA
 function configurePWAFeatures() {
   // Prevenir zoom accidental en PWA
   document.addEventListener( 'gesturestart', ( e ) => e.preventDefault() );
