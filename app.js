@@ -36,6 +36,8 @@ let isSyncing = false; // Flag para evitar múltiples syncs
 let lastSyncTime = 0; // Timestamp del último sync
 const SYNC_DEBOUNCE_TIME = 2000; // 2 segundos de debounce
 let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
+const PERMISSIONS_KEY = 'app_permissions';
+const USER_PREFERENCES_KEY = 'user_preferences';
 
 // constantes para estados y prioridades
 const TASK_STATES = {
@@ -300,7 +302,6 @@ function showInAppNotification( title, message, type = 'info' ) {
 }
 
 function isPWAInstalled() {
-  // Método más confiable para detectar instalación
   return window.matchMedia( '(display-mode: standalone)' ).matches ||
     window.navigator.standalone === true ||
     document.referrer.includes( 'android-app://' );
@@ -567,8 +568,11 @@ function clearDayChangeLog( dateStr ) {
     return;
   }
 
+  // CRÍTICO: Solo eliminar de localStorage, NO de Firebase
   delete dailyTaskLogs[ dateStr ];
-  saveTasks(); // Los logs se guardan junto con las tareas
+  saveTaskLogs(); // Solo guarda local, no sincroniza
+
+  // NO llamar a saveTasks() aquí ya que no afecta las tareas reales
 
   // Actualizar header si el panel está abierto
   if ( selectedDateForPanel === dateStr ) {
@@ -578,8 +582,6 @@ function clearDayChangeLog( dateStr ) {
   }
 
   showNotification( "Registros de cambios eliminados", "success" );
-
-  // Cerrar modal de registros si está abierto
   closeAllModals();
 }
 
@@ -590,20 +592,35 @@ function enqueueSync( operation, dateStr, task ) {
     return;
   }
 
-  const key = `${operation}-${dateStr}-${task.id}`;
-
-  // Evitar duplicados recientes
-  const existing = syncQueue.get( key );
-  if ( existing && ( Date.now() - existing.timestamp ) < 1000 ) {
-    console.log( '⚠️ Operación duplicada reciente ignorada:', key );
+  // NUEVO: No encolar si no hay usuario o está offline
+  if ( !currentUser || !isOnline ) {
+    console.log( '⚠️ Usuario offline o no logueado, sincronización diferida' );
     return;
+  }
+
+  const key = `${operation}-${dateStr}-${task.id}`;
+  const now = Date.now();
+
+  // Evitar duplicados recientes (aumentar tiempo para evitar spam)
+  const existing = syncQueue.get( key );
+  if ( existing && ( now - existing.timestamp ) < 2000 ) { // 2 segundos en lugar de 1
+    console.log( '⚠️ Operación duplicada ignorada:', key );
+    return;
+  }
+
+  // NUEVO: Limpiar operaciones muy antiguas (más de 10 minutos)
+  for ( const [ existingKey, existingOp ] of syncQueue ) {
+    if ( now - existingOp.timestamp > 600000 ) { // 10 minutos
+      syncQueue.delete( existingKey );
+      console.log( '🧹 Operación antigua eliminada:', existingKey );
+    }
   }
 
   syncQueue.set( key, {
     operation,
     dateStr,
     task: { ...task },
-    timestamp: Date.now(),
+    timestamp: now,
     attempts: 0
   } );
 
@@ -614,25 +631,22 @@ function enqueueSync( operation, dateStr, task ) {
     taskTitle: task.title
   } );
 
-  // Actualizar indicador inmediatamente
-  if ( !isOnline ) {
-    updateSyncIndicator( "offline" );
-  } else if ( syncQueue.size > 0 ) {
-    updateSyncIndicator( "pending" );
+  updateSyncIndicator( "pending" );
 
-    // Usar debounce específico para PWA
-    const debounceTime = window.PWA_SYNC_DEBOUNCE_TIME || SYNC_DEBOUNCE_TIME;
+  // Debounce inteligente: más rápido en PWA
+  const debounceTime = isPWAInstalled() ?
+    window.PWA_SYNC_DEBOUNCE_TIME || 1000 :
+    SYNC_DEBOUNCE_TIME || 2000;
 
-    if ( syncTimeout ) {
-      clearTimeout( syncTimeout );
-    }
-
-    syncTimeout = setTimeout( () => {
-      if ( syncQueue.size > 0 && !isSyncing ) {
-        processSyncQueue();
-      }
-    }, debounceTime );
+  if ( syncTimeout ) {
+    clearTimeout( syncTimeout );
   }
+
+  syncTimeout = setTimeout( () => {
+    if ( syncQueue.size > 0 && !isSyncing && currentUser && isOnline ) {
+      processSyncQueue();
+    }
+  }, debounceTime );
 }
 
 //Procesar cola de sincronización
@@ -764,10 +778,6 @@ async function processSyncQueue() {
     console.log( '🏁 processSyncQueue finalizado, isSyncing = false' );
   }
 }
-
-document.addEventListener( 'DOMContentLoaded', () => {
-  loadTaskLogs(); // Cargar logs junto con las tareas
-} );
 
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
@@ -969,22 +979,6 @@ function isDatePast( dateStr ) {
   return checkDate < today;
 }
 
-// Inicialización
-document.addEventListener( "DOMContentLoaded", function () {
-  initFirebase();
-  loadTasks();
-  renderCalendar();
-  updateProgress();
-  setupEventListeners();
-  requestNotificationPermission();
-  initNotifications();
-  setupDragAndDrop();
-  setupTaskTooltips();
-  setupNetworkListeners();
-  setupDateInput();
-  initializeTodayPanel();
-} );
-
 // Configurar input de fecha
 function setupDateInput() {
   const taskDateInput = document.getElementById( "taskDate" );
@@ -1003,17 +997,6 @@ function setupDateInput() {
     taskTimeInput.value = `${currentHour}:${currentMinute}`;
   }
 }
-
-// Ocultar botón si PWA ya está instalada
-window.addEventListener( 'DOMContentLoaded', () => {
-  const installButton = document.getElementById( 'install-button' );
-
-  if ( isPWAInstalled() && installButton ) {
-    console.log( '🚀 PWA detectada - ocultando botón de instalación' );
-    installButton.style.display = 'none';
-    installButton.classList.add( 'hidden' );
-  }
-} );
 
 // Inicializar Firebase
 function initFirebase() {
@@ -1087,14 +1070,6 @@ async function setupFirebasePersistence() {
     console.warn( '⚠️ Error configurando persistencia:', error.code );
     // Continuar sin persistencia - no es crítico
   }
-}
-
-
-// NUEVA FUNCIÓN: Detectar si está ejecutándose como PWA
-function isPWAMode() {
-  return window.matchMedia( '(display-mode: standalone)' ).matches ||
-    window.navigator.standalone === true ||
-    document.referrer.includes( 'android-app://' );
 }
 
 // NUEVA FUNCIÓN: Configuraciones específicas para PWA
@@ -1330,22 +1305,84 @@ function hideOfflineMessage() {
   }
 }
 
+function savePermissions() {
+  const permissions = {
+    notifications: {
+      permission: Notification.permission,
+      enabled: notificationsEnabled,
+      timestamp: Date.now()
+    }
+  };
+
+  try {
+    localStorage.setItem( PERMISSIONS_KEY, JSON.stringify( permissions ) );
+    console.log( '💾 Permisos guardados:', permissions );
+  } catch ( error ) {
+    console.error( 'Error guardando permisos:', error );
+  }
+}
+
+function loadPermissions() {
+  try {
+    const stored = localStorage.getItem( PERMISSIONS_KEY );
+    if ( stored ) {
+      const permissions = JSON.parse( stored );
+
+      // Solo restaurar si los permisos del navegador coinciden
+      if ( Notification.permission === 'granted' &&
+        permissions.notifications?.permission === 'granted' ) {
+
+        notificationsEnabled = permissions.notifications.enabled !== false; // Default true
+        console.log( '✅ Permisos de notificaciones restaurados:', notificationsEnabled );
+        return true;
+      }
+    }
+
+    // Si no hay permisos guardados pero el navegador los tiene, usar defaults
+    if ( Notification.permission === 'granted' ) {
+      notificationsEnabled = true;
+      savePermissions(); // Guardar para próxima vez
+    }
+
+  } catch ( error ) {
+    console.error( 'Error cargando permisos:', error );
+    // Valores por defecto en caso de error
+    notificationsEnabled = ( Notification.permission === 'granted' );
+  }
+
+  return false;
+}
+
 function initNotifications() {
   if ( !( "Notification" in window ) ) {
     console.warn( "Este navegador no soporta notificaciones" );
     return;
   }
 
-  // Detectar dispositivo móvil
-  const isMobile =
-    /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent
-    );
+  // Cargar permisos guardados ya se hizo en loadPermissions()
 
   if ( Notification.permission === "granted" ) {
-    notificationsEnabled = true;
+    // Si notificationsEnabled no está definido, usar true por defecto
+    if ( typeof notificationsEnabled === 'undefined' ) {
+      notificationsEnabled = true;
+    }
+
     updateNotificationButton();
-    startNotificationService();
+
+    if ( notificationsEnabled ) {
+      startNotificationService();
+    }
+  } else if ( Notification.permission === "default" ) {
+    // Solo solicitar permisos automáticamente en PWA instalada
+    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
+      window.navigator.standalone === true;
+
+    if ( isPWA ) {
+      // En PWA, solicitar permisos automáticamente
+      setTimeout( () => {
+        requestNotificationPermissionWithVibration();
+      }, 2000 );
+    }
   }
 
   updateNotificationButton();
@@ -1380,7 +1417,7 @@ function handleOnline() {
     updateOfflineUI();
 
     // CRÍTICO: Procesar eliminaciones primero, luego sincronizar
-    const syncDelay = isPWAMode() ? 500 : 1000;
+    const syncDelay = isPWAInstalled() ? 500 : 1000;
     setTimeout( () => {
       // Primero procesar la cola (incluye eliminaciones)
       if ( syncQueue.size > 0 ) {
@@ -1393,7 +1430,7 @@ function handleOnline() {
       }
     }, syncDelay );
 
-    if ( isPWAMode() ) {
+    if ( isPWAInstalled() ) {
       showDesktopNotificationPWA(
         "Conexión restaurada",
         "Sincronizando tareas...",
@@ -1452,7 +1489,7 @@ function cleanupUIOnLogout() {
     statusEl.classList.add( "hidden", "force-hidden" );
   }
 
-  // Limpiar notificaciones relacionadas con sync
+  // Limpiar notificaciones
   const existingNotifications = document.querySelectorAll( '.notification' );
   existingNotifications.forEach( notification => {
     const text = notification.textContent.toLowerCase();
@@ -1461,14 +1498,12 @@ function cleanupUIOnLogout() {
     }
   } );
 
-  // Detener servicios de sync
+  // Detener servicios
   if ( syncTimeout ) {
     clearTimeout( syncTimeout );
     syncTimeout = null;
   }
 
-  // Limpiar cola de sync
-  syncQueue.clear();
 }
 
 function updateSyncIndicator( status ) {
@@ -1832,7 +1867,7 @@ window.addEventListener( 'appinstalled', () => {
   showNotification( 'Aplicación instalada correctamente', 'success' );
 } );
 
-// CONFIGURACIÓN de eventos con botón reset
+// CONFIGURACIÓN de eventos
 function setupEventListeners() {
   // Verificar que DOM esté listo
   if ( document.readyState === 'loading' ) {
@@ -1900,17 +1935,6 @@ function setupEventListeners() {
     input.addEventListener( 'change', updateRepeatPreview );
   } );
 
-  // Inicializar características PWA y otros componentes
-  setTimeout( () => {
-    initializeTodayPanel();
-    handleServiceWorkerMessages();
-
-    if ( isPWAMode() ) {
-      console.log( 'PWA detectada - configurando características específicas' );
-      configurePWAFeatures();
-    }
-  }, 100 );
-
   console.log( 'Event listeners configurados completamente' );
 }
 
@@ -1931,7 +1955,7 @@ function configurePWAFeatures() {
 
   // Configurar viewport para PWA
   const viewport = document.querySelector( 'meta[name="viewport"]' );
-  if ( viewport && isPWAMode() ) {
+  if ( viewport && isPWAInstalled() ) {
     viewport.content = 'width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover';
   }
 
@@ -3743,9 +3767,11 @@ function deleteTaskWithUndoImproved( dateStr, taskId ) {
 
 function saveTaskLogs() {
   try {
+    // Solo guardar en localStorage, NO sincronizar logs con Firebase
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
+    console.log( '📝 Logs guardados localmente (NO sincronizados)' );
   } catch ( error ) {
-    console.error( "Error saving task logs to localStorage:", error );
+    console.error( "Error saving task logs:", error );
   }
 }
 
@@ -3944,32 +3970,6 @@ function exportToExcel() {
   showNotification( "Excel exportado exitosamente" );
 }
 
-function requestNotificationPermission() {
-  if ( !( "Notification" in window ) ) {
-    showNotification( "Este navegador no soporta notificaciones", "error" );
-    return Promise.resolve( "denied" );
-  }
-
-  if ( Notification.permission === "granted" ) {
-    notificationsEnabled = true;
-    updateNotificationButton();
-    startNotificationService();
-    return Promise.resolve( "granted" );
-  }
-
-  return Notification.requestPermission().then( ( permission ) => {
-    if ( permission === "granted" ) {
-      notificationsEnabled = true;
-      updateNotificationButton();
-      startNotificationService();
-      showNotification( "Notificaciones activadas correctamente", "success" );
-    } else {
-      showNotification( "Permisos de notificación denegados", "error" );
-    }
-    return permission;
-  } );
-}
-
 function toggleNotifications() {
   if ( !( 'Notification' in window ) ) {
     showNotification( "Este navegador no soporta notificaciones", "error" );
@@ -3978,6 +3978,10 @@ function toggleNotifications() {
 
   if ( Notification.permission === "granted" ) {
     notificationsEnabled = !notificationsEnabled;
+
+    // CRÍTICO: Guardar preferencia inmediatamente
+    savePermissions();
+
     updateNotificationButton();
 
     if ( notificationsEnabled ) {
@@ -3991,10 +3995,10 @@ function toggleNotifications() {
       showNotification( "Notificaciones desactivadas", "info" );
     }
   } else if ( Notification.permission === "default" ) {
-    requestNotificationPermissionWithVibration(); // CORREGIDO
+    requestNotificationPermissionWithVibration();
   } else {
     showNotification(
-      "Los permisos de notificación fueron denegados. Actívalos en la configuración del navegador.",
+      "Los permisos fueron denegados. Actívalos en configuración del navegador.",
       "error"
     );
   }
@@ -4006,25 +4010,27 @@ function requestNotificationPermissionWithVibration() {
     return Promise.resolve( "denied" );
   }
 
-  // Vibración suave al solicitar
   if ( 'vibrate' in navigator ) {
     navigator.vibrate( [ 100, 50, 100 ] );
   }
 
   return Notification.requestPermission().then( permission => {
+    notificationsEnabled = ( permission === "granted" );
+
+    // CRÍTICO: Guardar inmediatamente después de obtener permisos
+    savePermissions();
+
+    updateNotificationButton();
+
     if ( permission === "granted" ) {
-      notificationsEnabled = true;
-      updateNotificationButton();
       startNotificationService();
 
-      // Vibración de éxito
       if ( 'vibrate' in navigator ) {
         navigator.vibrate( getVibrationPattern( 'success' ) );
       }
 
       showNotification( "Notificaciones activadas correctamente", "success" );
 
-      // Notificación de bienvenida
       setTimeout( () => {
         showDesktopNotificationPWA(
           "¡Notificaciones activadas!",
@@ -4037,6 +4043,7 @@ function requestNotificationPermissionWithVibration() {
     } else {
       showNotification( "Permisos de notificación denegados", "error" );
     }
+
     return permission;
   } );
 }
@@ -4335,9 +4342,13 @@ function showNotification( message, type = "success" ) {
 
 function saveTasks() {
   try {
+    // Solo tareas van a localStorage y Firebase
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
+
+    // Los logs van solo a localStorage (separados)
+    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
   } catch ( error ) {
-    console.error( "Error saving tasks to localStorage:", error );
+    console.error( "Error saving tasks:", error );
     showNotification( "Error al guardar tareas", "error" );
   }
 }
@@ -4430,4 +4441,61 @@ document.addEventListener( "visibilitychange", () => {
     // Procesar cola cuando la página vuelva a ser visible
     setTimeout( () => processSyncQueue(), 1000 );
   }
+} );
+
+// Inicialización
+document.addEventListener( "DOMContentLoaded", function () {
+  console.log( '🚀 Inicializando aplicación...' );
+
+  // 1. Verificar estado de red PRIMERO
+  isOnline = navigator.onLine;
+  setupNetworkListeners();
+
+  // 2. Cargar datos locales
+  loadTasks();
+  loadPermissions();
+
+  // 3. Configurar UI básica
+  renderCalendar();
+  updateProgress();
+  setupEventListeners(); // Ya no duplica funcionalidad
+  setupDragAndDrop();
+  setupTaskTooltips();
+  setupDateInput();
+
+  // 4. Configurar notificaciones
+  initNotifications();
+
+  // 5. Inicializar Firebase solo si hay conexión
+  if ( isOnline ) {
+    initFirebase();
+  } else {
+    currentUser = { isOffline: true };
+    updateUI();
+    hideLoadingScreen();
+  }
+
+  // 6. Configuraciones PWA (SOLO UNA VEZ)
+  setTimeout( () => {
+    // Service Worker messages
+    handleServiceWorkerMessages();
+
+    // Panel de hoy (SOLO UNA VEZ)
+    initializeTodayPanel();
+
+    // PWA features
+    if ( isPWAInstalled() ) {
+      console.log( '🚀 PWA detectada - configurando características específicas' );
+      configurePWAFeatures();
+
+      // Ocultar botón instalación
+      const installButton = document.getElementById( 'install-button' );
+      if ( installButton ) {
+        installButton.style.display = 'none';
+        installButton.classList.add( 'hidden' );
+      }
+    }
+  }, 100 );
+
+  console.log( '✅ Aplicación inicializada correctamente' );
 } );
