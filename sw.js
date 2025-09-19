@@ -1,10 +1,12 @@
-const CACHE_NAME = 'mi-app-cache-v3'; // Incrementa versión para actualizar
+const CACHE_NAME = 'mi-app-cache-v4'; // IMPORTANTE: Incrementar versión para actualizar
 const urlsToCache = [
     '/',
     '/index.html',
     '/app.js',
     '/images/favicon-192.png',
-    '/images/favicon-512.png'
+    '/images/favicon-512.png',
+    '/images/IconLogo.png',    // Tu logo principal para notificaciones
+    '/images/favicon.png'      // Favicon adicional
 ];
 
 // URLs de Firebase que NO deben ser interceptadas
@@ -154,27 +156,37 @@ async function syncPendingData() {
     }
 }
 
-// Manejar notificaciones push
+// NOTIFICACIONES PUSH CON LOGO Y VIBRACIÓN CORRECTOS
 self.addEventListener( 'push', event => {
     const data = event.data ? event.data.json() : {};
+
+    // Configuración mejorada de notificaciones con tu logo
     const options = {
         body: data.body || 'Tienes tareas pendientes',
-        icon: '/images/favicon-192.png',
-        badge: '/images/favicon-192.png',
+        icon: '/images/IconLogo.png',           // TU LOGO PRINCIPAL
+        badge: '/images/favicon-192.png',       // Badge pequeño (esquina superior)
         tag: data.tag || 'task-reminder',
-        requireInteraction: true,
-        vibrate: [ 200, 100, 200 ],
+        requireInteraction: data.requireInteraction || false,
+        vibrate: getVibrationPattern( data.type || 'default' ), // Patrón de vibración dinámico
         renotify: true,
         silent: false,
-        image: '/images/favicon-512.png',
+        image: data.image || '/images/favicon-512.png',  // Imagen grande expandida
         actions: [
-            { action: 'view', title: 'Ver Tareas', icon: '/images/favicon-192.png' },
-            { action: 'close', title: 'Cerrar' }
+            {
+                action: 'view',
+                title: 'Ver Tareas',
+                icon: '/images/favicon-192.png'  // Icono del botón
+            },
+            {
+                action: 'close',
+                title: 'Cerrar'
+            }
         ],
         data: {
             url: data.url || '/',
             timestamp: Date.now(),
-            tag: data.tag
+            tag: data.tag,
+            type: data.type
         }
     };
 
@@ -186,6 +198,20 @@ self.addEventListener( 'push', event => {
     );
 } );
 
+// Función para obtener patrones de vibración según el tipo
+function getVibrationPattern( type ) {
+    const patterns = {
+        'task-start': [ 300, 100, 100, 100, 300 ],    // iniciada
+        'task-reminder': [ 200, 100, 200, 100, 200 ], // Recordatorio
+        'error': [ 400, 200, 400, 200, 400 ],         // Error importante
+        'success': [ 100, 50, 100 ],                  // Éxito suave
+        'urgent': [ 500, 100, 500, 100, 500 ],        // Urgente
+        'default': [ 200, 100, 200 ]                  // Por defecto
+    };
+
+    return patterns[ type ] || patterns[ 'default' ];
+}
+
 // Manejar clicks en notificaciones
 self.addEventListener( 'notificationclick', event => {
     event.notification.close();
@@ -194,36 +220,61 @@ self.addEventListener( 'notificationclick', event => {
         event.waitUntil(
             clients.matchAll( { type: 'window', includeUncontrolled: true } )
                 .then( clientList => {
+                    // Buscar ventana existente
                     for ( let i = 0; i < clientList.length; i++ ) {
                         const client = clientList[ i ];
                         if ( client.url === self.location.origin + '/' && 'focus' in client ) {
                             return client.focus();
                         }
                     }
+                    // Abrir nueva ventana si no existe
                     if ( clients.openWindow ) {
                         return clients.openWindow( event.notification.data.url || '/' );
                     }
                 } )
         );
     }
+
+    // Notificar a la aplicación sobre el click
+    event.waitUntil(
+        clients.matchAll().then( clientList => {
+            clientList.forEach( client => {
+                client.postMessage( {
+                    type: 'NOTIFICATION_CLICKED',
+                    data: event.notification.data
+                } );
+            } );
+        } )
+    );
 } );
 
-// Manejo de mensajes desde la aplicación
+// MANEJO DE MENSAJES DESDE LA APLICACIÓN CON LOGO CORRECTO
 self.addEventListener( 'message', event => {
     const data = event.data;
 
     if ( data && data.type === 'SHOW_NOTIFICATION' ) {
-        const { title, body, tag } = data;
+        const { title, body, tag, requiresAction = false, notificationType = 'default' } = data;
+
         const options = {
             body: body,
-            icon: '/images/favicon-192.png',
-            badge: '/images/favicon-192.png',
+            icon: '/images/IconLogo.png',              // TU LOGO PRINCIPAL
+            badge: '/images/favicon-192.png',          // Badge pequeño
             tag: tag,
-            requireInteraction: true,
-            vibrate: [ 200, 100, 200 ],
-            data: { url: '/' }
+            requireInteraction: requiresAction,
+            vibrate: getVibrationPattern( notificationType ), // Vibración según tipo
+            renotify: true,
+            silent: false,
+            data: {
+                url: '/',
+                timestamp: Date.now(),
+                requiresAction,
+                type: notificationType
+            }
         };
-        self.registration.showNotification( title, options );
+
+        event.waitUntil(
+            self.registration.showNotification( title, options )
+        );
     }
 
     if ( data && data.type === 'REGISTER_SYNC' ) {

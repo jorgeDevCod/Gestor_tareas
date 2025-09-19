@@ -156,7 +156,7 @@ function handleInstallClick() {
 
 let selectedDateForPanel = getTodayString();
 
-function showDesktopNotificationPWA( title, message, tag, requiresAction = false ) {
+function showDesktopNotificationPWA( title, message, tag, requiresAction = false, notificationType = 'default' ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     console.log( '❌ Notificaciones PWA no habilitadas' );
     return false;
@@ -171,30 +171,34 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
   try {
     const options = {
       body: message,
-      icon: '/icon-192x192.png', // Ajusta la ruta a tu icono
-      badge: '/icon-72x72.png',   // Badge pequeño
+      icon: '/images/IconLogo.png',         // TU LOGO PRINCIPAL
+      badge: '/images/favicon-192.png',     // Badge pequeño
       tag: tag || `notification-${Date.now()}`,
       renotify: true,
       requireInteraction: requiresAction,
       silent: false,
-      vibrate: requiresAction ? [ 200, 100, 200 ] : [ 100 ],
+      image: '/images/favicon-512.png',
       data: {
         timestamp: Date.now(),
         tag: tag,
-        requiresAction: requiresAction
+        requiresAction: requiresAction,
+        type: notificationType
       }
     };
 
     // Para PWAs, usar Service Worker si está disponible
     if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-      navigator.serviceWorker.ready.then( registration => {
-        registration.showNotification( title, options );
-        if ( tag ) sentNotifications.add( tag );
-        console.log( '✅ Notificación PWA enviada via Service Worker:', title );
-      } ).catch( error => {
-        console.error( '❌ Error enviando notificación PWA:', error );
-        fallbackToStandardNotification( title, options );
+      navigator.serviceWorker.controller.postMessage( {
+        type: 'SHOW_NOTIFICATION',
+        title: title,
+        body: message,
+        tag: tag,
+        requiresAction: requiresAction,
+        notificationType: notificationType
       } );
+
+      if ( tag ) sentNotifications.add( tag );
+      console.log( '✅ Notificación PWA enviada via Service Worker:', title );
     } else {
       // Fallback a notificación estándar
       fallbackToStandardNotification( title, options );
@@ -209,7 +213,11 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
 
 function fallbackToStandardNotification( title, options ) {
   try {
-    const notification = new Notification( title, options );
+    const notification = new Notification( title, {
+      ...options,
+      icon: '/images/IconLogo.png',        // Asegurar tu logo
+      badge: '/images/favicon-192.png'     // Badge pequeño
+    } );
 
     if ( options.data.tag ) {
       sentNotifications.add( options.data.tag );
@@ -283,7 +291,6 @@ function showInAppNotification( title, message, type = 'info' ) {
     setTimeout( () => notification.remove(), 300 );
   }, 5000 );
 }
-
 
 function fallbackToWebNotification( title, options, tag ) {
   const notification = new Notification( title, options );
@@ -649,7 +656,7 @@ function enqueueSync( operation, dateStr, task ) {
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
-  console.log( '🔄 Iniciando processSyncQueue...', {
+  console.log( 'Iniciando processSyncQueue...', {
     currentUser: !!currentUser,
     isOnline,
     isSyncing,
@@ -776,6 +783,10 @@ async function processSyncQueue() {
     console.log( '🏁 processSyncQueue finalizado, isSyncing = false' );
   }
 }
+
+document.addEventListener( 'DOMContentLoaded', () => {
+  loadTaskLogs(); // Cargar logs junto con las tareas
+} );
 
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
@@ -1382,43 +1393,25 @@ function handleOnline() {
   hideOfflineMessage();
 
   if ( currentUser && currentUser.isOffline ) {
-    // Intentar reconectar con Firebase
-    initFirebase();
-  } else if ( currentUser ) {
-    // Solo para usuarios logueados
-    updateSyncIndicator( "success" );
-    updateOfflineUI();
-
-    // Procesar cola pendiente al reconectar
-    setTimeout( () => {
-      processSyncQueue();
-      syncFromFirebase();
-    }, 1000 );
-
-    showNotification( "Conexión restaurada. Sincronizando...", "success" );
-  }
-}
-
-function handleOnline() {
-  console.log( "🌐 Conexión restaurada" );
-  isOnline = true;
-  hideOfflineMessage();
-
-  if ( currentUser && currentUser.isOffline ) {
-    // Intentar reconectar con Firebase
     initFirebase();
   } else if ( currentUser ) {
     updateSyncIndicator( "success" );
     updateOfflineUI();
 
-    // Procesar cola pendiente al reconectar (delay menor para PWA)
+    // CRÍTICO: Procesar eliminaciones primero, luego sincronizar
     const syncDelay = isPWAMode() ? 500 : 1000;
     setTimeout( () => {
-      processSyncQueue();
-      syncFromFirebase();
+      // Primero procesar la cola (incluye eliminaciones)
+      if ( syncQueue.size > 0 ) {
+        processSyncQueue().then( () => {
+          // Después sincronizar desde Firebase
+          setTimeout( syncFromFirebase, 1000 );
+        } );
+      } else {
+        syncFromFirebase();
+      }
     }, syncDelay );
 
-    // Notificación específica para PWA
     if ( isPWAMode() ) {
       showDesktopNotificationPWA(
         "Conexión restaurada",
@@ -1428,6 +1421,19 @@ function handleOnline() {
     } else {
       showNotification( "Conexión restaurada. Sincronizando...", "success" );
     }
+  }
+}
+
+function handleOffline() {
+  console.log( "📵 Conexión perdida" );
+  isOnline = false;
+  updateOfflineUI();
+
+  // Solo mostrar mensaje offline si hay un usuario activo
+  if ( currentUser && !currentUser.isOffline ) {
+    updateSyncIndicator( "offline" );
+    showOfflineMessage();
+    showNotification( "Trabajando sin conexión. Los cambios se sincronizarán cuando vuelva internet.", "info" );
   }
 }
 
@@ -1458,19 +1464,6 @@ function handleServiceWorkerMessages() {
   }
 }
 
-function handleOffline() {
-  console.log( "📵 Conexión perdida" );
-  isOnline = false;
-  updateOfflineUI();
-
-  // Solo mostrar mensaje offline si hay un usuario activo
-  if ( currentUser && !currentUser.isOffline ) {
-    updateSyncIndicator( "offline" );
-    showOfflineMessage();
-    showNotification( "Trabajando sin conexión. Los cambios se sincronizarán cuando vuelva internet.", "info" );
-  }
-}
-
 function cleanupUIOnLogout() {
   // Limpiar indicadores
   const statusEl = document.getElementById( "firebaseStatus" );
@@ -1496,8 +1489,6 @@ function cleanupUIOnLogout() {
   // Limpiar cola de sync
   syncQueue.clear();
 }
-
-
 
 function updateSyncIndicator( status ) {
   const statusEl = document.getElementById( "firebaseStatus" );
@@ -1745,6 +1736,8 @@ async function syncFromFirebase() {
     }
 
     const remoteTasks = {};
+    const remoteTaskIds = new Set(); // Para tracking de IDs remotos
+
     snapshot.forEach( ( doc ) => {
       const task = doc.data();
       const date = task.date;
@@ -1753,50 +1746,76 @@ async function syncFromFirebase() {
         remoteTasks[ date ] = [];
       }
 
-      remoteTasks[ date ].push( {
+      const taskData = {
         id: task.id,
         title: task.title,
         description: task.description || "",
         time: task.time || "",
         completed: task.completed || false,
-      } );
+        state: task.state || "pending",
+        priority: task.priority || 3,
+      };
+
+      remoteTasks[ date ].push( taskData );
+      remoteTaskIds.add( task.id );
     } );
 
     let tasksAdded = 0;
+    let tasksUpdated = 0;
+
+    // MERGE inteligente: no sobrescribir, sino sincronizar
     Object.keys( remoteTasks ).forEach( ( date ) => {
       if ( !tasks[ date ] ) {
         tasks[ date ] = [];
       }
 
       remoteTasks[ date ].forEach( ( remoteTask ) => {
-        const existsLocally = tasks[ date ].some(
-          ( localTask ) =>
-            localTask.id === remoteTask.id ||
-            ( localTask.title === remoteTask.title &&
-              localTask.time === remoteTask.time )
+        const existingIndex = tasks[ date ].findIndex(
+          ( localTask ) => localTask.id === remoteTask.id
         );
 
-        if ( !existsLocally ) {
-          tasks[ date ].push( remoteTask );
-          tasksAdded++;
+        if ( existingIndex === -1 ) {
+          // Verificar si no es una tarea similar (evitar duplicados)
+          const similarTask = tasks[ date ].find(
+            ( localTask ) =>
+              localTask.title === remoteTask.title &&
+              localTask.time === remoteTask.time &&
+              Math.abs( new Date( localTask.id.split( '-' )[ 0 ] ) - new Date( remoteTask.id.split( '-' )[ 0 ] ) ) < 5000
+          );
+
+          if ( !similarTask ) {
+            tasks[ date ].push( remoteTask );
+            tasksAdded++;
+          }
+        } else {
+          // Actualizar tarea existente solo si es diferente
+          const localTask = tasks[ date ][ existingIndex ];
+          if ( JSON.stringify( localTask ) !== JSON.stringify( remoteTask ) ) {
+            tasks[ date ][ existingIndex ] = { ...localTask, ...remoteTask };
+            tasksUpdated++;
+          }
         }
       } );
     } );
 
-    if ( tasksAdded > 0 ) {
+    if ( tasksAdded > 0 || tasksUpdated > 0 ) {
       saveTasks();
       renderCalendar();
       updateProgress();
-      showNotification( `${tasksAdded} tareas sincronizadas`, "success" );
+
+      const message = [];
+      if ( tasksAdded > 0 ) message.push( `${tasksAdded} nuevas` );
+      if ( tasksUpdated > 0 ) message.push( `${tasksUpdated} actualizadas` );
+
+      showNotification( `Tareas sincronizadas: ${message.join( ', ' )}`, "success" );
     }
 
     updateSyncIndicator( "success" );
 
+    // Reiniciar notificaciones si están habilitadas
     if ( notificationsEnabled && Notification.permission === "granted" ) {
       stopNotificationService();
-      setTimeout( () => {
-        startNotificationService();
-      }, 1000 );
+      setTimeout( startNotificationService, 1000 );
     }
   } catch ( error ) {
     console.error( "Error syncing from Firebase:", error );
@@ -1951,13 +1970,28 @@ function configurePWAFeatures() {
 function initializeTodayPanel() {
   const today = getTodayString();
   const todayDate = new Date();
-  const day = todayDate.getDate();
 
   // Establecer la fecha seleccionada siempre
   selectedDateForPanel = today;
 
-  showDailyTaskPanel( today, day );
+  //Solo mostrar panel automáticamente en desktop Y solo si hay tareas para hoy
+  const todayTasks = tasks[ today ] || [];
+  const isDesktop = window.innerWidth >= 768;
+  const isPWAInstalled = window.matchMedia( '(display-mode: standalone)' ).matches ||
+    window.navigator.standalone === true ||
+    window.location.search.includes( 'pwa=true' );
 
+  // Solo mostrar automáticamente si:
+  // 1. Es desktop (no móvil) Y no es PWA instalada
+  // 2. O si hay tareas pendientes/en progreso para hoy
+  const shouldShowAuto = ( isDesktop && !isPWAInstalled ) ||
+    todayTasks.some( task => task.state !== 'completed' );
+
+  if ( shouldShowAuto ) {
+    showDailyTaskPanel( today, todayDate.getDate() );
+  }
+
+  console.log( `Panel auto-show: ${shouldShowAuto ? 'SI' : 'NO'} (Desktop: ${isDesktop}, PWA: ${isPWAInstalled}, Tareas: ${todayTasks.length})` );
 }
 
 function resetForm() {
@@ -2055,8 +2089,12 @@ function loadTasks() {
   try {
     const storedTasks = localStorage.getItem( "tasks" );
     tasks = storedTasks ? JSON.parse( storedTasks ) : {};
+
+    // También cargar los logs
+    loadTaskLogs();
   } catch ( error ) {
     tasks = {};
+    dailyTaskLogs = {};
     console.warn( "Error loading tasks from localStorage:", error );
   }
 }
@@ -2855,25 +2893,36 @@ function clearDayTasks( dateStr ) {
     return;
   }
 
-  // Eliminar tareas y registros de ese día
+  // CRÍTICO: Enviar eliminaciones a Firebase ANTES de eliminar localmente
+  if ( currentUser && isOnline ) {
+    dayTasks.forEach( ( task ) => {
+      enqueueSync( "delete", dateStr, { id: task.id } );
+    } );
+
+    // Procesar immediatamente las eliminaciones
+    setTimeout( () => {
+      if ( syncQueue.size > 0 ) {
+        processSyncQueue();
+      }
+    }, 100 );
+  }
+
+  // Eliminar datos locales
   delete tasks[ dateStr ];
-  delete dailyTaskLogs[ dateStr ]; // ✅ Esto ya estaba bien
+  delete dailyTaskLogs[ dateStr ];
 
   saveTasks();
+  saveTaskLogs(); // Asegurar que se guarden los logs también
 
   // Refrescar interfaz
   renderCalendar();
   updateProgress();
 
-  // ✅ CORRECCIÓN: Si el panel está abierto para esta fecha, actualizar DESPUÉS de limpiar
+  // Actualizar panel si está abierto para esta fecha
   if ( selectedDateForPanel === dateStr ) {
-    // Actualizar header con lista vacía para refrescar el contador
     updatePanelDateHeader( dateStr, date.getDate(), [] );
-
-    // Actualizar progreso con lista vacía
     updatePanelProgress( [] );
 
-    // Actualizar lista de tareas (mostrar mensaje de "no hay tareas")
     const taskList = document.getElementById( "panelTaskList" );
     if ( taskList ) {
       taskList.innerHTML = `
@@ -3682,21 +3731,50 @@ function deleteTaskWithUndoImproved( dateStr, taskId ) {
     lastDeletedTask = { ...task };
     lastDeletedDate = dateStr;
 
+    // CRÍTICO: Sync ANTES de eliminar localmente
+    if ( currentUser && isOnline ) {
+      enqueueSync( "delete", dateStr, { id: taskId } );
+
+      // Procesar inmediatamente
+      setTimeout( () => {
+        if ( syncQueue.size > 0 ) {
+          processSyncQueue();
+        }
+      }, 100 );
+    }
+
     // Registrar eliminación con ID
     addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
+    // Eliminar localmente
     tasks[ dateStr ] = tasks[ dateStr ].filter( ( t ) => t.id !== taskId );
     if ( tasks[ dateStr ].length === 0 ) {
       delete tasks[ dateStr ];
     }
 
-    // Auto-sync delete
-    enqueueSync( "delete", dateStr, { id: taskId } );
-
     saveTasks();
+    saveTaskLogs(); // Guardar logs actualizados
     renderCalendar();
     updateProgress();
     showUndoNotification();
+  }
+}
+
+function saveTaskLogs() {
+  try {
+    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
+  } catch ( error ) {
+    console.error( "Error saving task logs to localStorage:", error );
+  }
+}
+
+function loadTaskLogs() {
+  try {
+    const storedLogs = localStorage.getItem( "dailyTaskLogs" );
+    dailyTaskLogs = storedLogs ? JSON.parse( storedLogs ) : {};
+  } catch ( error ) {
+    dailyTaskLogs = {};
+    console.warn( "Error loading task logs from localStorage:", error );
   }
 }
 
@@ -3912,7 +3990,7 @@ function requestNotificationPermission() {
 }
 
 function toggleNotifications() {
-  if ( !( "Notification" in window ) ) {
+  if ( !( 'Notification' in window ) ) {
     showNotification( "Este navegador no soporta notificaciones", "error" );
     return;
   }
@@ -3922,6 +4000,10 @@ function toggleNotifications() {
     updateNotificationButton();
 
     if ( notificationsEnabled ) {
+      // Vibración suave al activar
+      if ( 'vibrate' in navigator ) {
+        navigator.vibrate( getVibrationPattern( 'success' ) );
+      }
       startNotificationService();
       showNotification( "Notificaciones activadas", "success" );
     } else {
@@ -3929,7 +4011,7 @@ function toggleNotifications() {
       showNotification( "Notificaciones desactivadas", "info" );
     }
   } else if ( Notification.permission === "default" ) {
-    requestNotificationPermission();
+    requestNotificationPermissionWithVibration();
   } else {
     showNotification(
       "Los permisos de notificación fueron denegados. Actívalos en la configuración del navegador.",
@@ -4059,7 +4141,9 @@ function checkDailyTasksImproved( forceCheck = false ) {
       showDesktopNotificationPWA(
         `⏰ ${task.title}`,
         `${priority.label} en 15 minutos (${task.time})`,
-        reminderKey
+        reminderKey,
+        false,
+        'task-reminder'  // NUEVO: tipo de notificación
       );
       notificationStatus.taskReminders.add( reminderKey );
     }
@@ -4086,7 +4170,8 @@ function checkDailyTasksImproved( forceCheck = false ) {
         `🚀 ${task.title}`,
         `Iniciada automáticamente - ${priority.label}`,
         startKey,
-        true
+        true,
+        'task-start'  // NUEVO: tipo específico con vibración fuerte
       );
 
       showInAppNotification(
@@ -4112,13 +4197,15 @@ function checkDailyTasksImproved( forceCheck = false ) {
       showDesktopNotificationPWA(
         `⚠️ ${task.title}`,
         task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - Retrasada',
-        lateKey
+        lateKey,
+        false,
+        'task-late'  // NUEVO: tipo para tareas retrasadas
       );
       notificationStatus.taskReminders.add( lateKey );
     }
   } );
 
-  // Notificaciones generales del día
+  // Notificaciones generales del día con vibración específica
   const totalPending = pendingTasks.length;
   const totalInProgress = inProgressTasks.length;
   const totalActive = totalPending + totalInProgress;
@@ -4138,7 +4225,9 @@ function checkDailyTasksImproved( forceCheck = false ) {
     showDesktopNotificationPWA(
       'Buenos días',
       `Tienes ${message} para hoy`,
-      'morning'
+      'morning',
+      false,
+      'morning'  // NUEVO: tipo específico
     );
     notificationStatus.morning = true;
   }
@@ -4151,7 +4240,9 @@ function checkDailyTasksImproved( forceCheck = false ) {
     showDesktopNotificationPWA(
       'Mediodía',
       `${totalPending} tarea${totalPending > 1 ? 's' : ''} pendiente${totalPending > 1 ? 's' : ''}`,
-      'midday'
+      'midday',
+      false,
+      'midday'  // NUEVO: tipo específico
     );
     notificationStatus.midday = true;
   }
@@ -4164,11 +4255,14 @@ function checkDailyTasksImproved( forceCheck = false ) {
     showDesktopNotificationPWA(
       'Final del día',
       `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
-      'evening'
+      'evening',
+      false,
+      'evening'  // NUEVO: tipo específico
     );
     notificationStatus.evening = true;
   }
 }
+
 
 // función para limpiar notificaciones cuando se completa una tarea
 function clearTaskNotifications( taskId ) {
