@@ -14,8 +14,6 @@ let currentDate = new Date();
 let notificationsEnabled = false;
 let draggedTask = null;
 let draggedFromDate = null;
-let currentEditingTask = null;
-let currentEditingDate = null;
 let lastDeletedTask = null;
 let lastDeletedDate = null;
 let isOnline = navigator.onLine;
@@ -23,7 +21,6 @@ let currentUser = null;
 let db = null;
 let auth = null;
 let notificationInterval = null;
-let lastNotificationCheck = 0;
 let sentNotifications = new Set();
 let notificationStatus = {
   morning: false,
@@ -31,8 +28,6 @@ let notificationStatus = {
   evening: false,
   taskReminders: new Set(),
 };
-//Sistema de registro de cambios
-let taskChangeLog = JSON.parse( localStorage.getItem( "taskChangeLog" ) ) || [];
 
 // Sistema de sincronización automática optimizada
 let syncQueue = new Map(); // Cola de operaciones pendientes
@@ -40,7 +35,6 @@ let syncTimeout = null; // Timeout para batch sync
 let isSyncing = false; // Flag para evitar múltiples syncs
 let lastSyncTime = 0; // Timestamp del último sync
 const SYNC_DEBOUNCE_TIME = 2000; // 2 segundos de debounce
-const MIN_SYNC_INTERVAL = 5000; // Mínimo 5 segundos entre syncs
 let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
 
 // constantes para estados y prioridades
@@ -160,116 +154,119 @@ function handleInstallClick() {
   } );
 }
 
-
-function registerPWANotifications() {
-  if ( 'serviceWorker' in navigator && 'PushManager' in window ) {
-    navigator.serviceWorker.ready.then( registration => {
-      console.log( 'Service Worker registrado para notificaciones PWA' );
-
-      // Configurar el service worker para manejar notificaciones
-      registration.addEventListener( 'message', event => {
-        if ( event.data && event.data.type === 'TASK_NOTIFICATION' ) {
-          handlePWANotification( event.data );
-        }
-      } );
-    } );
-  }
-}
-
 let selectedDateForPanel = getTodayString();
 
-function showDesktopNotificationPWA( title, body, tag, requireInteraction = false ) {
+function showDesktopNotificationPWA( title, message, tag, requiresAction = false ) {
+  if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
+    console.log( '❌ Notificaciones PWA no habilitadas' );
+    return false;
+  }
+
+  // Evitar notificaciones duplicadas usando tag
+  if ( tag && sentNotifications.has( tag ) ) {
+    console.log( `⚠️ Notificación duplicada evitada: ${tag}` );
+    return false;
+  }
+
   try {
-    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test( navigator.userAgent );
-    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
-      window.navigator.standalone === true;
-
-    // Evitar duplicados
-    if ( sentNotifications.has( tag ) ) {
-      console.log( '⏭️ Notificación duplicada evitada:', tag );
-      return;
-    }
-
-    // Configuración específica para PWA
-    const notificationOptions = {
-      body: body,
-      icon: '/images/favicon-192.png',
-      badge: '/images/favicon-192.png',
-      tag: tag,
-      requireInteraction: isPWA ? true : requireInteraction,
-      silent: false,
-      timestamp: Date.now(),
-      vibrate: isMobile ? [ 200, 100, 200 ] : undefined,
+    const options = {
+      body: message,
+      icon: '/icon-192x192.png', // Ajusta la ruta a tu icono
+      badge: '/icon-72x72.png',   // Badge pequeño
+      tag: tag || `notification-${Date.now()}`,
       renotify: true,
-      image: isPWA ? '/images/favicon-512.png' : undefined,
+      requireInteraction: requiresAction,
+      silent: false,
+      vibrate: requiresAction ? [ 200, 100, 200 ] : [ 100 ],
       data: {
-        url: window.location.origin,
         timestamp: Date.now(),
-        tag: tag
+        tag: tag,
+        requiresAction: requiresAction
       }
     };
 
-    // Para PWA, usar Service Worker si está disponible
-    if ( isPWA && 'serviceWorker' in navigator ) {
+    // Para PWAs, usar Service Worker si está disponible
+    if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
       navigator.serviceWorker.ready.then( registration => {
-        registration.showNotification( title, notificationOptions );
-        console.log( '📱 Notificación PWA enviada:', title );
+        registration.showNotification( title, options );
+        if ( tag ) sentNotifications.add( tag );
+        console.log( '✅ Notificación PWA enviada via Service Worker:', title );
       } ).catch( error => {
-        console.error( 'Error con Service Worker notification:', error );
-        // Fallback a notificación normal
-        fallbackToWebNotification( title, notificationOptions, tag );
+        console.error( '❌ Error enviando notificación PWA:', error );
+        fallbackToStandardNotification( title, options );
       } );
     } else {
-      // Navegador web normal
-      fallbackToWebNotification( title, notificationOptions, tag );
+      // Fallback a notificación estándar
+      fallbackToStandardNotification( title, options );
     }
 
-    // Marcar como enviada
-    sentNotifications.add( tag );
-
-    // Limpiar después de tiempo apropiado
-    setTimeout( () => {
-      sentNotifications.delete( tag );
-    }, isPWA && isMobile ? 2 * 60 * 1000 : 5 * 60 * 1000 );
-
+    return true;
   } catch ( error ) {
-    console.error( '❌ Error enviando notificación PWA:', error );
-    showInAppNotification( title, body );
+    console.error( '❌ Error en showDesktopNotificationPWA:', error );
+    return false;
+  }
+}
+
+function fallbackToStandardNotification( title, options ) {
+  try {
+    const notification = new Notification( title, options );
+
+    if ( options.data.tag ) {
+      sentNotifications.add( options.data.tag );
+    }
+
+    // Auto-cerrar después de 8 segundos si no requiere acción
+    if ( !options.requireInteraction ) {
+      setTimeout( () => {
+        notification.close();
+      }, 8000 );
+    }
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+
+      // Si es notificación de tarea, abrir el panel del día
+      if ( options.data.tag && options.data.tag.includes( '-now' ) ) {
+        const today = getTodayString();
+        const todayDate = new Date();
+        showDailyTaskPanel( today, todayDate.getDate() );
+      }
+    };
+
+    console.log( '✅ Notificación estándar enviada:', title );
+  } catch ( error ) {
+    console.error( '❌ Error en notificación fallback:', error );
   }
 }
 
 // Función auxiliar para notificaciones web fallback
-function showInAppNotification( title, body, type = 'info' ) {
+function showInAppNotification( title, message, type = 'info' ) {
   const notification = document.createElement( 'div' );
-  const typeColors = {
-    info: 'bg-blue-600 border-blue-500',
-    success: 'bg-green-600 border-green-500',
-    warning: 'bg-orange-600 border-orange-500',
-    task: 'bg-indigo-600 border-indigo-500'
+  const typeIcons = {
+    task: 'fa-tasks',
+    success: 'fa-check-circle',
+    warning: 'fa-exclamation-triangle',
+    info: 'fa-info-circle'
   };
 
-  const colorClass = typeColors[ type ] || typeColors.info;
+  const typeColors = {
+    task: 'bg-blue-500',
+    success: 'bg-green-500',
+    warning: 'bg-orange-500',
+    info: 'bg-gray-600'
+  };
 
-  notification.className = `
-    fixed top-4 left-4 right-4 md:left-auto md:right-4 md:w-80
-    ${colorClass} text-white p-4 rounded-lg shadow-2xl border-l-4
-    z-50 transform -translate-y-full transition-all duration-500 ease-out
-  `;
-
+  notification.className = `fixed top-20 right-4 ${typeColors[ type ]} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
   notification.innerHTML = `
-    <div class="flex items-start justify-between">
+    <div class="flex items-start space-x-3">
+      <i class="fas ${typeIcons[ type ]} mt-1 flex-shrink-0"></i>
       <div class="flex-1">
-        <div class="font-semibold text-sm flex items-center">
-          <i class="fas fa-tasks mr-2"></i>
-          ${title}
-        </div>
-        <div class="text-xs mt-1 opacity-90">${body}</div>
-        <div class="text-xs mt-2 opacity-75">
-          ${new Date().toLocaleTimeString( 'es-ES', { hour: '2-digit', minute: '2-digit' } )}
-        </div>
+        <div class="font-semibold text-sm">${title}</div>
+        <div class="text-xs opacity-90 mt-1">${message}</div>
       </div>
-      <button onclick="this.closest('.fixed').remove()" 
-              class="ml-3 text-white hover:text-gray-200 transition-colors">
+      <button onclick="this.parentElement.parentElement.remove()" 
+              class="text-white hover:text-gray-200 ml-2 flex-shrink-0">
         <i class="fas fa-times"></i>
       </button>
     </div>
@@ -278,16 +275,15 @@ function showInAppNotification( title, body, type = 'info' ) {
   document.body.appendChild( notification );
 
   // Animación de entrada
-  setTimeout( () => {
-    notification.classList.remove( '-translate-y-full' );
-  }, 100 );
+  setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
 
-  // Auto-ocultar con animación suave
+  // Auto-remove después de 5 segundos
   setTimeout( () => {
-    notification.classList.add( '-translate-y-full' );
-    setTimeout( () => notification.remove(), 500 );
-  }, 6000 );
+    notification.classList.add( 'translate-x-full' );
+    setTimeout( () => notification.remove(), 300 );
+  }, 5000 );
 }
+
 
 function fallbackToWebNotification( title, options, tag ) {
   const notification = new Notification( title, options );
@@ -370,13 +366,6 @@ function addToChangeLog(
   }
 
   localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
-
-  // Mantener registro global solo para estadísticas (opcional)
-  taskChangeLog.unshift( logEntry );
-  if ( taskChangeLog.length > 200 ) {
-    taskChangeLog = taskChangeLog.slice( 0, 200 );
-  }
-  localStorage.setItem( "taskChangeLog", JSON.stringify( taskChangeLog ) );
 }
 
 function calculateTaskDuration( dateStr, taskId, taskTitle ) {
@@ -581,14 +570,29 @@ function getStateChangeInfo( log ) {
 }
 
 function clearDayChangeLog( dateStr ) {
-  if (
-    confirm( "¿Estás seguro de que quieres limpiar el registro de este día?" )
-  ) {
-    delete dailyTaskLogs[ dateStr ];
-    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
-    showNotification( "Registro del día limpiado", "success" );
-    closeAllModals();
+  if ( !dailyTaskLogs[ dateStr ] || dailyTaskLogs[ dateStr ].length === 0 ) {
+    showNotification( "No hay registros para eliminar", "info" );
+    return;
   }
+
+  if ( !confirm( `¿Eliminar todos los registros de cambios de este día?` ) ) {
+    return;
+  }
+
+  delete dailyTaskLogs[ dateStr ];
+  saveTasks(); // Los logs se guardan junto con las tareas
+
+  // Actualizar header si el panel está abierto
+  if ( selectedDateForPanel === dateStr ) {
+    const date = new Date( dateStr + "T12:00:00" );
+    const dayTasks = tasks[ dateStr ] || [];
+    updatePanelDateHeader( dateStr, date.getDate(), dayTasks );
+  }
+
+  showNotification( "Registros de cambios eliminados", "success" );
+
+  // Cerrar modal de registros si está abierto
+  closeAllModals();
 }
 
 //Encolar operaciones para sync automático
@@ -696,7 +700,7 @@ async function processSyncQueue() {
       .collection( "tasks" );
 
     // Procesar por lotes para evitar límites de Firestore
-    const BATCH_SIZE = 500; // Límite de Firestore
+    const BATCH_SIZE = 150; // Límite de Firestore
     let processedCount = 0;
 
     for ( let i = 0; i < operations.length; i += BATCH_SIZE ) {
@@ -916,72 +920,6 @@ async function syncToFirebase() {
         originalHTML || '<i class="fas fa-sync-alt mr-2"></i>Sincronizar';
     }
   }
-}
-
-// función para mostrar estadísticas de sync (OPCIONAL)
-function showSyncStats() {
-  const totalTasks = Object.values( tasks ).reduce(
-    ( sum, dayTasks ) => sum + dayTasks.length,
-    0
-  );
-  const pendingOps = syncQueue.size;
-  const lastSync = lastSyncTime
-    ? new Date( lastSyncTime ).toLocaleTimeString()
-    : "Nunca";
-
-  const statsModal = document.createElement( "div" );
-  statsModal.className =
-    "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
-  statsModal.innerHTML = `
-        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-semibold text-gray-800">
-                    <i class="fas fa-chart-bar text-blue-500 mr-2"></i>Estadísticas de Sync
-                </h3>
-                <button onclick="this.closest('.fixed').remove()" class="text-gray-500 hover:text-gray-700">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="space-y-3 text-sm">
-                <div class="flex justify-between">
-                    <span>Total de tareas:</span>
-                    <span class="font-medium">${totalTasks}</span>
-                </div>
-                <div class="flex justify-between">
-                    <span>Operaciones pendientes:</span>
-                    <span class="font-medium ${pendingOps > 0 ? "text-orange-600" : "text-green-600"}">${pendingOps}</span>
-                </div>
-                <div class="flex justify-between">
-                    <span>Última sincronización:</span>
-                    <span class="font-medium">${lastSync}</span>
-                </div>
-                <div class="flex justify-between">
-                    <span>Estado de conexión:</span>
-                    <span class="font-medium ${isOnline ? "text-green-600" : "text-red-600"}">
-                        ${isOnline ? "Conectado" : "Desconectado"}
-                    </span>
-                </div>
-                <div class="flex justify-between">
-                    <span>Usuario activo:</span>
-                    <span class="font-medium ${currentUser ? "text-green-600" : "text-red-600"}">
-                        ${currentUser ? "Sí" : "No"}
-                    </span>
-                </div>
-            </div>
-            <div class="mt-6 flex space-x-3">
-                <button onclick="syncToFirebase(); this.closest('.fixed').remove();" 
-                        class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
-                    <i class="fas fa-sync-alt mr-2"></i>Sync Ahora
-                </button>
-                <button onclick="this.closest('.fixed').remove()" 
-                        class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
-                    Cerrar
-                </button>
-            </div>
-        </div>
-    `;
-
-  document.body.appendChild( statsModal );
 }
 
 function exportToExcelOffline() {
@@ -1493,32 +1431,26 @@ function handleOnline() {
   }
 }
 
-// NUEVA FUNCIÓN: Manejar mensajes del Service Worker específicos para Firebase
+// Manejar mensajes del Service Worker específicos para Firebase
 function handleServiceWorkerMessages() {
   if ( 'serviceWorker' in navigator ) {
-    navigator.serviceWorker.addEventListener( 'message', ( event ) => {
-      const { type, data } = event.data || {};
+    navigator.serviceWorker.addEventListener( 'message', event => {
+      const { type, data } = event.data;
 
       switch ( type ) {
-        case 'SYNC_FIREBASE_DATA':
-          console.log( '📨 SW: Solicitud de sync Firebase recibida' );
-          if ( currentUser && !currentUser.isOffline && isOnline ) {
+        case 'NOTIFICATION_CLICKED':
+          // Manejar clics en notificaciones
+          window.focus();
+          if ( data.taskId ) {
+            const today = getTodayString();
+            showDailyTaskPanel( today, new Date().getDate() );
+          }
+          break;
+
+        case 'SYNC_REQUIRED':
+          // El SW solicita sincronización
+          if ( currentUser && isOnline ) {
             processSyncQueue();
-          }
-          break;
-
-        case 'FIREBASE_CONNECTION_STATUS':
-          console.log( '📊 SW: Estado de conexión Firebase:', data );
-          if ( !data.connected && isOnline ) {
-            // Firebase desconectado pero internet disponible
-            window.dispatchEvent( new CustomEvent( 'firebase-connection-lost' ) );
-          }
-          break;
-
-        case 'PWA_SYNC_REQUEST':
-          console.log( '📱 SW: Solicitud de sync PWA' );
-          if ( syncQueue.size > 0 ) {
-            forceSyncNow();
           }
           break;
       }
@@ -1902,11 +1834,16 @@ window.addEventListener( 'appinstalled', () => {
 
 // CONFIGURACIÓN de eventos con botón reset
 function setupEventListeners() {
+  // Verificar que DOM esté listo
+  if ( document.readyState === 'loading' ) {
+    document.addEventListener( 'DOMContentLoaded', setupEventListeners );
+    return;
+  }
+
   const elements = {
     taskForm: addTask,
     prevMonth: () => changeMonth( -1 ),
     nextMonth: () => changeMonth( 1 ),
-    closeModal: closeModal,
     taskRepeat: toggleCustomDays,
     clearWeekBtn: clearWeek,
     clearMonthBtn: clearMonth,
@@ -1921,6 +1858,7 @@ function setupEventListeners() {
     clearAllBtn: clearAll,
   };
 
+  // Configurar event listeners principales
   Object.entries( elements ).forEach( ( [ id, handler ] ) => {
     const element = document.getElementById( id );
     if ( element ) {
@@ -1928,9 +1866,12 @@ function setupEventListeners() {
         element.tagName === 'FORM' ? 'submit' : 'click',
         handler
       );
+    } else {
+      console.warn( `Elemento '${id}' no encontrado` );
     }
   } );
 
+  // Event listeners específicos del panel
   const closePanelBtn = document.getElementById( 'closePanelBtn' );
   const addQuickTaskBtn = document.getElementById( 'addQuickTaskBtn' );
 
@@ -1942,6 +1883,7 @@ function setupEventListeners() {
     addQuickTaskBtn.addEventListener( 'click', addQuickTaskToSelectedDay );
   }
 
+  // Event listeners para repetición de tareas
   const repeatDurationSelect = document.getElementById( 'repeatDuration' );
   const customDaysInputs = document.querySelectorAll( '#customDays input[type="checkbox"]' );
   const taskDateInput = document.getElementById( 'taskDate' );
@@ -1958,21 +1900,23 @@ function setupEventListeners() {
     input.addEventListener( 'change', updateRepeatPreview );
   } );
 
-  // NUEVO: Inicializar PWA después de que DOM esté listo
+  // Inicializar características PWA y otros componentes
   setTimeout( () => {
-    registerPWANotifications();
     initializeTodayPanel();
-
-    // NUEVA: Configurar mensajes del Service Worker
     handleServiceWorkerMessages();
 
-    // NUEVA: Configurar detección de modo PWA
     if ( isPWAMode() ) {
-      console.log( '🚀 PWA detectada - configurando características específicas' );
+      console.log( 'PWA detectada - configurando características específicas' );
       configurePWAFeatures();
     }
-
   }, 100 );
+
+  console.log( 'Event listeners configurados completamente' );
+}
+
+// Fallback para navegadores que ya tienen DOM listo
+if ( document.readyState === 'complete' || document.readyState === 'interactive' ) {
+  setupEventListeners();
 }
 
 // Configurar características específicas de PWA
@@ -2071,8 +2015,37 @@ function resetForm() {
 }
 
 function showLoginModal() {
-  document.getElementById( "loginModal" ).classList.remove( "hidden" );
+  console.log( '🔍 Ejecutando showLoginModal...' );
+
+  // Debug del DOM
+  console.log( '📊 Estado del DOM:', document.readyState );
+  console.log( '📋 Todos los elementos con ID:',
+    Array.from( document.querySelectorAll( '[id]' ) ).map( el => el.id )
+  );
+
+  const loginModal = document.getElementById( "loginModal" );
+  console.log( '🎯 loginModal encontrado:', loginModal );
+
+  if ( !loginModal ) {
+    console.error( "❌ Elemento 'loginModal' no encontrado" );
+    console.log( '🔍 Intentando buscar por clase...' );
+
+    // Búsqueda alternativa
+    const modalByClass = document.querySelector( '.fixed.inset-0.bg-black' );
+    console.log( '🎯 Modal por clase:', modalByClass );
+
+    showNotification( "Error: Modal de login no disponible", "error" );
+    return;
+  }
+
+  console.log( '✅ Modal encontrado, removiendo clase hidden' );
+  console.log( '📝 Clases antes:', loginModal.className );
+
+  loginModal.classList.remove( "hidden" );
+
+  console.log( '📝 Clases después:', loginModal.className );
 }
+
 
 function closeLoginModal() {
   document.getElementById( "loginModal" ).classList.add( "hidden" );
@@ -2633,7 +2606,6 @@ function createPanelTaskElement( task, dateStr ) {
                                     title="Cambiar estado de la tarea">
                                 <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
                                 <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
-                                <option value="paused" ${task.state === "paused" ? "selected" : ""}>⏸ Pausada</option>
                                 <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
                             </select>
                         `
@@ -2879,34 +2851,42 @@ function clearDayTasks( dateStr ) {
     month: "long",
   } );
 
-  if ( !confirm( `¿Estás seguro de que quieres eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
+  if ( !confirm( `¿Seguro que quieres eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
     return;
   }
 
-  // Registrar eliminación masiva
-  dayTasks.forEach( task => {
-    addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
-  } );
-
-  // Guardar para sync
-  const tasksToDelete = [ ...dayTasks ];
-
-  // Eliminar del estado local
+  // Eliminar tareas y registros de ese día
   delete tasks[ dateStr ];
-
-  // Auto-sync: eliminar todas las tareas del día
-  tasksToDelete.forEach( task => {
-    enqueueSync( "delete", dateStr, { id: task.id } );
-  } );
+  delete dailyTaskLogs[ dateStr ]; // ✅ Esto ya estaba bien
 
   saveTasks();
+
+  // Refrescar interfaz
   renderCalendar();
   updateProgress();
 
-  // Cerrar panel
-  closeDailyTaskPanel();
+  // ✅ CORRECCIÓN: Si el panel está abierto para esta fecha, actualizar DESPUÉS de limpiar
+  if ( selectedDateForPanel === dateStr ) {
+    // Actualizar header con lista vacía para refrescar el contador
+    updatePanelDateHeader( dateStr, date.getDate(), [] );
 
-  showNotification( `${tasksToDelete.length} tareas eliminadas del ${formattedDate}`, "success" );
+    // Actualizar progreso con lista vacía
+    updatePanelProgress( [] );
+
+    // Actualizar lista de tareas (mostrar mensaje de "no hay tareas")
+    const taskList = document.getElementById( "panelTaskList" );
+    if ( taskList ) {
+      taskList.innerHTML = `
+        <div class="text-center py-8 text-gray-500">
+          <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+          <p>No hay tareas para este día</p>
+          <p class="text-sm mt-2">¡Todas las tareas fueron eliminadas!</p>
+        </div>
+      `;
+    }
+  }
+
+  showNotification( `${dayTasks.length} tareas eliminadas del ${formattedDate}`, "success" );
 }
 
 function createTaskElement( task, dateStr ) {
@@ -2973,53 +2953,6 @@ function updatePanelProgress( dayTasks ) {
     `;
 }
 
-//toggleTaskFromPanel con sync automático
-function toggleTaskFromPanel( dateStr, taskId ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( task ) {
-    task.completed = !task.completed;
-
-    // Limpiar notificaciones si se completa la tarea
-    if ( task.completed ) {
-      clearTaskNotifications( taskId );
-    }
-
-    saveTasks();
-    renderCalendar();
-    updateProgress();
-
-    // Auto-sync
-    enqueueSync( "upsert", dateStr, task );
-
-    if ( selectedDateForPanel === dateStr ) {
-      const dayTasks = tasks[ dateStr ] || [];
-      updatePanelProgress( dayTasks );
-
-      const taskElement = document.querySelector(
-        `input[onchange="toggleTaskFromPanel('${dateStr}', '${taskId}')"]`
-      );
-      if ( taskElement ) {
-        const container = taskElement.closest( "div.border" );
-        if ( container ) {
-          container.className = container.className.replace(
-            task.completed
-              ? "bg-gray-50 border-gray-200"
-              : "bg-green-50 border-green-200",
-            task.completed
-              ? "bg-green-50 border-green-200"
-              : "bg-gray-50 border-gray-200"
-          );
-
-          const titleElement = container.querySelector( ".font-medium" );
-          if ( titleElement ) {
-            titleElement.className = `font-medium ${task.completed ? "line-through text-green-600" : "text-gray-800"}`;
-          }
-        }
-      }
-    }
-  }
-}
-
 //deleteTaskFromPanel con sync automático
 function deleteTaskFromPanel( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
@@ -3034,54 +2967,6 @@ function deleteTaskFromPanel( dateStr, taskId ) {
       showDailyTaskPanel( dateStr, day );
     }
   }
-}
-
-// Función para cambiar estados de tarea
-function toggleTaskState( dateStr, taskId ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( !task ) return;
-
-  const oldState = task.state || "pending";
-  let newState;
-
-  // Lógica especial para pausar/reanudar
-  if ( oldState === "inProgress" ) {
-    newState = "paused";
-  } else if ( oldState === "paused" ) {
-    // Si está pausada, vuelve a proceso
-    newState = "inProgress";
-  } else {
-    // Flujo normal: pendiente -> proceso -> completada
-    const stateOrder = [ "pending", "inProgress", "completed" ];
-    const currentIndex = stateOrder.indexOf( oldState );
-    const nextIndex = ( currentIndex + 1 ) % stateOrder.length;
-    newState = stateOrder[ nextIndex ];
-  }
-
-  task.state = newState;
-  task.completed = task.state === "completed";
-
-  // Registrar cambio
-  addToChangeLog( "stateChanged", task.title, dateStr, oldState, newState );
-
-  // Limpiar notificaciones si se completa
-  if ( task.state === "completed" ) {
-    clearTaskNotifications( taskId );
-  }
-
-  saveTasks();
-  renderCalendar();
-  updateProgress();
-  enqueueSync( "upsert", dateStr, task );
-
-  // Actualizar panel si está abierto
-  if ( selectedDateForPanel === dateStr ) {
-    const day = new Date( dateStr + "T12:00:00" ).getDate();
-    showDailyTaskPanel( dateStr, day );
-  }
-
-  const stateInfo = TASK_STATES[ task.state ];
-  showNotification( `Tarea cambiada a: ${stateInfo.label}`, "success" );
 }
 
 // Modal de edición avanzada
@@ -3727,7 +3612,7 @@ function handleDrop( e ) {
   } );
 }
 
-// 5. ACTUALIZAR función handleDragStart para mostrar indicador visual de restricción
+// función handleDragStart para mostrar indicador visual de restricción
 function handleDragStart( e ) {
   if ( e.target.classList.contains( "task-item" ) ) {
     e.stopPropagation();
@@ -3784,28 +3669,6 @@ function moveTask( fromDate, toDate, taskId ) {
     // Auto-sync: eliminar de fecha origen y agregar a fecha destino
     enqueueSync( "delete", fromDate, { id: taskId } );
     enqueueSync( "upsert", toDate, task );
-  }
-}
-
-function closeModal() {
-  const modal = document.getElementById( "taskModal" );
-  if ( modal ) {
-    modal.classList.add( "opacity-0" );
-    modal.querySelector( "#modal-content-wrapper" ).classList.add( "scale-95" );
-    setTimeout( () => modal.classList.add( "hidden" ), 300 );
-  }
-}
-
-function toggleTask( dateStr, taskId ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( task ) {
-    task.completed = !task.completed;
-    saveTasks();
-    renderCalendar();
-    updateProgress();
-
-    // Auto-sync
-    enqueueSync( "upsert", dateStr, task );
   }
 }
 
@@ -4086,11 +3949,6 @@ function startNotificationService() {
     return;
   }
 
-  console.log( "Iniciando servicio de notificaciones mejorado" );
-
-  // Reset de estado diario a las 00:01
-  resetDailyNotificationStatus();
-
   // Verificación inmediata
   setTimeout( () => {
     try {
@@ -4125,22 +3983,6 @@ function startNotificationService() {
   ); // 5 minutos
 }
 
-// función mejorada para reset diario
-function resetDailyNotificationStatus() {
-  const now = new Date();
-  if ( now.getHours() === 0 && now.getMinutes() <= 1 ) {
-    notificationStatus = {
-      morning: false,
-      midday: false,
-      evening: false,
-      taskReminders: new Set(),
-    };
-    checkDailyTasksImproved;
-    sentNotifications.clear();
-    console.log( "🔄 Estado de notificaciones diarias reseteado" );
-  }
-}
-
 function stopNotificationService() {
   if ( notificationInterval ) {
     clearInterval( notificationInterval );
@@ -4172,7 +4014,6 @@ function updateNotificationButton() {
   }
 }
 
-
 function checkDailyTasksImproved( forceCheck = false ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     return;
@@ -4187,9 +4028,19 @@ function checkDailyTasksImproved( forceCheck = false ) {
   const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
   const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
 
-  resetDailyNotificationStatus();
+  // Reset diario - SOLO cuando cambia el día
+  const todayKey = `${today}-reset`;
+  if ( !sentNotifications.has( todayKey ) && currentHour === 0 && currentMinute <= 1 ) {
+    notificationStatus.morning = false;
+    notificationStatus.midday = false;
+    notificationStatus.evening = false;
+    notificationStatus.taskReminders.clear();
+    sentNotifications.clear();
+    sentNotifications.add( todayKey );
+    console.log( '🔄 Notificaciones reseteadas para nuevo día' );
+  }
 
-  // Notificaciones de tareas con hora específica
+  // Procesar notificaciones de tareas con hora
   todayTasks.forEach( task => {
     if ( !task.time || task.state === 'completed' ) return;
 
@@ -4197,47 +4048,85 @@ function checkDailyTasksImproved( forceCheck = false ) {
     const taskTime = taskHours * 60 + taskMinutes;
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-    // Notificación de inicio - cambiar automáticamente a "en proceso"
-    const nowKey = `${task.id}-now`;
-    if ( !notificationStatus.taskReminders.has( nowKey ) &&
+    // 15 minutos antes
+    const reminderKey = `${task.id}-15min`;
+    if ( !notificationStatus.taskReminders.has( reminderKey ) &&
+      currentTimeInMinutes >= taskTime - 15 &&
+      currentTimeInMinutes <= taskTime - 13 &&
+      task.state === 'pending' ) {
+
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+      showDesktopNotificationPWA(
+        `⏰ ${task.title}`,
+        `${priority.label} en 15 minutos (${task.time})`,
+        reminderKey
+      );
+      notificationStatus.taskReminders.add( reminderKey );
+    }
+
+    // Hora exacta - auto inicio
+    const startKey = `${task.id}-start`;
+    if ( !notificationStatus.taskReminders.has( startKey ) &&
       currentTimeInMinutes >= taskTime &&
       currentTimeInMinutes <= taskTime + 2 &&
       task.state === 'pending' ) {
 
-      // Cambiar estado a "en proceso" automáticamente
+      // Cambiar estado automáticamente
       task.state = 'inProgress';
       task.completed = false;
+
+      addToChangeLog( 'autoStarted', task.title, today, 'pending', 'inProgress', task.id );
       saveTasks();
       renderCalendar();
+      updateProgress();
       enqueueSync( 'upsert', today, task );
 
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-
-      // Usar la nueva función PWA
       showDesktopNotificationPWA(
-        `🚀 Iniciando: ${task.title}`,
-        `Tarea ${priority.label.toLowerCase()} comenzó. Estado: En Proceso`,
-        nowKey,
+        `🚀 ${task.title}`,
+        `Iniciada automáticamente - ${priority.label}`,
+        startKey,
         true
       );
-      notificationStatus.taskReminders.add( nowKey );
 
-      // Mostrar también notificación in-app para mayor visibilidad
       showInAppNotification(
-        `🚀 Tarea Iniciada`,
-        `${task.title} - ${priority.label}`,
+        'Tarea Iniciada',
+        `${task.title} cambió a "En Proceso"`,
         'task'
       );
+
+      notificationStatus.taskReminders.add( startKey );
+
+      // Actualizar panel si está visible
+      if ( selectedDateForPanel === today ) {
+        showDailyTaskPanel( today, new Date( today + "T12:00:00" ).getDate() );
+      }
+    }
+
+    // Tarea retrasada (30min después)
+    const lateKey = `${task.id}-late`;
+    if ( !notificationStatus.taskReminders.has( lateKey ) &&
+      currentTimeInMinutes >= taskTime + 30 &&
+      task.state !== 'completed' ) {
+
+      showDesktopNotificationPWA(
+        `⚠️ ${task.title}`,
+        task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - Retrasada',
+        lateKey
+      );
+      notificationStatus.taskReminders.add( lateKey );
     }
   } );
 
-  // Notificaciones generales matutinas
+  // Notificaciones generales del día
   const totalPending = pendingTasks.length;
   const totalInProgress = inProgressTasks.length;
+  const totalActive = totalPending + totalInProgress;
 
+  // Buenos días (9:00-9:30)
   if ( !notificationStatus.morning &&
     currentHour === 9 && currentMinute <= 30 &&
-    ( totalPending > 0 || totalInProgress > 0 ) ) {
+    totalActive > 0 ) {
 
     let message = '';
     if ( totalPending > 0 ) message += `${totalPending} pendiente${totalPending > 1 ? 's' : ''}`;
@@ -4247,36 +4136,52 @@ function checkDailyTasksImproved( forceCheck = false ) {
     }
 
     showDesktopNotificationPWA(
-      '¡Buenos días! 🌅',
+      'Buenos días',
       `Tienes ${message} para hoy`,
-      'morning-reminder'
+      'morning'
     );
     notificationStatus.morning = true;
+  }
+
+  // Mediodía (12:00-12:30)
+  if ( !notificationStatus.midday &&
+    currentHour === 12 && currentMinute <= 30 &&
+    totalPending > 0 ) {
+
+    showDesktopNotificationPWA(
+      'Mediodía',
+      `${totalPending} tarea${totalPending > 1 ? 's' : ''} pendiente${totalPending > 1 ? 's' : ''}`,
+      'midday'
+    );
+    notificationStatus.midday = true;
+  }
+
+  // Final del día (18:00-18:30)
+  if ( !notificationStatus.evening &&
+    currentHour === 18 && currentMinute <= 30 &&
+    totalActive > 0 ) {
+
+    showDesktopNotificationPWA(
+      'Final del día',
+      `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
+      'evening'
+    );
+    notificationStatus.evening = true;
   }
 }
 
 // función para limpiar notificaciones cuando se completa una tarea
 function clearTaskNotifications( taskId ) {
   const keysToRemove = [
-    `${taskId}-reminder-15`,
-    `${taskId}-now`,
-    `${taskId}-late`,
+    `${taskId}-15min`,
+    `${taskId}-start`,
+    `${taskId}-late`
   ];
 
-  keysToRemove.forEach( ( key ) => {
+  keysToRemove.forEach( key => {
     notificationStatus.taskReminders.delete( key );
+    sentNotifications.delete( key );
   } );
-}
-
-function getFaviconAsDataUrl() {
-  const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-            <rect width="64" height="64" rx="12" fill="#3B82F6"/>
-            <path d="M20 32l8 8 16-16" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <circle cx="48" cy="16" r="6" fill="#EF4444"/>
-        </svg>
-    `;
-  return `data:image/svg+xml;base64,${btoa( svg )}`;
 }
 
 function showNotification( message, type = "success" ) {
