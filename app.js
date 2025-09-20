@@ -3995,17 +3995,28 @@ function exportToExcel() {
     return;
   }
 
+  // Verificar si hay tareas en el calendario
+  const hasTasks = Object.keys( tasks ).some( date => tasks[ date ] && tasks[ date ].length > 0 );
+
+  if ( !hasTasks ) {
+    showNotification( "No hay tareas para exportar", "info" );
+    return;
+  }
+
   const wb = XLSX.utils.book_new();
-  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Completada" ] ];
+  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Estado", "Prioridad" ] ];
 
   Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
-    dayTasks.forEach( ( task ) => {
+    dayTasks.forEach( task => {
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+      const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
       data.push( [
         date,
         task.title,
         task.description || "",
         task.time || "",
-        task.completed ? "Sí" : "No",
+        state.label,
+        priority.label
       ] );
     } );
   } );
@@ -4014,7 +4025,7 @@ function exportToExcel() {
   XLSX.utils.book_append_sheet( wb, ws, "Tareas" );
   XLSX.writeFile( wb, `tareas_${getTodayString()}.xlsx` );
 
-  showNotification( "Excel exportado exitosamente" );
+  showNotification( "Excel exportado exitosamente", "success" );
 }
 
 function toggleNotifications() {
