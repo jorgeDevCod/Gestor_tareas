@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-app-cache-v8';
+const CACHE_NAME = 'TaskSmart-cache-v1';
 const urlsToCache = [
     '/',
     '/index.html',
