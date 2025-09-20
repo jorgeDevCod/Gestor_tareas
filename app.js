@@ -173,7 +173,7 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
 
   const options = {
     body: message,
-    icon: '/images/IconLogo.png',         // CORREGIDO: Logo principal
+    icon: '/images/IconLogo.png',  
     badge: '/images/favicon-192.png',
     tag: tag || `notification-${Date.now()}`,
     renotify: true,

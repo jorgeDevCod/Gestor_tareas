@@ -157,36 +157,40 @@ async function syncPendingData() {
 
 // Manejar notificaciones push
 self.addEventListener( 'push', event => {
-    const data = event.data ? event.data.json() : {};
+    if ( !event.data ) {
+        console.log( "SW: Push sin datos, no se muestra notificación." );
+        return;
+    }
+
+    const data = event.data.json();
+
+    // Validar que venga al menos un título o body
+    if ( !data.title && !data.body ) {
+        console.log( "SW: Push sin título ni cuerpo, notificación ignorada." );
+        return;
+    }
+
     const options = {
-        body: data.body || 'Tienes tareas pendientes',
-        icon: '/images/IconLogo.png',        // CORREGIDO: Logo principal
-        badge: '/images/favicon-192.png',     // Badge pequeño
-        tag: data.tag || 'task-reminder',
+        body: data.body,
+        icon: '/images/IconLogo.png',
+        badge: '/images/favicon-192.png',
+        tag: data.tag || `task-${Date.now()}`,
         requireInteraction: data.requiresAction || false,
         vibrate: getVibrationPattern( data.notificationType || 'default' ),
         renotify: true,
         silent: false,
-        image: data.notificationType === 'task-start' ? '/images/favicon-512.png' : undefined,
-        actions: [
-            { action: 'view', title: 'Ver Tareas', icon: '/images/favicon-192.png' },
-            { action: 'close', title: 'Cerrar' }
-        ],
         data: {
             url: data.url || '/',
             timestamp: Date.now(),
-            tag: data.tag,
             taskId: data.taskId
         }
     };
 
     event.waitUntil(
-        self.registration.showNotification(
-            data.title || 'Recordatorio de Tarea',
-            options
-        )
+        self.registration.showNotification( data.title, options )
     );
 } );
+
 
 function getVibrationPattern( type ) {
     const patterns = {
