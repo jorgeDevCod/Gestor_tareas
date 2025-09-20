@@ -173,7 +173,7 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
 
   const options = {
     body: message,
-    icon: '/images/IconLogo.png',  
+    icon: '/images/IconLogo.png',
     badge: '/images/favicon-192.png',
     tag: tag || `notification-${Date.now()}`,
     renotify: true,
@@ -2898,13 +2898,14 @@ function clearDayTasks( dateStr ) {
     return;
   }
 
-  // CRÍTICO: Enviar eliminaciones a Firebase ANTES de eliminar localmente
+  // CRÍTICO: Enviar eliminaciones a Firebase ANTES de eliminar localmente (sin cambios)
   if ( currentUser && isOnline ) {
     dayTasks.forEach( ( task ) => {
       enqueueSync( "delete", dateStr, { id: task.id } );
+      clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones pendientes para cada tarea
     } );
 
-    // Procesar immediatamente las eliminaciones
+    // Procesar inmediatamente las eliminaciones (sin cambios)
     setTimeout( () => {
       if ( syncQueue.size > 0 ) {
         processSyncQueue();
@@ -2912,33 +2913,32 @@ function clearDayTasks( dateStr ) {
     }, 100 );
   }
 
-  // Eliminar datos locales
+  // Eliminar datos locales (sin cambios)
   delete tasks[ dateStr ];
   delete dailyTaskLogs[ dateStr ];
 
   saveTasks();
   saveTaskLogs(); // Asegurar que se guarden los logs también
 
-  // Refrescar interfaz
+  // Refrescar interfaz (sin cambios)
   renderCalendar();
   updateProgress();
 
-  // Actualizar panel si está abierto para esta fecha
-  if ( selectedDateForPanel === dateStr ) {
-    updatePanelDateHeader( dateStr, date.getDate(), [] );
-    updatePanelProgress( [] );
+  // ACTUALIZADO: Siempre cerrar panel si es el día del panel (ya que se limpió todo)
+  updatePanelDateHeader( dateStr, date.getDate(), [] );
+  updatePanelProgress( [] );
 
-    const taskList = document.getElementById( "panelTaskList" );
-    if ( taskList ) {
-      taskList.innerHTML = `
-        <div class="text-center py-8 text-gray-500">
-          <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
-          <p>No hay tareas para este día</p>
-          <p class="text-sm mt-2">¡Todas las tareas fueron eliminadas!</p>
-        </div>
-      `;
-    }
+  const taskList = document.getElementById( "panelTaskList" );
+  if ( taskList ) {
+    taskList.innerHTML = `
+      <div class="text-center py-8 text-gray-500">
+        <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+        <p>No hay tareas para este día</p>
+        <p class="text-sm mt-2">¡Todas las tareas del día fueron eliminadas!</p>
+      </div>
+    `;
   }
+  closeDailyTaskPanel(); // NUEVO: Cerrar panel después de limpiar el día
 
   showNotification( `${dayTasks.length} tareas eliminadas del ${formattedDate}`, "success" );
 }
@@ -3726,7 +3726,7 @@ function moveTask( fromDate, toDate, taskId ) {
   }
 }
 
-//deleteTaskWithUndoImprovedcon sync automático
+//sync automático
 function deleteTaskWithUndoImproved( dateStr, taskId ) {
   const dayTasks = tasks[ dateStr ];
   const taskIndex = dayTasks?.findIndex( ( t ) => t.id === taskId );
@@ -3736,11 +3736,11 @@ function deleteTaskWithUndoImproved( dateStr, taskId ) {
     lastDeletedTask = { ...task };
     lastDeletedDate = dateStr;
 
-    // CRÍTICO: Sync ANTES de eliminar localmente
+    // CRÍTICO: Sync ANTES de eliminar localmente (sin cambios)
     if ( currentUser && isOnline ) {
       enqueueSync( "delete", dateStr, { id: taskId } );
 
-      // Procesar inmediatamente
+      // Procesar inmediatamente (sin cambios)
       setTimeout( () => {
         if ( syncQueue.size > 0 ) {
           processSyncQueue();
@@ -3748,10 +3748,13 @@ function deleteTaskWithUndoImproved( dateStr, taskId ) {
       }, 100 );
     }
 
-    // Registrar eliminación con ID
+    // Registrar eliminación con ID (sin cambios)
     addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
-    // Eliminar localmente
+    // NUEVO: Limpiar notificaciones pendientes para esta tarea específica
+    clearTaskNotifications( taskId );
+
+    // Eliminar localmente (sin cambios)
     tasks[ dateStr ] = tasks[ dateStr ].filter( ( t ) => t.id !== taskId );
     if ( tasks[ dateStr ].length === 0 ) {
       delete tasks[ dateStr ];
@@ -3843,8 +3846,10 @@ function clearWeek() {
   const today = new Date();
   const startOfWeek = new Date( today );
   startOfWeek.setDate( today.getDate() - today.getDay() );
+  const endOfWeek = new Date( startOfWeek );
+  endOfWeek.setDate( startOfWeek.getDate() + 6 );
 
-  const deletedTasks = [];
+  const deletedTasks = []; // NUEVO: Para recopilar taskIds y limpiar notificaciones
 
   for ( let i = 0; i < 7; i++ ) {
     const date = new Date( startOfWeek );
@@ -3852,15 +3857,16 @@ function clearWeek() {
     const dateStr = date.toISOString().split( "T" )[ 0 ];
 
     if ( tasks[ dateStr ] ) {
-      // Guardar tareas para sync
+      // Guardar tareas para sync y notificaciones
       tasks[ dateStr ].forEach( ( task ) => {
         deletedTasks.push( { dateStr, taskId: task.id } );
+        clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones pendientes para esta tarea
       } );
       delete tasks[ dateStr ];
     }
   }
 
-  // Auto-sync batch delete
+  // Auto-sync batch delete (sin cambios)
   deletedTasks.forEach( ( { dateStr, taskId } ) => {
     enqueueSync( "delete", dateStr, { id: taskId } );
   } );
@@ -3869,6 +3875,26 @@ function clearWeek() {
   renderCalendar();
   updateProgress();
   showNotification( "Semana limpiada exitosamente" );
+
+  // NUEVO: Verificar si el panel está abierto y afectado, actualizar y cerrar
+  if ( selectedDateForPanel ) {
+    const panelDate = new Date( selectedDateForPanel + "T00:00:00" );
+    if ( panelDate >= startOfWeek && panelDate <= endOfWeek ) {
+      // Actualizar panel a vacío (opcional, pero para consistencia)
+      const taskList = document.getElementById( "panelTaskList" );
+      if ( taskList ) {
+        taskList.innerHTML = `
+          <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+            <p>No hay tareas para este día</p>
+            <p class="text-sm mt-2">¡Todas las tareas de la semana fueron eliminadas!</p>
+          </div>
+        `;
+      }
+      updatePanelProgress( [] );
+      closeDailyTaskPanel(); // Cerrar panel
+    }
+  }
 }
 
 //clearMonth con sync automático optimizado
@@ -3882,20 +3908,21 @@ function clearMonth() {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const deletedTasks = [];
+  const deletedTasks = []; // NUEVO: Para recopilar taskIds y limpiar notificaciones
 
   Object.keys( tasks ).forEach( ( dateStr ) => {
     const date = new Date( dateStr + "T12:00:00" );
     if ( date.getFullYear() === year && date.getMonth() === month ) {
-      // Guardar tareas para sync
+      // Guardar tareas para sync y notificaciones
       tasks[ dateStr ].forEach( ( task ) => {
         deletedTasks.push( { dateStr, taskId: task.id } );
+        clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones pendientes para esta tarea
       } );
       delete tasks[ dateStr ];
     }
   } );
 
-  // Auto-sync batch delete
+  // Auto-sync batch delete (sin cambios)
   deletedTasks.forEach( ( { dateStr, taskId } ) => {
     enqueueSync( "delete", dateStr, { id: taskId } );
   } );
@@ -3904,6 +3931,26 @@ function clearMonth() {
   renderCalendar();
   updateProgress();
   showNotification( "Mes limpiado exitosamente" );
+
+  // NUEVO: Verificar si el panel está abierto y afectado (mismo mes/año), actualizar y cerrar
+  if ( selectedDateForPanel ) {
+    const panelDate = new Date( selectedDateForPanel + "T12:00:00" );
+    if ( panelDate.getFullYear() === year && panelDate.getMonth() === month ) {
+      // Actualizar panel a vacío (opcional)
+      const taskList = document.getElementById( "panelTaskList" );
+      if ( taskList ) {
+        taskList.innerHTML = `
+          <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
+            <p>No hay tareas para este día</p>
+            <p class="text-sm mt-2">¡Todas las tareas del mes fueron eliminadas!</p>
+          </div>
+        `;
+      }
+      updatePanelProgress( [] );
+      closeDailyTaskPanel(); // Cerrar panel
+    }
+  }
 }
 
 function updateProgress() {
@@ -4377,12 +4424,13 @@ function clearAll() {
     return;
   }
 
-  const deletedTasks = [];
+  const deletedTasks = []; // NUEVO: Para recopilar taskIds y limpiar notificaciones
 
-  // Recopilar todas las tareas para sync
+  // Recopilar todas las tareas para sync y notificaciones
   Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
     dayTasks.forEach( ( task ) => {
       deletedTasks.push( { dateStr, taskId: task.id } );
+      clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones para cada tarea
     } );
   } );
 
@@ -4390,10 +4438,16 @@ function clearAll() {
   saveTasks();
   renderCalendar();
   updateProgress();
-  closeDailyTaskPanel();
+  closeDailyTaskPanel(); // Ya existía, pero ahora asegura cierre si abierto
 
+  // NUEVO: Limpiar todos los estados de notificaciones globales
+  notificationStatus.taskReminders.clear();
+  notificationStatus.morning = false;
+  notificationStatus.midday = false;
+  notificationStatus.evening = false;
+  sentNotifications.clear();
 
-  // Auto-sync batch delete
+  // Auto-sync batch delete (sin cambios)
   deletedTasks.forEach( ( { dateStr, taskId } ) => {
     enqueueSync( "delete", dateStr, { id: taskId } );
   } );
