@@ -1,4 +1,4 @@
-const CACHE_NAME = 'TaskSmart-cache-v3';
+const CACHE_NAME = 'TaskSmart-cache-v3.1';
 const urlsToCache = [
     '/',
     '/index.html',
