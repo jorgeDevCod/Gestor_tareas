@@ -229,13 +229,14 @@ self.addEventListener( 'notificationclick', event => {
 } );
 
 // Manejo de mensajes desde la aplicación
+// Manejo de mensajes desde la aplicación
 self.addEventListener( 'message', event => {
     const data = event.data;
 
     if ( data && data.type === 'SHOW_NOTIFICATION' ) {
         const options = {
             body: data.body,
-            icon: '/images/IconLogo.png',        // CORREGIDO
+            icon: '/images/IconLogo.png',
             badge: '/images/favicon-192.png',
             tag: data.tag,
             requireInteraction: data.requiresAction || false,
@@ -250,9 +251,63 @@ self.addEventListener( 'message', event => {
         self.registration.showNotification( data.title, options );
     }
 
+    // NUEVO: Manejar solicitudes de verificación de notificaciones
+    if ( data && data.type === 'CHECK_NOTIFICATIONS' ) {
+        // El cliente está pidiendo que verifiquemos notificaciones pendientes
+        const tasks = data.tasks || [];
+        const now = new Date();
+
+        tasks.forEach( task => {
+            if ( task.time && task.state !== 'completed' ) {
+                const [ hours, minutes ] = task.time.split( ':' ).map( Number );
+                const taskTimeInMinutes = hours * 60 + minutes;
+                const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
+
+                // Verificar si es hora de notificar (15 minutos antes)
+                if ( currentTimeInMinutes >= taskTimeInMinutes - 15 &&
+                    currentTimeInMinutes <= taskTimeInMinutes - 13 &&
+                    task.state === 'pending' ) {
+
+                    const priority = {
+                        1: 'Muy Importante',
+                        2: 'Importante',
+                        3: 'Moderado',
+                        4: 'No Prioritario'
+                    }[ task.priority ] || 'Moderado';
+
+                    self.registration.showNotification( `⏰ ${task.title}`, {
+                        body: `${priority} en 15 minutos (${task.time})`,
+                        icon: '/images/IconLogo.png',
+                        badge: '/images/favicon-192.png',
+                        tag: `${task.id}-15min`,
+                        vibrate: getVibrationPattern( 'task-reminder' ),
+                        data: {
+                            taskId: task.id,
+                            timestamp: Date.now()
+                        }
+                    } );
+                }
+            }
+        } );
+    }
+
+    // NUEVO: Manejar notificaciones periódicas incluso con app cerrada
+    if ( data && data.type === 'PERIODIC_CHECK' ) {
+        // Mantener notificaciones activas aunque la app esté cerrada
+        console.log( 'SW: Verificación periódica de notificaciones recibida' );
+
+        // Registrar sincronización en background
+        if ( 'sync' in self.registration ) {
+            self.registration.sync.register( 'check-notifications' )
+                .catch( err => console.error( 'SW: Error registrando sync:', err ) );
+        }
+    }
+
     if ( data && data.type === 'REGISTER_SYNC' ) {
-        self.registration.sync.register( 'sync-firebase-data' )
-            .catch( err => console.error( 'SW: Error registrando sincronización:', err ) );
+        if ( 'sync' in self.registration ) {
+            self.registration.sync.register( 'sync-firebase-data' )
+                .catch( err => console.error( 'SW: Error registrando sincronización:', err ) );
+        }
     }
 
     if ( data && data.type === 'PING' ) {
@@ -262,3 +317,38 @@ self.addEventListener( 'message', event => {
         } );
     }
 } );
+
+// NUEVO: Sincronización periódica en background para notificaciones
+self.addEventListener( 'sync', event => {
+    if ( event.tag === 'sync-firebase-data' ) {
+        event.waitUntil( syncPendingData() );
+    }
+
+    // NUEVO: Verificar notificaciones incluso con app cerrada
+    if ( event.tag === 'check-notifications' ) {
+        console.log( 'SW: Ejecutando verificación de notificaciones en background' );
+        event.waitUntil(
+            self.clients.matchAll().then( clients => {
+                // Si hay clientes activos, pedirles que verifiquen
+                clients.forEach( client => {
+                    client.postMessage( {
+                        type: 'BACKGROUND_NOTIFICATION_CHECK',
+                        timestamp: Date.now()
+                    } );
+                } );
+            } ).catch( err => {
+                console.error( 'SW: Error en background sync:', err );
+            } )
+        );
+    }
+} );
+
+// NUEVO: Despertar periódicamente (cada 10 minutos si es posible)
+setInterval( () => {
+    if ( 'sync' in self.registration ) {
+        self.registration.sync.register( 'check-notifications' )
+            .catch( err => console.warn( 'SW: No se pudo registrar sync periódico:', err ) );
+    }
+}, 10 * 60 * 1000 );
+
+console.log( '✅ Service Worker actualizado - Notificaciones en background activas' );

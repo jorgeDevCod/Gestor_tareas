@@ -1392,6 +1392,15 @@ function setupNetworkListeners() {
   window.addEventListener( "online", handleOnline );
   window.addEventListener( "offline", handleOffline );
 
+  // NUEVO: Cuando la PWA vuelve del background, verificar notificaciones
+  document.addEventListener( 'visibilitychange', () => {
+    if ( !document.hidden && notificationsEnabled && Notification.permission === 'granted' ) {
+      console.log( '📱 PWA volvió del background - sincronizando notificaciones' );
+      checkDailyTasksImproved( true );
+      sendTasksToServiceWorker();
+    }
+  } );
+
   // Verificación adicional cada 30 segundos
   setInterval( () => {
     const actuallyOnline = navigator.onLine;
@@ -4126,11 +4135,14 @@ function startNotificationService() {
     }
   }, 1000 );
 
-  // Intervalo más frecuente pero inteligente (cada 30 segundos)
+  // Intervalo cada 10 segundos + enviar info al SW
   notificationInterval = setInterval( () => {
     try {
       if ( notificationsEnabled && Notification.permission === "granted" ) {
         checkDailyTasksImproved();
+
+        // NUEVO: Mantener SW actualizado con tareas
+        sendTasksToServiceWorker();
       } else {
         console.log( "⚠️ Notificaciones deshabilitadas en intervalo" );
         stopNotificationService();
@@ -4138,7 +4150,7 @@ function startNotificationService() {
     } catch ( error ) {
       console.error( "Error en intervalo de notificaciones:", error );
     }
-  }, 30000 ); // 30 segundos
+  }, 10000 ); // 10 segundos
 
   // Verificación adicional cada 5 minutos para mayor seguridad
   setInterval(
@@ -4150,6 +4162,17 @@ function startNotificationService() {
     5 * 60 * 1000
   ); // 5 minutos
 }
+
+// Función para revisar notificaciones cuando la PWA vuelve del background
+function onPageVisibilityChange() {
+  if ( !document.hidden && notificationsEnabled && Notification.permission === "granted" ) {
+    console.log( "📱 PWA volvió del background - revisando notificaciones" );
+    checkDailyTasksImproved( true );
+  }
+}
+
+// Escuchar cuando la PWA vuelve del background
+document.addEventListener( "visibilitychange", onPageVisibilityChange );
 
 function stopNotificationService() {
   if ( notificationInterval ) {
@@ -4182,6 +4205,7 @@ function updateNotificationButton() {
   }
 }
 
+// REEMPLAZAR: La función checkDailyTasksImproved COMPLETA
 function checkDailyTasksImproved( forceCheck = false ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     return;
@@ -4191,10 +4215,6 @@ function checkDailyTasksImproved( forceCheck = false ) {
   const today = getTodayString();
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
-
-  const todayTasks = tasks[ today ] || [];
-  const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
-  const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
 
   // Reset diario - SOLO cuando cambia el día
   const todayKey = `${today}-reset`;
@@ -4208,90 +4228,117 @@ function checkDailyTasksImproved( forceCheck = false ) {
     console.log( '🔄 Notificaciones reseteadas para nuevo día' );
   }
 
-  // Procesar notificaciones de tareas con hora
-  todayTasks.forEach( task => {
-    if ( !task.time || task.state === 'completed' ) return;
+  // NUEVO: Revisar TODOS los días, no solo hoy
+  Object.keys( tasks ).forEach( dateStr => {
+    const dayTasks = tasks[ dateStr ];
+    if ( !dayTasks || dayTasks.length === 0 ) return;
 
-    const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
-    const taskTime = taskHours * 60 + taskMinutes;
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
+    const taskDate = new Date( dateStr + "T00:00:00" );
+    const isFutureDate = taskDate > now;
+    const isToday = dateStr === today;
 
-    // 15 minutos antes
-    const reminderKey = `${task.id}-15min`;
-    if ( !notificationStatus.taskReminders.has( reminderKey ) &&
-      currentTimeInMinutes >= taskTime - 15 &&
-      currentTimeInMinutes <= taskTime - 13 &&
-      task.state === 'pending' ) {
+    // Procesar notificaciones de tareas con hora
+    dayTasks.forEach( task => {
+      if ( !task.time || task.state === 'completed' ) return;
 
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      showDesktopNotificationPWA(
-        `⏰ ${task.title}`,
-        `${priority.label} en 15 minutos (${task.time})`,
-        reminderKey,
-        false,
-        'task-reminder'  // NUEVO: tipo de notificación
-      );
-      notificationStatus.taskReminders.add( reminderKey );
-    }
+      const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
+      const taskTimeInMinutes = taskHours * 60 + taskMinutes;
 
-    // Hora exacta - auto inicio
-    const startKey = `${task.id}-start`;
-    if ( !notificationStatus.taskReminders.has( startKey ) &&
-      currentTimeInMinutes >= taskTime &&
-      currentTimeInMinutes <= taskTime + 2 &&
-      task.state === 'pending' ) {
-
-      // Cambiar estado automáticamente
-      task.state = 'inProgress';
-      task.completed = false;
-
-      addToChangeLog( 'autoStarted', task.title, today, 'pending', 'inProgress', task.id );
-      saveTasks();
-      renderCalendar();
-      updateProgress();
-      enqueueSync( 'upsert', today, task );
-
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      showDesktopNotificationPWA(
-        `🚀 ${task.title}`,
-        `Iniciada automáticamente - ${priority.label}`,
-        startKey,
-        true,
-        'task-start'  // NUEVO: tipo específico con vibración fuerte
-      );
-
-      showInAppNotification(
-        'Tarea Iniciada',
-        `${task.title} cambió a "En Proceso"`,
-        'task'
-      );
-
-      notificationStatus.taskReminders.add( startKey );
-
-      // Actualizar panel si está visible
-      if ( selectedDateForPanel === today ) {
-        showDailyTaskPanel( today, new Date( today + "T12:00:00" ).getDate() );
+      // Para hoy, usar hora actual. Para días futuros, usar medianoche como referencia
+      let currentTimeInMinutes;
+      if ( isToday ) {
+        currentTimeInMinutes = currentHour * 60 + currentMinute;
+      } else if ( isFutureDate ) {
+        // Para días futuros, asumir que la hora actual es cuando se debe ejecutar
+        // Esto permite que las notificaciones se ejecuten incluso si la app estaba cerrada
+        currentTimeInMinutes = taskTimeInMinutes;
+      } else {
+        return; // Ignorar días pasados
       }
-    }
 
-    // Tarea retrasada (30min después)
-    const lateKey = `${task.id}-late`;
-    if ( !notificationStatus.taskReminders.has( lateKey ) &&
-      currentTimeInMinutes >= taskTime + 30 &&
-      task.state !== 'completed' ) {
+      // 15 minutos antes (solo en el día actual o si es la hora estimada para futuro)
+      const reminderKey = `${task.id}-15min`;
+      if ( !notificationStatus.taskReminders.has( reminderKey ) &&
+        currentTimeInMinutes >= taskTimeInMinutes - 15 &&
+        currentTimeInMinutes <= taskTimeInMinutes - 13 &&
+        task.state === 'pending' ) {
 
-      showDesktopNotificationPWA(
-        `⚠️ ${task.title}`,
-        task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - Retrasada',
-        lateKey,
-        false,
-        'task-late'  // NUEVO: tipo para tareas retrasadas
-      );
-      notificationStatus.taskReminders.add( lateKey );
-    }
+        const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+        const dateLabel = isToday ? '' : ` (${dateStr})`;
+        showDesktopNotificationPWA(
+          `⏰ ${task.title}${dateLabel}`,
+          `${priority.label} en 15 minutos (${task.time})`,
+          reminderKey,
+          false,
+          'task-reminder'
+        );
+        notificationStatus.taskReminders.add( reminderKey );
+      }
+
+      // Hora exacta - auto inicio
+      const startKey = `${task.id}-start`;
+      if ( !notificationStatus.taskReminders.has( startKey ) &&
+        currentTimeInMinutes >= taskTimeInMinutes &&
+        currentTimeInMinutes <= taskTimeInMinutes + 2 &&
+        task.state === 'pending' ) {
+
+        // Cambiar estado automáticamente
+        task.state = 'inProgress';
+        task.completed = false;
+
+        addToChangeLog( 'autoStarted', task.title, dateStr, 'pending', 'inProgress', task.id );
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+        enqueueSync( 'upsert', dateStr, task );
+
+        const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+        const dateLabel = isToday ? '' : ` (${dateStr})`;
+        showDesktopNotificationPWA(
+          `🚀 ${task.title}${dateLabel}`,
+          `Iniciada automáticamente - ${priority.label}`,
+          startKey,
+          true,
+          'task-start'
+        );
+
+        showInAppNotification(
+          'Tarea Iniciada',
+          `${task.title} cambió a "En Proceso"`,
+          'task'
+        );
+
+        notificationStatus.taskReminders.add( startKey );
+
+        // Actualizar panel si está visible
+        if ( selectedDateForPanel === dateStr ) {
+          showDailyTaskPanel( dateStr, new Date( dateStr + "T12:00:00" ).getDate() );
+        }
+      }
+
+      // Tarea retrasada (30min después)
+      const lateKey = `${task.id}-late`;
+      if ( !notificationStatus.taskReminders.has( lateKey ) &&
+        currentTimeInMinutes >= taskTimeInMinutes + 30 &&
+        task.state !== 'completed' ) {
+
+        const dateLabel = isToday ? '' : ` (${dateStr})`;
+        showDesktopNotificationPWA(
+          `⚠️ ${task.title}${dateLabel}`,
+          task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - Retrasada',
+          lateKey,
+          false,
+          'task-late'
+        );
+        notificationStatus.taskReminders.add( lateKey );
+      }
+    } );
   } );
 
-  // Notificaciones generales del día con vibración específica
+  // Notificaciones generales del día actual
+  const todayTasks = tasks[ today ] || [];
+  const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
+  const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
   const totalPending = pendingTasks.length;
   const totalInProgress = inProgressTasks.length;
   const totalActive = totalPending + totalInProgress;
@@ -4313,7 +4360,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       `Tienes ${message} para hoy`,
       'morning',
       false,
-      'morning'  // NUEVO: tipo específico
+      'morning'
     );
     notificationStatus.morning = true;
   }
@@ -4328,7 +4375,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       `${totalPending} tarea${totalPending > 1 ? 's' : ''} pendiente${totalPending > 1 ? 's' : ''}`,
       'midday',
       false,
-      'midday'  // NUEVO: tipo específico
+      'midday'
     );
     notificationStatus.midday = true;
   }
@@ -4343,12 +4390,11 @@ function checkDailyTasksImproved( forceCheck = false ) {
       `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
       'evening',
       false,
-      'evening'  // NUEVO: tipo específico
+      'evening'
     );
     notificationStatus.evening = true;
   }
 }
-
 
 // función para limpiar notificaciones cuando se completa una tarea
 function clearTaskNotifications( taskId ) {
@@ -4507,6 +4553,49 @@ document.addEventListener( "visibilitychange", () => {
     setTimeout( () => processSyncQueue(), 1000 );
   }
 } );
+
+// Función para enviar tareas al Service Worker para verificación en background
+function sendTasksToServiceWorker() {
+  if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+    const todayString = getTodayString();
+    const allTasks = [];
+
+    // Recolectar todas las tareas
+    Object.keys( tasks ).forEach( dateStr => {
+      const dayTasks = tasks[ dateStr ] || [];
+      dayTasks.forEach( task => {
+        allTasks.push( {
+          id: task.id,
+          title: task.title,
+          time: task.time,
+          state: task.state,
+          priority: task.priority,
+          date: dateStr
+        } );
+      } );
+    } );
+
+    navigator.serviceWorker.controller.postMessage( {
+      type: 'CHECK_NOTIFICATIONS',
+      tasks: allTasks,
+      timestamp: Date.now()
+    } );
+  }
+}
+
+// Enviar tareas al SW cada vez que se actualiza la lista
+function saveTasks() {
+  try {
+    localStorage.setItem( "tasks", JSON.stringify( tasks ) );
+    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
+
+    // NUEVO: Enviar al SW para que pueda verificar incluso con app cerrada
+    sendTasksToServiceWorker();
+  } catch ( error ) {
+    console.error( "Error saving tasks:", error );
+    showNotification( "Error al guardar tareas", "error" );
+  }
+}
 
 // Inicialización
 document.addEventListener( "DOMContentLoaded", function () {
