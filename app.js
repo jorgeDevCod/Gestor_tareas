@@ -2441,7 +2441,7 @@ function renderCalendar() {
 
   for ( let i = 0; i < startingDayOfWeek; i++ ) {
     const emptyDay = document.createElement( "div" );
-    emptyDay.className = "h-24 border border-gray-200";
+    emptyDay.className = "h-36 border border-gray-200";
     calendar.appendChild( emptyDay );
   }
 
@@ -2465,7 +2465,7 @@ function createDayElement( day, dateStr, dayTasks ) {
   const isToday = dateStr === todayStr;
   const isPastDate = isDatePast( dateStr );
 
-  dayElement.className = `h-24 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
+  dayElement.className = `h-32 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
   dayElement.dataset.date = dateStr;
 
   dayElement.innerHTML = `
