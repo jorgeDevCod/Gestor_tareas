@@ -2307,9 +2307,6 @@ function addTask( e ) {
   const prioritySelect = document.getElementById( "taskPriority" );
   if ( prioritySelect ) prioritySelect.value = "3";
 
-  // ❌ REMOVIDO: Ya no reseteamos taskInitialState porque no debe existir
-  // const stateSelect = document.getElementById( "taskInitialState" );
-  // if ( stateSelect ) stateSelect.value = "pending";
 }
 
 function addTaskToDate( dateStr, task ) {
@@ -4255,106 +4252,86 @@ function checkDailyTasksImproved( forceCheck = false ) {
     console.log( '🔄 Notificaciones reseteadas para nuevo día' );
   }
 
-  // NUEVO: Revisar TODOS los días, no solo hoy
-  Object.keys( tasks ).forEach( dateStr => {
-    const dayTasks = tasks[ dateStr ];
-    if ( !dayTasks || dayTasks.length === 0 ) return;
+  // Revisar tareas de HOY solamente
+  const todayTasks = tasks[ today ] || [];
 
-    const taskDate = new Date( dateStr + "T00:00:00" );
-    const isFutureDate = taskDate > now;
-    const isToday = dateStr === today;
+  todayTasks.forEach( task => {
+    if ( !task.time || task.state === 'completed' ) return;
 
-    // Procesar notificaciones de tareas con hora
-    dayTasks.forEach( task => {
-      if ( !task.time || task.state === 'completed' ) return;
+    const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
+    const taskTimeInMinutes = taskHours * 60 + taskMinutes;
+    const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-      const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
-      const taskTimeInMinutes = taskHours * 60 + taskMinutes;
+    // ✅ 1. NOTIFICACIÓN: 15 minutos antes
+    const reminderKey = `${task.id}-15min`;
+    if ( !notificationStatus.taskReminders.has( reminderKey ) &&
+      currentTimeInMinutes >= taskTimeInMinutes - 15 &&
+      currentTimeInMinutes <= taskTimeInMinutes - 13 &&
+      task.state === 'pending' ) {
 
-      // Para hoy, usar hora actual. Para días futuros, usar medianoche como referencia
-      let currentTimeInMinutes;
-      if ( isToday ) {
-        currentTimeInMinutes = currentHour * 60 + currentMinute;
-      } else if ( isFutureDate ) {
-        // Para días futuros, asumir que la hora actual es cuando se debe ejecutar
-        // Esto permite que las notificaciones se ejecuten incluso si la app estaba cerrada
-        currentTimeInMinutes = taskTimeInMinutes;
-      } else {
-        return; // Ignorar días pasados
-      }
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+      showDesktopNotificationPWA(
+        `⏰ Recordatorio: ${task.title}`,
+        `${priority.label} - Inicia en 15 minutos (${task.time})`,
+        reminderKey,
+        false,
+        'task-reminder'
+      );
+      notificationStatus.taskReminders.add( reminderKey );
+      console.log( `✅ Notificación 15min enviada: ${task.title}` );
+    }
 
-      // 15 minutos antes (solo en el día actual o si es la hora estimada para futuro)
-      const reminderKey = `${task.id}-15min`;
-      if ( !notificationStatus.taskReminders.has( reminderKey ) &&
-        currentTimeInMinutes >= taskTimeInMinutes - 15 &&
-        currentTimeInMinutes <= taskTimeInMinutes - 13 &&
-        task.state === 'pending' ) {
+    // ✅ 2. NOTIFICACIÓN: Hora exacta (SIN CAMBIAR ESTADO)
+    const startKey = `${task.id}-start`;
+    if ( !notificationStatus.taskReminders.has( startKey ) &&
+      currentTimeInMinutes >= taskTimeInMinutes &&
+      currentTimeInMinutes <= taskTimeInMinutes + 2 &&
+      task.state === 'pending' ) {
 
-        const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-        const dateLabel = isToday ? '' : ` (${dateStr})`;
-        showDesktopNotificationPWA(
-          `⏰ ${task.title}${dateLabel}`,
-          `${priority.label} en 15 minutos (${task.time})`,
-          reminderKey,
-          false,
-          'task-reminder'
-        );
-        notificationStatus.taskReminders.add( reminderKey );
-      }
+      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
 
-      // ✅ CORREGIDO: Hora exacta - SOLO NOTIFICAR, NO CAMBIAR ESTADO
-      const startKey = `${task.id}-start`;
-      if ( !notificationStatus.taskReminders.has( startKey ) &&
-        currentTimeInMinutes >= taskTimeInMinutes &&
-        currentTimeInMinutes <= taskTimeInMinutes + 2 &&
-        task.state === 'pending' ) {
+  
+      // ✅ SOLO notificar
+      showDesktopNotificationPWA(
+        `🔔 Es hora de: ${task.title}`,
+        `${priority.label} programada para ${task.time}`,
+        startKey,
+        true,
+        'task-start'
+      );
 
-        // ✅ SOLO enviar notificación
-        const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-        const dateLabel = isToday ? '' : ` (${dateStr})`;
-        showDesktopNotificationPWA(
-          `🔔 Es hora: ${task.title}${dateLabel}`,
-          `${priority.label} programada para ${task.time}`,
-          startKey,
-          true,
-          'task-start'
-        );
+      showInAppNotification(
+        '⏰ Recordatorio de Tarea',
+        `${task.title} - ${task.time}`,
+        'task'
+      );
 
-        showInAppNotification(
-          'Recordatorio de Tarea',
-          `${task.title} - ${task.time}`,
-          'task'
-        );
+      notificationStatus.taskReminders.add( startKey );
+      console.log( `✅ Notificación hora exacta enviada: ${task.title}` );
+    }
 
-        notificationStatus.taskReminders.add( startKey );
-      }
+    // ✅ 3. NOTIFICACIÓN: Tarea retrasada (30 minutos después)
+    const lateKey = `${task.id}-late`;
+    if ( !notificationStatus.taskReminders.has( lateKey ) &&
+      currentTimeInMinutes >= taskTimeInMinutes + 30 &&
+      task.state !== 'completed' ) {
 
-      // Tarea retrasada (30min después)
-      const lateKey = `${task.id}-late`;
-      if ( !notificationStatus.taskReminders.has( lateKey ) &&
-        currentTimeInMinutes >= taskTimeInMinutes + 30 &&
-        task.state !== 'completed' ) {
-
-        const dateLabel = isToday ? '' : ` (${dateStr})`;
-        showDesktopNotificationPWA(
-          `⚠️ ${task.title}${dateLabel}`,
-          task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - Retrasada',
-          lateKey,
-          false,
-          'task-late'
-        );
-        notificationStatus.taskReminders.add( lateKey );
-      }
-    } );
+      showDesktopNotificationPWA(
+        `⚠️ Tarea Retrasada: ${task.title}`,
+        task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - 30min de retraso',
+        lateKey,
+        false,
+        'task-late'
+      );
+      notificationStatus.taskReminders.add( lateKey );
+      console.log( `⚠️ Notificación retraso enviada: ${task.title}` );
+    }
   } );
 
-  // Notificaciones generales del día actual
-  const todayTasks = tasks[ today ] || [];
+  // Notificaciones generales del día
   const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
   const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
-  const totalPending = pendingTasks.length;
-  const totalInProgress = inProgressTasks.length;
-  const totalActive = totalPending + totalInProgress;
+  const totalActive = pendingTasks.length + inProgressTasks.length;
 
   // Buenos días (9:00-9:30)
   if ( !notificationStatus.morning &&
@@ -4362,14 +4339,16 @@ function checkDailyTasksImproved( forceCheck = false ) {
     totalActive > 0 ) {
 
     let message = '';
-    if ( totalPending > 0 ) message += `${totalPending} pendiente${totalPending > 1 ? 's' : ''}`;
-    if ( totalInProgress > 0 ) {
+    if ( pendingTasks.length > 0 ) {
+      message += `${pendingTasks.length} pendiente${pendingTasks.length > 1 ? 's' : ''}`;
+    }
+    if ( inProgressTasks.length > 0 ) {
       if ( message ) message += ' y ';
-      message += `${totalInProgress} en proceso`;
+      message += `${inProgressTasks.length} en proceso`;
     }
 
     showDesktopNotificationPWA(
-      'Buenos días',
+      '🌅 Buenos días',
       `Tienes ${message} para hoy`,
       'morning',
       false,
@@ -4381,11 +4360,11 @@ function checkDailyTasksImproved( forceCheck = false ) {
   // Mediodía (12:00-12:30)
   if ( !notificationStatus.midday &&
     currentHour === 12 && currentMinute <= 30 &&
-    totalPending > 0 ) {
+    pendingTasks.length > 0 ) {
 
     showDesktopNotificationPWA(
-      'Mediodía',
-      `${totalPending} tarea${totalPending > 1 ? 's' : ''} pendiente${totalPending > 1 ? 's' : ''}`,
+      '🌞 Mediodía',
+      `${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''}`,
       'midday',
       false,
       'midday'
@@ -4399,7 +4378,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
     totalActive > 0 ) {
 
     showDesktopNotificationPWA(
-      'Final del día',
+      '🌆 Final del día',
       `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
       'evening',
       false,
@@ -4508,7 +4487,7 @@ function clearAll() {
   saveTasks();
   renderCalendar();
   updateProgress();
-  closeDailyTaskPanel(); // Ya existía, pero ahora asegura cierre si abierto
+  closeDailyTaskPanel(); 
 
   // NUEVO: Limpiar todos los estados de notificaciones globales
   notificationStatus.taskReminders.clear();
