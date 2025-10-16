@@ -1983,24 +1983,20 @@ function initializeTodayPanel() {
   const today = getTodayString();
   const todayDate = new Date();
 
-  // Establecer la fecha seleccionada siempre
   selectedDateForPanel = today;
 
-  //Solo mostrar panel automáticamente en desktop Y solo si hay tareas para hoy
   const todayTasks = tasks[ today ] || [];
   const isDesktop = window.innerWidth >= 768;
   const isPWAInstalled = window.matchMedia( '(display-mode: standalone)' ).matches ||
     window.navigator.standalone === true ||
     window.location.search.includes( 'pwa=true' );
 
-  // Solo mostrar automáticamente si:
-  // 1. Es desktop (no móvil) Y no es PWA instalada
-  // 2. O si hay tareas pendientes/en progreso para hoy
   const shouldShowAuto = ( isDesktop && !isPWAInstalled ) ||
     todayTasks.some( task => task.state !== 'completed' );
 
   if ( shouldShowAuto ) {
     showDailyTaskPanel( today, todayDate.getDate() );
+    // NO llamar scrollToPanelSmoothly() aquí
   }
 
   console.log( `Panel auto-show: ${shouldShowAuto ? 'SI' : 'NO'} (Desktop: ${isDesktop}, PWA: ${isPWAInstalled}, Tareas: ${todayTasks.length})` );
@@ -2510,6 +2506,7 @@ function createDayElement( day, dateStr, dayTasks ) {
   dayElement.addEventListener( "click", ( e ) => {
     if ( !e.target.closest( ".task-item" ) && !e.target.closest( "button" ) ) {
       showDailyTaskPanel( dateStr, day );
+      scrollToPanelSmoothly(); // ← AGREGAR ESTA LÍNEA
     }
   } );
 
@@ -2619,13 +2616,38 @@ function showDailyTaskPanel( dateStr, day ) {
 
   // ASEGURAR que se muestre el panel
   panel.classList.remove( "hidden" );
+}
 
-  // Scroll suave en móvil
-  if ( window.innerWidth < 768 ) {
-    setTimeout( () => {
-      panel.scrollIntoView( { behavior: "smooth", block: "start" } );
-    }, 100 );
-  }
+// Función para hacer scroll suave al panel de tareas
+function scrollToPanelSmoothly() {
+  const panel = document.getElementById( "dailyTaskPanel" );
+  if ( !panel ) return;
+
+  // Pequeño delay para asegurar que el panel esté visible
+  setTimeout( () => {
+    const panelRect = panel.getBoundingClientRect();
+    const windowHeight = window.innerHeight;
+
+    // Si el panel no está completamente visible
+    if ( panelRect.top < 0 || panelRect.bottom > windowHeight ) {
+      // Calcular posición ideal (centrado verticalmente o cerca del top)
+      const scrollOffset = window.innerWidth < 768 ? 80 : 100; // Más margen en móvil
+
+      panel.scrollIntoView( {
+        behavior: "smooth",
+        block: "start",
+        inline: "nearest"
+      } );
+
+      // Ajuste fino del scroll para dejar espacio arriba
+      setTimeout( () => {
+        window.scrollBy( {
+          top: -scrollOffset,
+          behavior: "smooth"
+        } );
+      }, 300 );
+    }
+  }, 100 );
 }
 
 function sortTasksByPriority( tasks ) {
@@ -4290,7 +4312,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
 
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
 
-  
+
       // ✅ SOLO notificar
       showDesktopNotificationPWA(
         `🔔 Es hora de: ${task.title}`,
@@ -4487,7 +4509,7 @@ function clearAll() {
   saveTasks();
   renderCalendar();
   updateProgress();
-  closeDailyTaskPanel(); 
+  closeDailyTaskPanel();
 
   // NUEVO: Limpiar todos los estados de notificaciones globales
   notificationStatus.taskReminders.clear();
