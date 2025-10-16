@@ -2686,7 +2686,7 @@ function createPanelTaskElement( task, dateStr ) {
                         ${!isPastDate
       ? `
                             <select onchange="changeTaskStateDirect('${dateStr}', '${task.id}', this.value)" 
-                                    class="text-xs p-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
+                                    class="text-xs px-1 py-2rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
                                     title="Cambiar estado de la tarea">
                                 <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
                                 <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
