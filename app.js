@@ -4205,7 +4205,7 @@ function updateNotificationButton() {
   }
 }
 
-// REEMPLAZAR: La función checkDailyTasksImproved COMPLETA
+// función para checkear tareas
 function checkDailyTasksImproved( forceCheck = false ) {
   if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
     return;
@@ -4275,45 +4275,40 @@ function checkDailyTasksImproved( forceCheck = false ) {
         notificationStatus.taskReminders.add( reminderKey );
       }
 
-      // Hora exacta - auto inicio
+      // ✅ CORREGIDO: Hora exacta - SOLO NOTIFICAR, NO CAMBIAR ESTADO
       const startKey = `${task.id}-start`;
       if ( !notificationStatus.taskReminders.has( startKey ) &&
         currentTimeInMinutes >= taskTimeInMinutes &&
         currentTimeInMinutes <= taskTimeInMinutes + 2 &&
         task.state === 'pending' ) {
 
-        // Cambiar estado automáticamente
-        task.state = 'inProgress';
-        task.completed = false;
+        // ❌ REMOVIDO: Ya NO cambia el estado automáticamente
+        // task.state = 'inProgress';
+        // task.completed = false;
+        // addToChangeLog( 'autoStarted', task.title, dateStr, 'pending', 'inProgress', task.id );
+        // saveTasks();
+        // renderCalendar();
+        // updateProgress();
+        // enqueueSync( 'upsert', dateStr, task );
 
-        addToChangeLog( 'autoStarted', task.title, dateStr, 'pending', 'inProgress', task.id );
-        saveTasks();
-        renderCalendar();
-        updateProgress();
-        enqueueSync( 'upsert', dateStr, task );
-
+        // ✅ SOLO enviar notificación
         const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
         const dateLabel = isToday ? '' : ` (${dateStr})`;
         showDesktopNotificationPWA(
-          `🚀 ${task.title}${dateLabel}`,
-          `Iniciada automáticamente - ${priority.label}`,
+          `🔔 Es hora: ${task.title}${dateLabel}`,
+          `${priority.label} programada para ${task.time}`,
           startKey,
           true,
           'task-start'
         );
 
         showInAppNotification(
-          'Tarea Iniciada',
-          `${task.title} cambió a "En Proceso"`,
+          'Recordatorio de Tarea',
+          `${task.title} - ${task.time}`,
           'task'
         );
 
         notificationStatus.taskReminders.add( startKey );
-
-        // Actualizar panel si está visible
-        if ( selectedDateForPanel === dateStr ) {
-          showDailyTaskPanel( dateStr, new Date( dateStr + "T12:00:00" ).getDate() );
-        }
       }
 
       // Tarea retrasada (30min después)
