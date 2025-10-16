@@ -572,8 +572,6 @@ function clearDayChangeLog( dateStr ) {
   delete dailyTaskLogs[ dateStr ];
   saveTaskLogs(); // Solo guarda local, no sincroniza
 
-  // NO llamar a saveTasks() aquí ya que no afecta las tareas reales
-
   // Actualizar header si el panel está abierto
   if ( selectedDateForPanel === dateStr ) {
     const date = new Date( dateStr + "T12:00:00" );
@@ -2250,8 +2248,8 @@ function addTask( e ) {
     time: document.getElementById( "taskTime" ).value,
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
-    initialState:
-      document.getElementById( "taskInitialState" )?.value || "pending", // NUEVO
+    // ✅ CORREGIDO: SIEMPRE crear tareas en estado "pending"
+    initialState: "pending", // Forzar siempre pendiente
   };
 
   if ( !formData.title ) return;
@@ -2270,15 +2268,15 @@ function addTask( e ) {
     description: formData.description,
     time: formData.time,
     priority: formData.priority,
-    state: formData.initialState, // NUEVO
-    completed: formData.initialState === "completed", // Mantener compatibilidad
+    state: "pending", // ✅ SIEMPRE pendiente al crear
+    completed: false, // ✅ SIEMPRE false al crear
   };
 
   if ( formData.date && formData.repeat === "none" ) {
     addTaskToDate( formData.date, task );
     enqueueSync( "upsert", formData.date, task );
 
-    // NUEVO: Registrar creación de tarea
+    // Registrar creación de tarea
     addToChangeLog( "created", task.title, formData.date );
   } else if ( formData.repeat !== "none" ) {
     const startDate = formData.date
@@ -2305,16 +2303,25 @@ function addTask( e ) {
     repeatDuration.value = "2";
   }
 
-  // Reset priority and state to default
+  // ✅ CORREGIDO: Reset priority to default, NO incluir estado inicial
   const prioritySelect = document.getElementById( "taskPriority" );
-  const stateSelect = document.getElementById( "taskInitialState" );
   if ( prioritySelect ) prioritySelect.value = "3";
-  if ( stateSelect ) stateSelect.value = "pending";
+
+  // ❌ REMOVIDO: Ya no reseteamos taskInitialState porque no debe existir
+  // const stateSelect = document.getElementById( "taskInitialState" );
+  // if ( stateSelect ) stateSelect.value = "pending";
 }
 
 function addTaskToDate( dateStr, task ) {
   if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-  const newTask = { ...task, id: `${dateStr}-${Date.now()}` };
+
+  const newTask = {
+    ...task,
+    id: `${dateStr}-${Date.now()}`,
+    state: "pending", // ✅ FORZAR estado pendiente
+    completed: false  // ✅ FORZAR no completada
+  };
+
   tasks[ dateStr ].push( newTask );
 
   // Actualizar panel si está abierto para este día
@@ -2377,7 +2384,13 @@ function addRecurringTasks( task, repeatType, startDate ) {
     }
 
     if ( shouldAdd && !isDatePast( dateStr ) ) {
-      const newTask = addTaskToDate( dateStr, task );
+      // ✅ CORREGIDO: Crear tarea con estado forzado a pending
+      const taskToAdd = {
+        ...task,
+        state: "pending",
+        completed: false
+      };
+      const newTask = addTaskToDate( dateStr, taskToAdd );
       newTasks.push( { dateStr, task: newTask } );
       tasksAdded++;
     }
@@ -3129,13 +3142,26 @@ function canMoveTask( task ) {
 
 function changeTaskStateDirect( dateStr, taskId, newState ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( !task ) return;
+  if ( !task ) {
+    console.warn( '❌ changeTaskStateDirect: Tarea no encontrada', { dateStr, taskId } );
+    return;
+  }
 
   const oldState = task.state || "pending";
 
   if ( oldState === newState ) {
+    console.log( '⚠️ changeTaskStateDirect: Mismo estado, ignorando', { taskId, state: newState } );
     return; // No hacer nada si es el mismo estado
   }
+
+  // ✅ NUEVO: Registro detallado para debugging
+  console.log( '🔄 changeTaskStateDirect:', {
+    taskId,
+    taskTitle: task.title,
+    oldState,
+    newState,
+    triggeredBy: new Error().stack.split( '\n' )[ 2 ] // Ver quién llamó la función
+  } );
 
   // Validaciones de transición de estados
   if ( oldState === "completed" && newState !== "completed" ) {
@@ -3463,7 +3489,7 @@ function showQuickAddTask( dateStr ) {
 
   document.body.appendChild( modal );
 
-  // 🔹 Establecer hora actual por defecto
+  // Establecer hora actual por defecto
   const now = new Date();
   document.getElementById( "quickAddTaskTime" ).value = now
     .toTimeString()
@@ -3491,14 +3517,15 @@ function showQuickAddTask( dateStr ) {
         return;
       }
 
+      // ✅ CORREGIDO: Crear tarea SIEMPRE en estado pending
       const task = {
         id: `${dateStr}-${Date.now()}`,
         title,
         description,
         time,
         priority,
-        state: "pending",
-        completed: false,
+        state: "pending", // ✅ FORZAR pendiente
+        completed: false, // ✅ FORZAR no completada
       };
 
       addTaskToDate( dateStr, task );
@@ -4281,15 +4308,6 @@ function checkDailyTasksImproved( forceCheck = false ) {
         currentTimeInMinutes >= taskTimeInMinutes &&
         currentTimeInMinutes <= taskTimeInMinutes + 2 &&
         task.state === 'pending' ) {
-
-        // ❌ REMOVIDO: Ya NO cambia el estado automáticamente
-        // task.state = 'inProgress';
-        // task.completed = false;
-        // addToChangeLog( 'autoStarted', task.title, dateStr, 'pending', 'inProgress', task.id );
-        // saveTasks();
-        // renderCalendar();
-        // updateProgress();
-        // enqueueSync( 'upsert', dateStr, task );
 
         // ✅ SOLO enviar notificación
         const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
