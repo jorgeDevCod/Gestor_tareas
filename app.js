@@ -1053,6 +1053,30 @@ function initFirebase() {
   }
 }
 
+// Registrar sincronización periódica (Solo Chrome/Edge)
+async function registerPeriodicSync() {
+  if ( 'serviceWorker' in navigator && 'periodicSync' in navigator.serviceWorker ) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.periodicSync.register( 'check-tasks', {
+        minInterval: 30 * 60 * 1000 // 30 minutos
+      } );
+      console.log( '✅ Periodic Sync registrado para notificaciones' );
+    } catch ( error ) {
+      console.warn( '⚠️ Periodic Sync no disponible:', error );
+    }
+  }
+}
+
+// Llamar en DOMContentLoaded
+document.addEventListener( "DOMContentLoaded", function () {
+  // ... código existente ...
+
+  setTimeout( () => {
+    registerPeriodicSync(); // ✅ Agregar aquí
+  }, 2000 );
+} );
+
 // CORRECCIÓN 5: Función separada para configurar persistencia
 async function setupFirebasePersistence() {
   try {
@@ -3160,34 +3184,17 @@ function canMoveTask( task ) {
 }
 
 function changeTaskStateDirect( dateStr, taskId, newState ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( !task ) {
-    console.warn( '❌ changeTaskStateDirect: Tarea no encontrada', { dateStr, taskId } );
-    return;
-  }
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
 
   const oldState = task.state || "pending";
+  if ( oldState === newState ) return;
 
-  if ( oldState === newState ) {
-    console.log( '⚠️ changeTaskStateDirect: Mismo estado, ignorando', { taskId, state: newState } );
-    return; // No hacer nada si es el mismo estado
-  }
+  // ✅ DETECTAR SI LA TAREA ESTÁ RETRASADA
+  const isLate = checkIfTaskIsLate( dateStr, task.time );
 
-  // ✅ NUEVO: Registro detallado para debugging
-  console.log( '🔄 changeTaskStateDirect:', {
-    taskId,
-    taskTitle: task.title,
-    oldState,
-    newState,
-    triggeredBy: new Error().stack.split( '\n' )[ 2 ] // Ver quién llamó la función
-  } );
-
-  // Validaciones de transición de estados
   if ( oldState === "completed" && newState !== "completed" ) {
-    if (
-      !confirm( "¿Estás seguro de que quieres cambiar una tarea completada?" )
-    ) {
-      // Revertir el dropdown
+    if ( !confirm( "¿Estás seguro de que quieres cambiar una tarea completada?" ) ) {
       const dropdown = document.querySelector( `select[onchange*="${taskId}"]` );
       if ( dropdown ) dropdown.value = oldState;
       return;
@@ -3195,19 +3202,26 @@ function changeTaskStateDirect( dateStr, taskId, newState ) {
   }
 
   task.state = newState;
-  task.completed = task.state === "completed";
+  task.completed = ( task.state === "completed" );
 
-  // Registrar cambio de estado con tipo específico
+  // ✅ REGISTRAR SI ESTÁ RETRASADA
   let actionType = "stateChanged";
+  let logMessage = task.title;
+
+  if ( isLate && newState !== "pending" && oldState === "pending" ) {
+    logMessage = `⚠️ RETRASADA - ${task.title}`;
+    console.warn( `⚠️ Tarea retrasada detectada: ${task.title}` );
+  }
+
   if ( oldState === "inProgress" && newState === "paused" ) {
     actionType = "paused";
   } else if ( oldState === "paused" && newState === "inProgress" ) {
     actionType = "resumed";
   }
 
-  addToChangeLog( actionType, task.title, dateStr, oldState, newState, taskId );
+  addToChangeLog( actionType, logMessage, dateStr, oldState, newState, taskId );
 
-  // Limpiar notificaciones si se completa
+  // ✅ Limpiar notificaciones si se completa
   if ( task.state === "completed" ) {
     clearTaskNotifications( taskId );
   }
@@ -3217,14 +3231,64 @@ function changeTaskStateDirect( dateStr, taskId, newState ) {
   updateProgress();
   enqueueSync( "upsert", dateStr, task );
 
-  // Actualizar panel si está abierto
   if ( selectedDateForPanel === dateStr ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
   }
 
   const stateInfo = TASK_STATES[ task.state ];
-  showNotification( `Tarea cambiada a: ${stateInfo.label}`, "success" );
+  const notifType = isLate && newState !== "pending" ? "warning" : "success";
+  showNotification(
+    isLate ? `⚠️ Tarea retrasada - ${stateInfo.label}` : `Tarea: ${stateInfo.label}`,
+    notifType
+  );
+}
+
+// FUNCIÓN AUXILIAR: Verificar si una tarea está retrasada
+function checkIfTaskIsLate( dateStr, taskTime ) {
+  if ( !taskTime ) return false;
+
+  const now = new Date();
+  const todayStr = getTodayString();
+
+  // Si es día pasado, está retrasada
+  if ( isDatePast( dateStr ) ) return true;
+
+  // Si es hoy, verificar hora
+  if ( dateStr === todayStr ) {
+    const [ taskHours, taskMinutes ] = taskTime.split( ':' ).map( Number );
+    const taskTimeInMinutes = taskHours * 60 + taskMinutes;
+    const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
+
+    return currentTimeInMinutes > taskTimeInMinutes;
+  }
+
+  return false;
+}
+
+// ✅ NUEVA: Limpiar notificaciones cuando se completa/elimina una tarea
+function clearTaskNotifications( taskId ) {
+  const keysToRemove = [
+    `${taskId}-15min`,
+    `${taskId}-start`,
+    `${taskId}-late`
+  ];
+
+  // Limpiar de app
+  keysToRemove.forEach( key => {
+    notificationStatus.taskReminders.delete( key );
+    sentNotifications.delete( key );
+  } );
+
+  // Informar al Service Worker
+  if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+    navigator.serviceWorker.controller.postMessage( {
+      type: 'CLEAR_TASK_NOTIFICATION',
+      taskId: taskId
+    } );
+  }
+
+  console.log( `🧹 Notificaciones limpiadas para tarea: ${taskId}` );
 }
 
 //función para actualizar tareas desde el panel
@@ -4168,45 +4232,27 @@ function startNotificationService() {
   }
 
   if ( !notificationsEnabled || Notification.permission !== "granted" ) {
-    console.log( "❌ Notificaciones no habilitadas o sin permisos" );
+    console.log( "❌ Notificaciones no habilitadas" );
     return;
   }
 
   // Verificación inmediata
   setTimeout( () => {
-    try {
-      checkDailyTasksImproved();
-    } catch ( error ) {
-      console.error( "Error en checkDailyTasks inicial:", error );
-    }
+    checkDailyTasksImproved();
+    sendTasksToServiceWorker(); // ✅ Enviar al SW
   }, 1000 );
 
-  // Intervalo cada 10 segundos + enviar info al SW
+  // Intervalo cada 30 segundos (más frecuente)
   notificationInterval = setInterval( () => {
-    try {
-      if ( notificationsEnabled && Notification.permission === "granted" ) {
-        checkDailyTasksImproved();
-
-        // NUEVO: Mantener SW actualizado con tareas
-        sendTasksToServiceWorker();
-      } else {
-        console.log( "⚠️ Notificaciones deshabilitadas en intervalo" );
-        stopNotificationService();
-      }
-    } catch ( error ) {
-      console.error( "Error en intervalo de notificaciones:", error );
+    if ( notificationsEnabled && Notification.permission === "granted" ) {
+      checkDailyTasksImproved();
+      sendTasksToServiceWorker(); // ✅ Mantener SW actualizado
+    } else {
+      stopNotificationService();
     }
-  }, 10000 ); // 10 segundos
+  }, 30000 ); // 30 segundos
 
-  // Verificación adicional cada 5 minutos para mayor seguridad
-  setInterval(
-    () => {
-      if ( notificationsEnabled && Notification.permission === "granted" ) {
-        checkDailyTasksImproved( true ); // Forzar verificación
-      }
-    },
-    5 * 60 * 1000
-  ); // 5 minutos
+  console.log( "✅ Servicio de notificaciones iniciado (cada 30s)" );
 }
 
 // Función para revisar notificaciones cuando la PWA vuelve del background
@@ -4570,31 +4616,33 @@ document.addEventListener( "visibilitychange", () => {
 
 // Función para enviar tareas al Service Worker para verificación en background
 function sendTasksToServiceWorker() {
-  if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-    const todayString = getTodayString();
-    const allTasks = [];
+  if ( !( 'serviceWorker' in navigator ) || !navigator.serviceWorker.controller ) {
+    return;
+  }
 
-    // Recolectar todas las tareas
-    Object.keys( tasks ).forEach( dateStr => {
-      const dayTasks = tasks[ dateStr ] || [];
-      dayTasks.forEach( task => {
-        allTasks.push( {
-          id: task.id,
-          title: task.title,
-          time: task.time,
-          state: task.state,
-          priority: task.priority,
-          date: dateStr
-        } );
+  const allTasks = [];
+
+  Object.keys( tasks ).forEach( dateStr => {
+    const dayTasks = tasks[ dateStr ] || [];
+    dayTasks.forEach( task => {
+      allTasks.push( {
+        id: task.id,
+        title: task.title,
+        time: task.time,
+        state: task.state,
+        priority: task.priority,
+        date: dateStr
       } );
     } );
+  } );
 
-    navigator.serviceWorker.controller.postMessage( {
-      type: 'CHECK_NOTIFICATIONS',
-      tasks: allTasks,
-      timestamp: Date.now()
-    } );
-  }
+  navigator.serviceWorker.controller.postMessage( {
+    type: 'CHECK_NOTIFICATIONS',
+    tasks: allTasks,
+    timestamp: Date.now()
+  } );
+
+  console.log( `📤 Enviadas ${allTasks.length} tareas al Service Worker` );
 }
 
 // Enviar tareas al SW cada vez que se actualiza la lista

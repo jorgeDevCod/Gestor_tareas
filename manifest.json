@@ -1,14 +1,14 @@
 {
-  "name": "Gestor de Tareas",
-  "short_name": "TaskSmart Manager",
-  "description": "Gestiona tus tareas de forma eficiente, rapida e inteligente.",
-  "start_url": "/index.html",
+  "name": "Calendario de Tareas",
+  "short_name": "Tareas",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#223fe3",
+  "theme_color": "#4F46E5",
+  "permissions": ["notifications", "periodicSync"],
   "icons": [
     {
-      "src": "/images/favicon-192.png",
+      "src": "/images/IconLogo.png",
       "sizes": "192x192",
       "type": "image/png"
     },
@@ -17,6 +17,5 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ],
-  "scope": "/"
+  ]
 }
