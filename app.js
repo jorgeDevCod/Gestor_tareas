@@ -1024,21 +1024,38 @@ function initFirebase() {
       console.log( '🔐 Auth state changed:', user ? 'logged in' : 'logged out' );
 
       currentUser = user;
-      updateUI(); // Esta función debe manejar todo el UI correctamente
+      updateUI();
 
       if ( user && navigator.onLine ) {
-        console.log( '✅ Usuario autenticado, iniciando sync' );
+        console.log( '✅ Usuario autenticado:', user.email );
+
+        // ✅ CRÍTICO: Enviar userId al Service Worker
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'SET_USER_ID',
+            data: { userId: user.uid, email: user.email }
+          } );
+          console.log( '📤 userId enviado al Service Worker' );
+        }
+
         updateSyncIndicator( "success" );
 
-        // Sync inicial con delay
+        // Sync inicial
         setTimeout( () => {
           if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
         }, 1000 );
       } else if ( !user ) {
-        // Usuario no autenticado
         console.log( '❌ Usuario no autenticado' );
+
+        // ✅ CRÍTICO: Notificar logout al Service Worker
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'LOGOUT'
+          } );
+        }
+
         updateSyncIndicator( "offline" );
         cleanupUIOnLogout();
       }
@@ -1052,6 +1069,8 @@ function initFirebase() {
     initOfflineMode();
   }
 }
+
+
 
 // Registrar sincronización periódica (Solo Chrome/Edge)
 async function registerPeriodicSync() {
