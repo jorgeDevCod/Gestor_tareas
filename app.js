@@ -2526,7 +2526,7 @@ function renderCalendar() {
 
   for ( let i = 0; i < startingDayOfWeek; i++ ) {
     const emptyDay = document.createElement( "div" );
-    emptyDay.className = "h-36 border border-gray-200";
+    emptyDay.className = "h-32 border border-gray-200";
     calendar.appendChild( emptyDay );
   }
 

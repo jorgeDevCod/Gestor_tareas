@@ -2,7 +2,7 @@
 // SERVICE WORKER CON FIREBASE INTEGRADO
 // ====================================
 
-const CACHE_NAME = 'TaskSmart-cache-v4.1';
+const CACHE_NAME = 'TaskSmart-app-1.2';
 const FIREBASE_CONFIG = {
     apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
     authDomain: "calendario-tareas-app.firebaseapp.com",
