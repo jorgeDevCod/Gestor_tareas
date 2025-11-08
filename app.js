@@ -2774,9 +2774,9 @@ function createPanelTaskElement( task, dateStr ) {
         <div class="flex sm:items-center sm:justify-between">
             <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
                 <!-- Select de estado - AHORA SIEMPRE EDITABLE -->
-                <div class="flex flex-col space-y-2 mb-3 sm:mb-0">
+                <div class="flex flex-col space-y-2 mb-3 sm:mb-0 w-28">
                     <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)" 
-                            class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
+                            class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium pr-6 cursor-pointer transition-colors duration-200"
                             title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
                         <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
                         <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
