@@ -1001,7 +1001,6 @@ function initFirebase() {
   try {
     console.log( '🔥 Inicializando Firebase...' );
 
-    // Verificar conectividad
     if ( !navigator.onLine ) {
       console.log( '📴 Sin conexión - iniciando modo offline' );
       initOfflineMode();
@@ -1016,49 +1015,69 @@ function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    // CONFIGURACIÓN SIMPLIFICADA de persistencia
-    setupFirebasePersistence();
+    //CRÍTICO: Configurar persistencia ANTES de onAuthStateChanged
+    setupFirebasePersistence().then( () => {
 
-    // LISTENER de autenticación SIMPLIFICADO
-    auth.onAuthStateChanged( ( user ) => {
-      console.log( '🔐 Auth state changed:', user ? 'logged in' : 'logged out' );
+      //NUEVO: Verificar si había sesión activa
+      const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
 
-      currentUser = user;
-      updateUI();
+      // Listener de autenticación
+      auth.onAuthStateChanged( ( user ) => {
+        console.log( '🔐 Auth state changed:', user ? 'logged in' : 'logged out' );
 
-      if ( user && navigator.onLine ) {
-        console.log( '✅ Usuario autenticado:', user.email );
+        currentUser = user;
+        updateUI();
 
-        // ✅ CRÍTICO: Enviar userId al Service Worker
-        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-          navigator.serviceWorker.controller.postMessage( {
-            type: 'SET_USER_ID',
-            data: { userId: user.uid, email: user.email }
-          } );
-          console.log( '📤 userId enviado al Service Worker' );
-        }
+        if ( user && navigator.onLine ) {
+          console.log( '✅ Usuario autenticado:', user.email );
 
-        updateSyncIndicator( "success" );
+          //Marcar sesión activa
+          localStorage.setItem( 'firebase_auth_active', 'true' );
 
-        // Sync inicial
-        setTimeout( () => {
-          if ( isOnline && !isSyncing ) {
-            syncFromFirebase();
+          // Enviar userId al Service Worker
+          if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+            navigator.serviceWorker.controller.postMessage( {
+              type: 'SET_USER_ID',
+              data: { userId: user.uid, email: user.email }
+            } );
+            console.log( '📤 userId enviado al Service Worker' );
           }
-        }, 1000 );
-      } else if ( !user ) {
-        console.log( '❌ Usuario no autenticado' );
 
-        // ✅ CRÍTICO: Notificar logout al Service Worker
-        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-          navigator.serviceWorker.controller.postMessage( {
-            type: 'LOGOUT'
-          } );
+          updateSyncIndicator( "success" );
+
+          // Sync inicial
+          setTimeout( () => {
+            if ( isOnline && !isSyncing ) {
+              syncFromFirebase();
+            }
+          }, 1000 );
+
+        } else if ( !user ) {
+          console.log( '❌ Usuario no autenticado' );
+
+          //CRÍTICO: Solo limpiar si fue logout intencional
+          if ( !hadActiveSession ) {
+            localStorage.removeItem( 'firebase_auth_active' );
+
+            // Notificar logout al Service Worker
+            if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+              navigator.serviceWorker.controller.postMessage( { type: 'LOGOUT' } );
+            }
+
+            updateSyncIndicator( "offline" );
+            cleanupUIOnLogout();
+          } else {
+            //NUEVO: Intentar restaurar sesión
+            console.log( '⚠️ Sesión perdida, intentando restaurar...' );
+            setTimeout( () => {
+              // Si sigue sin usuario, fue un logout real
+              if ( !auth.currentUser ) {
+                localStorage.removeItem( 'firebase_auth_active' );
+              }
+            }, 2000 );
+          }
         }
-
-        updateSyncIndicator( "offline" );
-        cleanupUIOnLogout();
-      }
+      } );
     } );
 
     hideLoadingScreen();
@@ -1069,8 +1088,6 @@ function initFirebase() {
     initOfflineMode();
   }
 }
-
-
 
 // Registrar sincronización periódica (Solo Chrome/Edge)
 async function registerPeriodicSync() {
@@ -1092,24 +1109,40 @@ document.addEventListener( "DOMContentLoaded", function () {
   // ... código existente ...
 
   setTimeout( () => {
-    registerPeriodicSync(); // ✅ Agregar aquí
+    registerPeriodicSync(); //Agregar aquí
   }, 2000 );
 } );
 
 // CORRECCIÓN 5: Función separada para configurar persistencia
+
+// ============================================
+// REEMPLAZAR la función setupFirebasePersistence()
+// ============================================
+
 async function setupFirebasePersistence() {
   try {
-    // Auth persistence
+    //CRÍTICO: Usar LOCAL persistence (persiste entre reinicios)
     await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-    console.log( '✅ Auth persistence configurada' );
+    console.log( '✅ Auth persistence configurada como LOCAL' );
 
-    // Firestore persistence
-    await db.enablePersistence( { synchronizeTabs: true } );
+    //Firestore offline persistence
+    await db.enablePersistence( {
+      synchronizeTabs: true,
+      experimentalTabSynchronization: true // NUEVO
+    } );
     console.log( '✅ Firestore persistence habilitada' );
 
+    //NUEVO: Guardar flag de sesión activa
+    localStorage.setItem( 'firebase_auth_active', 'true' );
+
   } catch ( error ) {
-    console.warn( '⚠️ Error configurando persistencia:', error.code );
-    // Continuar sin persistencia - no es crítico
+    if ( error.code === 'failed-precondition' ) {
+      console.warn( '⚠️ Persistencia ya habilitada en otra pestaña' );
+    } else if ( error.code === 'unimplemented' ) {
+      console.warn( '⚠️ Persistencia no soportada en este navegador' );
+    } else {
+      console.warn( '⚠️ Error configurando persistencia:', error.code );
+    }
   }
 }
 
@@ -1769,6 +1802,9 @@ async function signInWithGoogle() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
+    //Marcar como logout intencional
+    localStorage.removeItem( 'firebase_auth_active' );
+
     // Limpiar UI antes de cerrar sesión
     cleanupUIOnLogout();
 
@@ -2287,7 +2323,7 @@ function addTask( e ) {
     time: document.getElementById( "taskTime" ).value,
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
-    // ✅ CORREGIDO: SIEMPRE crear tareas en estado "pending"
+    //CORREGIDO: SIEMPRE crear tareas en estado "pending"
     initialState: "pending", // Forzar siempre pendiente
   };
 
@@ -2307,8 +2343,8 @@ function addTask( e ) {
     description: formData.description,
     time: formData.time,
     priority: formData.priority,
-    state: "pending", // ✅ SIEMPRE pendiente al crear
-    completed: false, // ✅ SIEMPRE false al crear
+    state: "pending", //SIEMPRE pendiente al crear
+    completed: false, //SIEMPRE false al crear
   };
 
   if ( formData.date && formData.repeat === "none" ) {
@@ -2342,7 +2378,7 @@ function addTask( e ) {
     repeatDuration.value = "2";
   }
 
-  // ✅ CORREGIDO: Reset priority to default, NO incluir estado inicial
+  //CORREGIDO: Reset priority to default, NO incluir estado inicial
   const prioritySelect = document.getElementById( "taskPriority" );
   if ( prioritySelect ) prioritySelect.value = "3";
 
@@ -2354,8 +2390,8 @@ function addTaskToDate( dateStr, task ) {
   const newTask = {
     ...task,
     id: `${dateStr}-${Date.now()}`,
-    state: "pending", // ✅ FORZAR estado pendiente
-    completed: false  // ✅ FORZAR no completada
+    state: "pending", //FORZAR estado pendiente
+    completed: false  //FORZAR no completada
   };
 
   tasks[ dateStr ].push( newTask );
@@ -2420,7 +2456,7 @@ function addRecurringTasks( task, repeatType, startDate ) {
     }
 
     if ( shouldAdd && !isDatePast( dateStr ) ) {
-      // ✅ CORREGIDO: Crear tarea con estado forzado a pending
+      //CORREGIDO: Crear tarea con estado forzado a pending
       const taskToAdd = {
         ...task,
         state: "pending",
@@ -2718,98 +2754,177 @@ function createPanelTaskElement( task, dateStr ) {
   const canPause = task.state === "inProgress";
   const canResume = task.state === "paused";
 
+  //NUEVO: Detectar si está retrasada
+  const isLate = checkIfTaskIsLate( dateStr, task.time );
+  const showLateWarning = isPastDate && task.state !== 'completed';
+
   return `
-        <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5" 
-             style="border-left-color: ${priority.color}" 
-             data-priority="${task.priority}">
-            <div class="flex sm:items-center sm:justify-between">
-                <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
-                    <!-- Select de estado y prioridad -->
-                    <div class="flex flex-col space-y-2 mb-3 sm:mb-0">
-                        ${!isPastDate
-      ? `
-                            <select onchange="changeTaskStateDirect('${dateStr}', '${task.id}', this.value)" 
-                                    class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
-                                    title="Cambiar estado de la tarea">
-                                <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
-                                <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
-                                <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
-                            </select>
-                        `
-      : `
-                            <div class="text-xs p-2 rounded-lg ${state.class} font-medium">
-                                <i class="fas ${state.icon}"></i> ${state.label}
-                            </div>
-                        `
-    }
-                        <div class="flex items-center space-x-2">
-                            <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm" 
-                                  style="background-color: ${priority.color}" 
-                                  title="Prioridad: ${priority.label}"></span>
-                            <span class="text-xs text-gray-600 font-medium">${priority.label}</span>
-                        </div>
-                    </div>
-                    
-                    <!-- Información de la tarea -->
-                    <div class="flex-1">
-                        <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
-                        ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
-                        <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
-                            ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ""}
-                            <div class="text-gray-500">${state.label}</div>
-                        </div>
+    <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}" 
+         style="border-left-color: ${priority.color}" 
+         data-priority="${task.priority}">
+        
+        <!--Advertencia de retraso -->
+        ${showLateWarning ? `
+            <div class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-2 mb-3 rounded text-xs">
+                <i class="fas fa-exclamation-triangle mr-1"></i>
+                <strong>Completada con retraso</strong> - Se registrará el retraso
+            </div>
+        ` : ''}
+
+        <div class="flex sm:items-center sm:justify-between">
+            <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
+                <!-- Select de estado - AHORA SIEMPRE EDITABLE -->
+                <div class="flex flex-col space-y-2 mb-3 sm:mb-0">
+                    <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)" 
+                            class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200"
+                            title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
+                        <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
+                        <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
+                        <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
+                    </select>
+
+                    <div class="flex items-center space-x-2">
+                        <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm" 
+                              style="background-color: ${priority.color}" 
+                              title="Prioridad: ${priority.label}"></span>
+                        <span class="text-xs text-gray-600 font-medium">${priority.label}</span>
                     </div>
                 </div>
                 
-                <!-- Botones de acción: Verticales en móvil, horizontales en desktop -->
-                ${!isPastDate
-      ? `
-                    <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
-                        ${canPause
-        ? `
-                            <button onclick="pauseTask('${dateStr}', '${task.id}')"
-                                    class="flex items-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm"
-                                    title="Pausar tarea activa">
-                                <i class="fas fa-pause"></i>
-                                <span>Pausar</span>
-                            </button>
-                        `
-        : ""
-      }
-                        ${canResume
-        ? `
-                            <button onclick="resumeTask('${dateStr}', '${task.id}')"
-                                    class="flex items-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm"
-                                    title="Reanudar tarea pausada">
-                                <i class="fas fa-play"></i>
-                                <span>Reanudar</span>
-                            </button>
-                        `
-        : ""
-      }
-                        <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
-                                class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
-                                title="Editar título, descripción, hora y prioridad">
-                            <i class="fas fa-edit text-sm"></i>
-                        </button>
-                        <button onclick="showDayChangeLog('${dateStr}')"
-                                class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
-                                title="Ver registro de cambios del día">
-                            <i class="fas fa-history text-sm"></i>
-                        </button>
-                        <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
-                                class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
-                                title="Eliminar tarea permanentemente">
-                            <i class="fas fa-trash text-sm"></i>
-                        </button>
+                <!-- Información de la tarea -->
+                <div class="flex-1">
+                    <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
+                    ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
+                    <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
+                        ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ""}
+                        <div class="text-gray-500">${state.label}</div>
+                        ${task.completedLate ? `<div class="text-orange-600"><i class="fas fa-clock mr-1"></i>Completada con retraso</div>` : ''}
                     </div>
-                `
-      : ""
-    }
+                </div>
+            </div>
+            
+            <!-- Botones de acción - SIEMPRE DISPONIBLES -->
+            <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
+                ${canPause ? `
+                    <button onclick="pauseTask('${dateStr}', '${task.id}')"
+                            class="flex items-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm"
+                            title="Pausar tarea activa">
+                        <i class="fas fa-pause"></i>
+                        <span>Pausar</span>
+                    </button>
+                ` : ""}
+                ${canResume ? `
+                    <button onclick="resumeTask('${dateStr}', '${task.id}')"
+                            class="flex items-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm"
+                            title="Reanudar tarea pausada">
+                        <i class="fas fa-play"></i>
+                        <span>Reanudar</span>
+                    </button>
+                ` : ""}
+                <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
+                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
+                        title="Editar título, descripción, hora y prioridad">
+                    <i class="fas fa-edit text-sm"></i>
+                </button>
+                <button onclick="showDayChangeLog('${dateStr}')"
+                        class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
+                        title="Ver registro de cambios del día">
+                    <i class="fas fa-history text-sm"></i>
+                </button>
+                <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
+                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
+                        title="Eliminar tarea permanentemente">
+                    <i class="fas fa-trash text-sm"></i>
+                </button>
             </div>
         </div>
-    `;
+    </div>
+  `;
 }
+
+// NUEVA FUNCIÓN: Cambio de estado con tracking de retraso
+function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  const oldState = task.state || "pending";
+  if ( oldState === newState ) return;
+
+  const isPastDate = isDatePast( dateStr );
+  const isLate = checkIfTaskIsLate( dateStr, task.time );
+
+  // Confirmación especial para tareas completadas con retraso
+  if ( isPastDate && newState === 'completed' && oldState !== 'completed' ) {
+    const confirmMsg = "⚠️ Esta tarea está retrasada.\n\n¿Marcar como completada con retraso?\n(Se registrará en el historial)";
+    if ( !confirm( confirmMsg ) ) {
+      const dropdown = document.querySelector( `select[onchange*="${taskId}"]` );
+      if ( dropdown ) dropdown.value = oldState;
+      return;
+    }
+
+    // Marcar como completada con retraso
+    task.completedLate = true;
+    task.completedAt = new Date().toISOString();
+  }
+
+  // Confirmación para reversar completadas
+  if ( oldState === "completed" && newState !== "completed" ) {
+    if ( !confirm( "¿Estás seguro de que quieres cambiar una tarea completada?" ) ) {
+      const dropdown = document.querySelector( `select[onchange*="${taskId}"]` );
+      if ( dropdown ) dropdown.value = oldState;
+      return;
+    }
+
+    // Remover marca de retraso si se revierte
+    delete task.completedLate;
+    delete task.completedAt;
+  }
+
+  task.state = newState;
+  task.completed = ( task.state === "completed" );
+
+  // Registrar cambio con contexto de retraso
+  let actionType = "stateChanged";
+  let logMessage = task.title;
+
+  if ( task.completedLate && newState === 'completed' ) {
+    logMessage = `⚠️ COMPLETADA CON RETRASO - ${task.title}`;
+    console.warn( `⚠️ Tarea completada con retraso: ${task.title}` );
+  } else if ( isLate && newState !== "pending" && oldState === "pending" ) {
+    logMessage = `⚠️ RETRASADA - ${task.title}`;
+  }
+
+  if ( oldState === "inProgress" && newState === "paused" ) {
+    actionType = "paused";
+  } else if ( oldState === "paused" && newState === "inProgress" ) {
+    actionType = "resumed";
+  }
+
+  addToChangeLog( actionType, logMessage, dateStr, oldState, newState, taskId );
+
+  // Limpiar notificaciones si se completa
+  if ( task.state === "completed" ) {
+    clearTaskNotifications( taskId );
+  }
+
+  saveTasks();
+  renderCalendar();
+  updateProgress();
+  enqueueSync( "upsert", dateStr, task );
+
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
+  }
+
+  const stateInfo = TASK_STATES[ task.state ];
+  const notifType = task.completedLate ? "warning" : "success";
+  showNotification(
+    task.completedLate ? `⚠️ Completada con retraso - ${stateInfo.label}` : `Tarea: ${stateInfo.label}`,
+    notifType
+  );
+}
+
 
 // FUNCIONES PARA PAUSAR Y REANUDAR
 function pauseTask( dateStr, taskId ) {
@@ -3107,7 +3222,9 @@ function deleteTaskFromPanel( dateStr, taskId ) {
   }
 }
 
-// Modal de edición avanzada
+// ============================================
+// Edicion avanzada de tareas
+// ============================================
 function showAdvancedEditModal( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
   if ( !task ) {
@@ -3115,152 +3232,115 @@ function showAdvancedEditModal( dateStr, taskId ) {
     return;
   }
 
-  if ( isDatePast( dateStr ) ) {
-    showNotification( "No puedes editar tareas de fechas pasadas", "error" );
-    return;
-  }
-
   // Cerrar cualquier modal existente
   closeAllModals();
 
+  // ✅ NUEVO: Buscar si hay tareas repetidas (mismo título y hora)
+  const similarTasks = findSimilarTasks( task.title, task.time );
+  const hasRecurring = similarTasks.count > 1;
+
   const modal = document.createElement( "div" );
   modal.id = "advancedEditModal";
-  modal.className =
-    "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
 
   modal.innerHTML = `
-        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-semibold text-gray-800">
-                    <i class="fas fa-edit text-blue-500 mr-2"></i>Editar Tarea
-                </h3>
-                <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <form id="advancedEditTaskForm" class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Título <span class="text-red-500">*</span></label>
-                    <input type="text" id="advancedEditTaskTitle" value="${task.title || ""}" required 
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                    <textarea id="advancedEditTaskDescription" rows="3" 
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ""}</textarea>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
-                        <input type="time" id="advancedEditTaskTime" value="${task.time || ""}" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
-                        <select id="advancedEditTaskPriority" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="" disabled>Selecciona una prioridad</option>
-                            <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
-                            <option value="2" ${task.priority === 2 ? "selected" : ""}>🟠 Importante</option>
-                            <option value="3" ${task.priority === 3 ? "selected" : ""}>🔵 Moderado</option>
-                            <option value="4" ${task.priority === 4 ? "selected" : ""}>⚫ No Prioritario</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="bg-blue-50 p-3 rounded-lg">
-                    <p class="text-sm text-blue-700">
-                        <i class="fas fa-info-circle mr-1"></i>
-                        Estado actual: <strong>${TASK_STATES[ task.state ].label}</strong>
-                        <br>
-                        <span class="text-xs">Usa los controles en el panel principal para cambiar el estado.</span>
-                    </p>
-                </div>
-                <div class="flex space-x-3 pt-4 border-t">
-                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
-                        <i class="fas fa-save mr-2"></i>Guardar Cambios
-                    </button>
-                    <button type="button" onclick="closeAllModals()" 
-                            class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
-                        Cancelar
-                    </button>
-                </div>
-            </form>
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-edit text-blue-500 mr-2"></i>Editar Tarea
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <!-- ✅ NUEVO: Botón de edición masiva (solo si hay tareas recurrentes) -->
+      ${hasRecurring ? `
+        <div class="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+          <div class="flex items-center text-sm text-purple-700 mb-2">
+            <i class="fas fa-info-circle mr-2"></i>
+            <span>Esta tarea se repite en <strong>${similarTasks.count} días</strong></span>
+          </div>
+          <button onclick="showBulkEditModal('${dateStr}', '${taskId}')" 
+                  class="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-200 flex items-center justify-center">
+            <i class="fas fa-layer-group mr-2"></i>
+            Editar en Múltiples Días
+          </button>
         </div>
-    `;
+      ` : ''}
+
+      <!-- Formulario de edición individual -->
+      <form id="advancedEditTaskForm" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            Título <span class="text-red-500">*</span>
+          </label>
+          <input type="text" id="advancedEditTaskTitle" value="${task.title || ""}" required 
+                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
+          <textarea id="advancedEditTaskDescription" rows="3" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ""}</textarea>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Hora <span class="text-red-500">*</span>
+            </label>
+            <input type="time" id="advancedEditTaskTime" value="${task.time || ""}" required
+                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Prioridad <span class="text-red-500">*</span>
+            </label>
+            <select id="advancedEditTaskPriority" required 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+              <option value="" disabled>Selecciona una prioridad</option>
+              <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
+              <option value="2" ${task.priority === 2 ? "selected" : ""}>🟠 Importante</option>
+              <option value="3" ${task.priority === 3 ? "selected" : ""}>🔵 Moderado</option>
+              <option value="4" ${task.priority === 4 ? "selected" : ""}>⚫ No Prioritario</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="bg-blue-50 p-3 rounded-lg">
+          <p class="text-sm text-blue-700">
+            <i class="fas fa-info-circle mr-1"></i>
+            Estado actual: <strong>${TASK_STATES[ task.state ].label}</strong>
+            <br>
+            <span class="text-xs">Usa los controles en el panel principal para cambiar el estado.</span>
+          </p>
+        </div>
+
+        <div class="flex space-x-3 pt-4 border-t">
+          <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+            <i class="fas fa-save mr-2"></i>Guardar Solo Esta Tarea
+          </button>
+          <button type="button" onclick="closeAllModals()" 
+                  class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
 
   document.body.appendChild( modal );
 
   // Event listener para el formulario
-  document
-    .getElementById( "advancedEditTaskForm" )
-    .addEventListener( "submit", ( e ) => {
-      e.preventDefault();
-      updateAdvancedTaskFromPanelImproved( dateStr, taskId );
-    } );
+  document.getElementById( "advancedEditTaskForm" ).addEventListener( "submit", ( e ) => {
+    e.preventDefault();
+    updateAdvancedTaskFromPanelImproved( dateStr, taskId );
+  } );
 }
 
 function canMoveTask( task ) {
-  return task.priority > 2; // Solo prioridad 3 (Moderado) y 4 (No Prioritario) pueden moverse
-}
-
-function changeTaskStateDirect( dateStr, taskId, newState ) {
-  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
-  if ( !task ) return;
-
-  const oldState = task.state || "pending";
-  if ( oldState === newState ) return;
-
-  // ✅ DETECTAR SI LA TAREA ESTÁ RETRASADA
-  const isLate = checkIfTaskIsLate( dateStr, task.time );
-
-  if ( oldState === "completed" && newState !== "completed" ) {
-    if ( !confirm( "¿Estás seguro de que quieres cambiar una tarea completada?" ) ) {
-      const dropdown = document.querySelector( `select[onchange*="${taskId}"]` );
-      if ( dropdown ) dropdown.value = oldState;
-      return;
-    }
-  }
-
-  task.state = newState;
-  task.completed = ( task.state === "completed" );
-
-  // ✅ REGISTRAR SI ESTÁ RETRASADA
-  let actionType = "stateChanged";
-  let logMessage = task.title;
-
-  if ( isLate && newState !== "pending" && oldState === "pending" ) {
-    logMessage = `⚠️ RETRASADA - ${task.title}`;
-    console.warn( `⚠️ Tarea retrasada detectada: ${task.title}` );
-  }
-
-  if ( oldState === "inProgress" && newState === "paused" ) {
-    actionType = "paused";
-  } else if ( oldState === "paused" && newState === "inProgress" ) {
-    actionType = "resumed";
-  }
-
-  addToChangeLog( actionType, logMessage, dateStr, oldState, newState, taskId );
-
-  // ✅ Limpiar notificaciones si se completa
-  if ( task.state === "completed" ) {
-    clearTaskNotifications( taskId );
-  }
-
-  saveTasks();
-  renderCalendar();
-  updateProgress();
-  enqueueSync( "upsert", dateStr, task );
-
-  if ( selectedDateForPanel === dateStr ) {
-    const day = new Date( dateStr + "T12:00:00" ).getDate();
-    showDailyTaskPanel( dateStr, day );
-  }
-
-  const stateInfo = TASK_STATES[ task.state ];
-  const notifType = isLate && newState !== "pending" ? "warning" : "success";
-  showNotification(
-    isLate ? `⚠️ Tarea retrasada - ${stateInfo.label}` : `Tarea: ${stateInfo.label}`,
-    notifType
-  );
+  return task.priority > 2;
 }
 
 // FUNCIÓN AUXILIAR: Verificar si una tarea está retrasada
@@ -3285,7 +3365,7 @@ function checkIfTaskIsLate( dateStr, taskTime ) {
   return false;
 }
 
-// ✅ NUEVA: Limpiar notificaciones cuando se completa/elimina una tarea
+// NUEVA: Limpiar notificaciones cuando se completa/elimina una tarea
 function clearTaskNotifications( taskId ) {
   const keysToRemove = [
     `${taskId}-15min`,
@@ -3380,11 +3460,6 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
   if ( !task ) {
     showNotification( "Tarea no encontrada", "error" );
-    return;
-  }
-
-  if ( isDatePast( dateStr ) ) {
-    showNotification( "No puedes editar tareas de fechas pasadas", "error" );
     return;
   }
 
@@ -3619,15 +3694,15 @@ function showQuickAddTask( dateStr ) {
         return;
       }
 
-      // ✅ CORREGIDO: Crear tarea SIEMPRE en estado pending
+      //CORREGIDO: Crear tarea SIEMPRE en estado pending
       const task = {
         id: `${dateStr}-${Date.now()}`,
         title,
         description,
         time,
         priority,
-        state: "pending", // ✅ FORZAR pendiente
-        completed: false, // ✅ FORZAR no completada
+        state: "pending", //FORZAR pendiente
+        completed: false, //FORZAR no completada
       };
 
       addTaskToDate( dateStr, task );
@@ -4258,14 +4333,14 @@ function startNotificationService() {
   // Verificación inmediata
   setTimeout( () => {
     checkDailyTasksImproved();
-    sendTasksToServiceWorker(); // ✅ Enviar al SW
+    sendTasksToServiceWorker(); //Enviar al SW
   }, 1000 );
 
   // Intervalo cada 30 segundos (más frecuente)
   notificationInterval = setInterval( () => {
     if ( notificationsEnabled && Notification.permission === "granted" ) {
       checkDailyTasksImproved();
-      sendTasksToServiceWorker(); // ✅ Mantener SW actualizado
+      sendTasksToServiceWorker(); //Mantener SW actualizado
     } else {
       stopNotificationService();
     }
@@ -4349,7 +4424,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
     const taskTimeInMinutes = taskHours * 60 + taskMinutes;
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-    // ✅ 1. NOTIFICACIÓN: 15 minutos antes
+    //1. NOTIFICACIÓN: 15 minutos antes
     const reminderKey = `${task.id}-15min`;
     if ( !notificationStatus.taskReminders.has( reminderKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes - 15 &&
@@ -4368,7 +4443,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       console.log( `✅ Notificación 15min enviada: ${task.title}` );
     }
 
-    // ✅ 2. NOTIFICACIÓN: Hora exacta (SIN CAMBIAR ESTADO)
+    //2. NOTIFICACIÓN: Hora exacta (SIN CAMBIAR ESTADO)
     const startKey = `${task.id}-start`;
     if ( !notificationStatus.taskReminders.has( startKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes &&
@@ -4378,7 +4453,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
 
 
-      // ✅ SOLO notificar
+      //SOLO notificar
       showDesktopNotificationPWA(
         `🔔 Es hora de: ${task.title}`,
         `${priority.label} programada para ${task.time}`,
@@ -4397,7 +4472,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       console.log( `✅ Notificación hora exacta enviada: ${task.title}` );
     }
 
-    // ✅ 3. NOTIFICACIÓN: Tarea retrasada (30 minutos después)
+    //3. NOTIFICACIÓN: Tarea retrasada (30 minutos después)
     const lateKey = `${task.id}-late`;
     if ( !notificationStatus.taskReminders.has( lateKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes + 30 &&
@@ -4521,6 +4596,427 @@ function showNotification( message, type = "success" ) {
     notification.classList.add( "translate-x-full" );
     setTimeout( () => notification.remove(), 300 );
   }, 3000 );
+}
+
+// ============================================
+// NUEVA FUNCIÓN: Modal de edición masiva
+// ============================================
+
+function showBulkEditModal( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Tarea no encontrada", "error" );
+    return;
+  }
+
+  closeAllModals();
+
+  const modal = document.createElement( "div" );
+  modal.id = "bulkEditModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-layer-group text-blue-500 mr-2"></i>Editar Tarea Recurrente
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <!-- Información de la tarea -->
+      <div class="bg-blue-50 p-3 rounded-lg mb-4">
+        <p class="text-sm text-blue-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>Tarea:</strong> ${task.title}
+        </p>
+        <p class="text-xs text-blue-600 mt-1">
+          Esta tarea se repite en múltiples días. Selecciona cómo deseas editarla:
+        </p>
+      </div>
+
+      <!-- Opciones de edición -->
+      <div class="space-y-3 mb-6">
+        <button onclick="editSingleTask('${dateStr}', '${taskId}')" 
+                class="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 p-4 rounded-lg transition text-left">
+          <div class="flex items-center">
+            <i class="fas fa-calendar-day text-2xl mr-3"></i>
+            <div>
+              <div class="font-semibold">Editar solo esta tarea</div>
+              <div class="text-xs opacity-75">Cambios solo en ${new Date( dateStr + 'T12:00:00' ).toLocaleDateString( 'es-ES' )}</div>
+            </div>
+          </div>
+        </button>
+
+        <button onclick="showBulkEditForm('${dateStr}', '${taskId}', 'all')" 
+                class="w-full bg-green-100 hover:bg-green-200 text-green-800 p-4 rounded-lg transition text-left">
+          <div class="flex items-center">
+            <i class="fas fa-calendar-alt text-2xl mr-3"></i>
+            <div>
+              <div class="font-semibold">Editar en todos los días</div>
+              <div class="text-xs opacity-75">Buscar y actualizar todas las ocurrencias</div>
+            </div>
+          </div>
+        </button>
+
+        <button onclick="showCustomDatesSelector('${dateStr}', '${taskId}')" 
+                class="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 p-4 rounded-lg transition text-left">
+          <div class="flex items-center">
+            <i class="fas fa-calendar-check text-2xl mr-3"></i>
+            <div>
+              <div class="font-semibold">Editar en días personalizados</div>
+              <div class="text-xs opacity-75">Selecciona fechas específicas</div>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      <button onclick="closeAllModals()" 
+              class="w-full bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
+        Cancelar
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+}
+
+// ============================================
+// FUNCIÓN: Editar solo una tarea
+// ============================================
+
+function editSingleTask( dateStr, taskId ) {
+  closeAllModals();
+  showAdvancedEditModal( dateStr, taskId );
+}
+
+// ============================================
+// FUNCIÓN: Formulario de edición masiva
+// ============================================
+
+function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  const modal = document.createElement( "div" );
+  modal.id = "bulkEditFormModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-edit text-green-500 mr-2"></i>Edición Masiva
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-4">
+        <p class="text-sm text-yellow-800">
+          <i class="fas fa-exclamation-triangle mr-1"></i>
+          Los cambios se aplicarán a <strong>todas las ocurrencias</strong> de esta tarea
+        </p>
+      </div>
+
+      <form id="bulkEditForm" class="space-y-4">
+        <input type="hidden" id="bulkMode" value="${mode}">
+        <input type="hidden" id="originalTitle" value="${task.title}">
+        <input type="hidden" id="originalTime" value="${task.time || ''}">
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            Nuevo Título <span class="text-red-500">*</span>
+          </label>
+          <input type="text" id="bulkEditTitle" value="${task.title}" required 
+                 class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            Nueva Descripción
+          </label>
+          <textarea id="bulkEditDescription" rows="3" 
+                    class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">${task.description || ''}</textarea>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Nueva Hora <span class="text-red-500">*</span>
+            </label>
+            <input type="time" id="bulkEditTime" value="${task.time || ''}" required
+                   class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Nueva Prioridad <span class="text-red-500">*</span>
+            </label>
+            <select id="bulkEditPriority" required class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">
+              <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
+              <option value="2" ${task.priority === 2 ? "selected" : ""}>🟠 Importante</option>
+              <option value="3" ${task.priority === 3 ? "selected" : ""}>🔵 Moderado</option>
+              <option value="4" ${task.priority === 4 ? "selected" : ""}>⚫ No Prioritario</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="bulkEditPreview" class="bg-gray-50 p-3 rounded text-sm text-gray-700">
+          <i class="fas fa-search mr-1"></i>
+          Buscando tareas similares...
+        </div>
+
+        <div class="flex space-x-3 pt-4 border-t">
+          <button type="submit" class="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">
+            <i class="fas fa-save mr-2"></i>Aplicar Cambios
+          </button>
+          <button type="button" onclick="closeAllModals()" 
+                  class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+
+  // Buscar tareas similares
+  setTimeout( () => findSimilarTasks( task.title, task.time ), 100 );
+
+  // Event listener
+  document.getElementById( "bulkEditForm" ).addEventListener( "submit", ( e ) => {
+    e.preventDefault();
+    applyBulkEdit( dateStr, taskId );
+  } );
+}
+
+// ============================================
+// FUNCIÓN: Buscar tareas similares
+// ============================================
+
+function findSimilarTasks( title, time ) {
+  let matchCount = 0;
+  const dates = [];
+
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    dayTasks.forEach( task => {
+      if ( task.title === title && task.time === time ) {
+        matchCount++;
+        dates.push( date );
+      }
+    } );
+  } );
+
+  const preview = document.getElementById( "bulkEditPreview" );
+  if ( preview ) {
+    if ( matchCount > 1 ) {
+      preview.innerHTML = `
+        <i class="fas fa-check-circle text-green-600 mr-1"></i>
+        Se encontraron <strong>${matchCount} tareas idénticas</strong> en el calendario
+        <div class="text-xs mt-2 text-gray-500">
+          Fechas: ${dates.slice( 0, 5 ).map( d => new Date( d + 'T12:00:00' ).toLocaleDateString( 'es-ES', { day: 'numeric', month: 'short' } ) ).join( ', ' )}
+          ${matchCount > 5 ? ` y ${matchCount - 5} más` : ''}
+        </div>
+      `;
+    } else {
+      preview.innerHTML = `
+        <i class="fas fa-info-circle text-blue-600 mr-1"></i>
+        Solo se encontró esta tarea (no hay repeticiones)
+      `;
+    }
+  }
+
+  return { count: matchCount, dates };
+}
+
+// ============================================
+// FUNCIÓN: Aplicar edición masiva
+// ============================================
+function applyBulkEdit( dateStr, taskId ) {
+  const originalTitle = document.getElementById( "originalTitle" ).value;
+  const originalTime = document.getElementById( "originalTime" ).value;
+  const newTitle = document.getElementById( "bulkEditTitle" ).value.trim();
+  const newDescription = document.getElementById( "bulkEditDescription" ).value.trim();
+  const newTime = document.getElementById( "bulkEditTime" ).value;
+  const newPriority = parseInt( document.getElementById( "bulkEditPriority" ).value );
+  const mode = document.getElementById( "bulkMode" ).value;
+
+  if ( !newTitle || !newTime ) {
+    showNotification( "Completa todos los campos obligatorios", "error" );
+    return;
+  }
+
+  let updatedCount = 0;
+  let targetDates = [];
+
+  // Determinar qué fechas actualizar según el modo
+  if ( mode === 'custom' && window.selectedCustomDates ) {
+    targetDates = window.selectedCustomDates;
+  } else {
+    // Modo 'all': buscar todas las fechas con tareas idénticas
+    Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+      if ( dayTasks.some( t => t.title === originalTitle && t.time === originalTime ) ) {
+        targetDates.push( date );
+      }
+    } );
+  }
+
+  if ( targetDates.length === 0 ) {
+    showNotification( "No se encontraron tareas para actualizar", "error" );
+    return;
+  }
+
+  // Confirmar antes de aplicar cambios masivos
+  const confirmMsg = `¿Actualizar ${targetDates.length} tarea${targetDates.length > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}?`;
+  if ( !confirm( confirmMsg ) ) {
+    return;
+  }
+
+  // Actualizar tareas en las fechas seleccionadas
+  targetDates.forEach( ( date ) => {
+    if ( !tasks[ date ] ) return;
+
+    tasks[ date ].forEach( ( task, index ) => {
+      if ( task.title === originalTitle && task.time === originalTime ) {
+        // Actualizar tarea manteniendo su estado
+        tasks[ date ][ index ] = {
+          ...task,
+          title: newTitle,
+          description: newDescription,
+          time: newTime,
+          priority: newPriority
+        };
+
+        // Sync individual
+        enqueueSync( "upsert", date, tasks[ date ][ index ] );
+        updatedCount++;
+
+        // Registrar cambio
+        addToChangeLog( "edited", newTitle, date, null, null, task.id );
+      }
+    } );
+  } );
+
+  // Limpiar fechas personalizadas guardadas
+  delete window.selectedCustomDates;
+
+  saveTasks();
+  renderCalendar();
+  updateProgress();
+
+  closeAllModals();
+  showNotification(
+    `✅ ${updatedCount} tarea${updatedCount > 1 ? 's' : ''} actualizada${updatedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
+    "success"
+  );
+
+  // Actualizar panel si está abierto
+  if ( selectedDateForPanel ) {
+    const day = new Date( selectedDateForPanel + "T12:00:00" ).getDate();
+    showDailyTaskPanel( selectedDateForPanel, day );
+  }
+}
+
+// ============================================
+// FUNCIÓN: Selector de fechas personalizadas
+// ============================================
+
+function showCustomDatesSelector( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  // Encontrar todas las fechas con esta tarea
+  const matchingDates = [];
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    if ( dayTasks.some( t => t.title === task.title && t.time === task.time ) ) {
+      matchingDates.push( date );
+    }
+  } );
+
+  const modal = document.createElement( "div" );
+  modal.id = "customDatesModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-calendar-check text-purple-500 mr-2"></i>Seleccionar Fechas
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <p class="text-sm text-gray-600 mb-4">
+        Selecciona las fechas donde deseas aplicar los cambios:
+      </p>
+
+      <div class="mb-4">
+        <label class="flex items-center space-x-2 bg-blue-50 p-2 rounded cursor-pointer">
+          <input type="checkbox" id="selectAllDates" onchange="toggleAllDates(this)" class="rounded">
+          <span class="text-sm font-medium">Seleccionar todas (${matchingDates.length} fechas)</span>
+        </label>
+      </div>
+
+      <div id="datesGrid" class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-60 overflow-y-auto mb-4">
+        ${matchingDates.map( date => {
+    const dateObj = new Date( date + 'T12:00:00' );
+    const formattedDate = dateObj.toLocaleDateString( 'es-ES', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    } );
+    return `
+            <label class="flex items-center space-x-2 bg-gray-50 p-2 rounded hover:bg-gray-100 cursor-pointer">
+              <input type="checkbox" value="${date}" class="custom-date-checkbox rounded" checked>
+              <span class="text-sm">${formattedDate}</span>
+            </label>
+          `;
+  } ).join( '' )}
+      </div>
+
+      <div class="flex space-x-3">
+        <button onclick="proceedWithCustomDates('${dateStr}', '${taskId}')" 
+                class="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700">
+          <i class="fas fa-arrow-right mr-2"></i>Continuar con Selección
+        </button>
+        <button onclick="closeAllModals()" 
+                class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+}
+
+function toggleAllDates( checkbox ) {
+  const checkboxes = document.querySelectorAll( '.custom-date-checkbox' );
+  checkboxes.forEach( cb => cb.checked = checkbox.checked );
+}
+
+function proceedWithCustomDates( dateStr, taskId ) {
+  const selectedDates = Array.from( document.querySelectorAll( '.custom-date-checkbox:checked' ) )
+    .map( cb => cb.value );
+
+  if ( selectedDates.length === 0 ) {
+    showNotification( "Selecciona al menos una fecha", "error" );
+    return;
+  }
+
+  // Guardar fechas seleccionadas y mostrar formulario
+  window.selectedCustomDates = selectedDates;
+  showBulkEditForm( dateStr, taskId, 'custom' );
 }
 
 function saveTasks() {
@@ -4682,11 +5178,17 @@ function saveTasks() {
 document.addEventListener( "DOMContentLoaded", function () {
   console.log( '🚀 Inicializando aplicación...' );
 
-  // 1. Verificar estado de red PRIMERO
+  // Verificar estado de red PRIMERO
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  // 2. Cargar datos locales
+  // NUEVO: Verificar sesión guardada
+  const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
+  if ( hadActiveSession ) {
+    console.log( '🔐 Detectada sesión previa, esperando restauración...' );
+  }
+
+  // Cargar datos locales
   loadTasks();
   loadPermissions();
 
@@ -4698,10 +5200,10 @@ document.addEventListener( "DOMContentLoaded", function () {
   setupTaskTooltips();
   setupDateInput();
 
-  // 4. Configurar notificaciones
+  // Configurar notificaciones
   initNotifications();
 
-  // 5. Inicializar Firebase solo si hay conexión
+  // Inicializar Firebase solo si hay conexión
   if ( isOnline ) {
     initFirebase();
   } else {
@@ -4710,7 +5212,7 @@ document.addEventListener( "DOMContentLoaded", function () {
     hideLoadingScreen();
   }
 
-  // 6. Configuraciones PWA (SOLO UNA VEZ)
+  // Configuraciones PWA (SOLO UNA VEZ)
   setTimeout( () => {
     // Service Worker messages
     handleServiceWorkerMessages();
