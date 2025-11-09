@@ -1,8 +1,7 @@
 // ====================================
 // SERVICE WORKER CON FIREBASE INTEGRADO
 // ====================================
-
-const CACHE_NAME = 'TaskSmart-app-1.2';
+const CACHE_NAME = 'TaskSmart-app-1.4';
 const FIREBASE_CONFIG = {
     apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
     authDomain: "calendario-tareas-app.firebaseapp.com",
@@ -22,6 +21,9 @@ let db = null;
 let auth = null;
 let messaging = null;
 let currentUserId = null;
+
+// NUEVO: Intervalo de verificación de notificaciones (cada 1 minuto)
+let notificationCheckInterval = null;
 
 // Inicializar Firebase en el SW
 function initFirebaseInSW() {
@@ -52,23 +54,29 @@ self.addEventListener( 'message', async ( event ) => {
         await saveUserIdToCache( data.userId );
         console.log( '👤 Usuario guardado en SW:', currentUserId );
 
-        // Iniciar sincronización automática
-        if ( currentUserId ) {
-            startPeriodicSync();
-        }
+        // CRÍTICO: Iniciar verificación continua de notificaciones
+        startContinuousNotificationCheck();
+        startPeriodicSync();
     }
 
     if ( type === 'LOGOUT' ) {
         currentUserId = null;
         await clearUserCache();
+        stopContinuousNotificationCheck(); // Detener verificaciones
         console.log( '👋 Usuario deslogueado del SW' );
+    }
+
+    // NUEVO: Forzar verificación inmediata desde app.js
+    if ( type === 'CHECK_NOTIFICATIONS_NOW' ) {
+        console.log( '🔔 Verificación de notificaciones forzada desde app' );
+        await checkNotificationsBackground();
     }
 } );
 
 // Guardar userId en IndexedDB (persiste entre reinicios)
 async function saveUserIdToCache( userId ) {
     const cache = await caches.open( 'user-data' );
-    const response = new Response( JSON.stringify( { userId } ) );
+    const response = new Response( JSON.stringify( { userId, timestamp: Date.now() } ) );
     await cache.put( new Request( '/user-session' ), response );
 }
 
@@ -95,6 +103,34 @@ async function clearUserCache() {
 }
 
 // ====================================
+// 🚀 VERIFICACIÓN CONTINUA DE NOTIFICACIONES (CLAVE)
+// ====================================
+
+function startContinuousNotificationCheck() {
+    if ( notificationCheckInterval ) {
+        clearInterval( notificationCheckInterval );
+    }
+
+    // CRÍTICO: Verificar cada 1 minuto (incluso con app cerrada)
+    notificationCheckInterval = setInterval( async () => {
+        if ( currentUserId ) {
+            console.log( '🔍 Verificando notificaciones en background...' );
+            await checkNotificationsBackground();
+        }
+    }, 60 * 1000 ); // 1 minuto
+
+    console.log( '✅ Verificación continua de notificaciones iniciada (cada 1 min)' );
+}
+
+function stopContinuousNotificationCheck() {
+    if ( notificationCheckInterval ) {
+        clearInterval( notificationCheckInterval );
+        notificationCheckInterval = null;
+        console.log( '⏹️ Verificación continua detenida' );
+    }
+}
+
+// ====================================
 // SINCRONIZACIÓN AUTOMÁTICA DE TAREAS
 // ====================================
 
@@ -103,15 +139,15 @@ let syncInterval = null;
 function startPeriodicSync() {
     if ( syncInterval ) clearInterval( syncInterval );
 
-    // Sync cada 5 minutos (incluso con app cerrada)
+    // Sync cada 5 minutos (actualizar tareas desde Firebase)
     syncInterval = setInterval( async () => {
         if ( currentUserId ) {
+            console.log( '🔄 Sincronizando tareas desde Firebase...' );
             await syncTasksFromFirebase();
-            await checkNotificationsBackground();
         }
     }, 5 * 60 * 1000 ); // 5 minutos
 
-    console.log( '🔄 Sincronización periódica iniciada' );
+    console.log( '🔄 Sincronización periódica iniciada (cada 5 min)' );
 }
 
 async function syncTasksFromFirebase() {
@@ -141,7 +177,8 @@ async function syncTasksFromFirebase() {
                 time: task.time,
                 state: task.state || 'pending',
                 priority: task.priority || 3,
-                date: date
+                date: date,
+                description: task.description || ''
             } );
         } );
 
@@ -185,11 +222,16 @@ async function checkNotificationsBackground() {
     const today = formatDate( now );
     const todayTasks = tasks[ today ] || [];
 
+    if ( todayTasks.length === 0 ) {
+        console.log( '📭 No hay tareas para hoy' );
+        return;
+    }
+
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-    console.log( `⏰ Verificando notificaciones - ${currentHour}:${String( currentMinute ).padStart( 2, '0' )}` );
+    console.log( `⏰ Verificando ${todayTasks.length} tareas - ${String( currentHour ).padStart( 2, '0' )}:${String( currentMinute ).padStart( 2, '0' )}` );
 
     for ( const task of todayTasks ) {
         if ( !task.time || task.state === 'completed' ) continue;
@@ -198,36 +240,36 @@ async function checkNotificationsBackground() {
         const taskTimeInMinutes = taskHours * 60 + taskMinutes;
         const timeDiff = currentTimeInMinutes - taskTimeInMinutes;
 
-        // 15 minutos antes
+        // 🔔 15 minutos antes
         if ( timeDiff >= -15 && timeDiff <= -13 && task.state === 'pending' ) {
             await sendBackgroundNotification( {
                 title: `⏰ Recordatorio: ${task.title}`,
                 body: `Inicia en 15 minutos (${task.time})`,
                 tag: `${task.id}-15min`,
                 requireInteraction: false,
-                data: { taskId: task.id, type: 'reminder' }
+                data: { taskId: task.id, type: 'reminder', date: today }
             } );
         }
 
-        // Hora exacta
+        // 🔔 Hora exacta
         if ( timeDiff >= 0 && timeDiff <= 2 && task.state === 'pending' ) {
             await sendBackgroundNotification( {
                 title: `🔔 Es hora de: ${task.title}`,
                 body: `Programada para ${task.time}`,
                 tag: `${task.id}-start`,
                 requireInteraction: true,
-                data: { taskId: task.id, type: 'start' }
+                data: { taskId: task.id, type: 'start', date: today }
             } );
         }
 
-        // Retrasada (30 minutos después)
+        // ⚠️ Retrasada (30 minutos después)
         if ( timeDiff >= 30 && timeDiff <= 32 && task.state !== 'completed' ) {
             await sendBackgroundNotification( {
                 title: `⚠️ Tarea Retrasada: ${task.title}`,
-                body: 'No iniciada - 30min de retraso',
+                body: task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - 30min de retraso',
                 tag: `${task.id}-late`,
                 requireInteraction: false,
-                data: { taskId: task.id, type: 'late' }
+                data: { taskId: task.id, type: 'late', date: today }
             } );
         }
     }
@@ -250,12 +292,16 @@ async function sendBackgroundNotification( { title, body, tag, requireInteractio
             renotify: true,
             requireInteraction: requireInteraction,
             vibrate: [ 200, 100, 200 ],
-            data: data
+            data: data,
+            actions: requireInteraction ? [
+                { action: 'view', title: 'Ver Tarea', icon: '/images/IconLogo.png' },
+                { action: 'dismiss', title: 'Cerrar', icon: '/images/IconLogo.png' }
+            ] : []
         } );
 
         // Marcar como enviada
         await markNotificationAsSent( tag );
-        console.log( `✅ Notificación enviada: ${tag}` );
+        console.log( `✅ Notificación enviada: ${tag} - ${title}` );
     } catch ( error ) {
         console.error( `❌ Error enviando notificación ${tag}:`, error );
     }
@@ -274,8 +320,8 @@ async function wasNotificationSent( tag ) {
         const response = await cache.match( `/notif-${tag}` );
         if ( response ) {
             const data = await response.json();
-            // Considerar enviada si fue hace menos de 5 minutos
-            return ( Date.now() - data.timestamp ) < 5 * 60 * 1000;
+            // Considerar enviada si fue hace menos de 3 minutos
+            return ( Date.now() - data.timestamp ) < 3 * 60 * 1000;
         }
     } catch ( error ) {
         console.error( 'Error verificando notificación:', error );
@@ -283,7 +329,7 @@ async function wasNotificationSent( tag ) {
     return false;
 }
 
-// Reset diario de notificaciones (a medianoche)
+// 🔄 Reset diario de notificaciones (a medianoche)
 setInterval( async () => {
     const now = new Date();
     if ( now.getHours() === 0 && now.getMinutes() === 0 ) {
@@ -333,15 +379,27 @@ self.addEventListener( 'sync', async ( event ) => {
     }
 } );
 
+// Periodic Sync para navegadores compatibles
+self.addEventListener( 'periodicsync', async ( event ) => {
+    console.log( '🔄 Periodic Sync triggered:', event.tag );
+
+    if ( event.tag === 'check-tasks' ) {
+        event.waitUntil( Promise.all( [
+            syncTasksFromFirebase(),
+            checkNotificationsBackground()
+        ] ) );
+    }
+} );
+
 // Registrar sync periódico (solo Chrome/Edge soportan)
 async function registerPeriodicBackgroundSync() {
     try {
-        const registration = await navigator.serviceWorker.ready;
+        const registration = await self.registration;
 
-        // Periodic Sync (cada 30 minutos)
+        // Periodic Sync (cada 15 minutos - backup del intervalo)
         if ( 'periodicSync' in registration ) {
             await registration.periodicSync.register( 'check-tasks', {
-                minInterval: 30 * 60 * 1000 // 30 minutos
+                minInterval: 15 * 60 * 1000 // 15 minutos
             } );
             console.log( '✅ Periodic Background Sync registrado' );
         }
@@ -356,6 +414,12 @@ async function registerPeriodicBackgroundSync() {
 
 self.addEventListener( 'notificationclick', ( event ) => {
     event.notification.close();
+
+    const { action, data } = event;
+
+    if ( action === 'dismiss' ) {
+        return; // Solo cerrar
+    }
 
     event.waitUntil(
         clients.matchAll( { type: 'window', includeUncontrolled: true } )
@@ -374,7 +438,7 @@ self.addEventListener( 'notificationclick', ( event ) => {
 
                 // Si no está abierta, abrirla
                 if ( clients.openWindow ) {
-                    return clients.openWindow( '/' );
+                    return clients.openWindow( '/?notification=' + ( data?.taskId || '' ) );
                 }
             } )
     );
@@ -394,7 +458,7 @@ const urlsToCache = [
 ];
 
 self.addEventListener( 'install', event => {
-    console.log( '🔧 SW: Instalando versión 4.0...' );
+    console.log( '🔧 SW: Instalando versión 1.3...' );
     event.waitUntil(
         caches.open( CACHE_NAME )
             .then( cache => cache.addAll( urlsToCache ) )
@@ -403,7 +467,7 @@ self.addEventListener( 'install', event => {
 } );
 
 self.addEventListener( 'activate', event => {
-    console.log( '✅ SW: Activando...' );
+    console.log( '✅ SW: Activando v1.3...' );
     event.waitUntil(
         caches.keys()
             .then( names => Promise.all(
@@ -411,15 +475,24 @@ self.addEventListener( 'activate', event => {
                     .map( name => caches.delete( name ) )
             ) )
             .then( () => self.clients.claim() )
-            .then( () => {
+            .then( async () => {
                 // Inicializar Firebase al activar
                 initFirebaseInSW();
-                // Cargar usuario si existe
-                loadUserIdFromCache().then( userId => {
-                    if ( userId ) startPeriodicSync();
-                } );
+
+                // Cargar usuario si existe y activar verificaciones
+                const userId = await loadUserIdFromCache();
+                if ( userId ) {
+                    console.log( '✅ Usuario encontrado al activar SW:', userId );
+                    startContinuousNotificationCheck(); // CRÍTICO
+                    startPeriodicSync();
+
+                    // Sync inmediato al activar
+                    await syncTasksFromFirebase();
+                    await checkNotificationsBackground();
+                }
+
                 // Registrar periodic sync
-                registerPeriodicBackgroundSync();
+                await registerPeriodicBackgroundSync();
             } )
     );
 } );
@@ -442,4 +515,4 @@ function formatDate( date ) {
     return `${year}-${month}-${day}`;
 }
 
-console.log( '✅ Service Worker v4.0 - Firebase integrado activo' );
+console.log( '✅ Service Worker v1.3 - Notificaciones continuas activas' );

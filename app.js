@@ -1031,10 +1031,7 @@ function initFirebase() {
         if ( user && navigator.onLine ) {
           console.log( '✅ Usuario autenticado:', user.email );
 
-          //Marcar sesión activa
-          localStorage.setItem( 'firebase_auth_active', 'true' );
-
-          // Enviar userId al Service Worker
+          // ✅ CRÍTICO: Enviar userId al Service Worker
           if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
             navigator.serviceWorker.controller.postMessage( {
               type: 'SET_USER_ID',
@@ -1042,6 +1039,15 @@ function initFirebase() {
             } );
             console.log( '📤 userId enviado al Service Worker' );
           }
+
+          // ✅ NUEVO: Forzar verificación inmediata de notificaciones
+          setTimeout( () => {
+            if ( navigator.serviceWorker.controller ) {
+              navigator.serviceWorker.controller.postMessage( {
+                type: 'CHECK_NOTIFICATIONS_NOW'
+              } );
+            }
+          }, 2000 );
 
           updateSyncIndicator( "success" );
 
