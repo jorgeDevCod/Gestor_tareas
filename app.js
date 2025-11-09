@@ -3214,19 +3214,529 @@ function updatePanelProgress( dayTasks ) {
 
 //deleteTaskFromPanel con sync automático
 function deleteTaskFromPanel( dateStr, taskId ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( !task ) return;
+  deleteTaskWithOptions( dateStr, taskId );
+}
 
-  if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
-    // Usar la función mejorada que registra la eliminación
-    deleteTaskWithUndoImproved( dateStr, taskId );
+function deleteTaskWithOptions( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Tarea no encontrada", "error" );
+    return;
+  }
 
-    if ( selectedDateForPanel === dateStr ) {
-      const day = new Date( dateStr + "T12:00:00" ).getDate();
-      showDailyTaskPanel( dateStr, day );
-    }
+  // Buscar tareas similares (repetidas)
+  const similarTasks = findSimilarTasksForDelete( task.title, task.time );
+
+  if ( similarTasks.count > 1 ) {
+    // Es tarea repetida → Mostrar opciones
+    showBulkDeleteModal( dateStr, taskId, task, similarTasks );
+  } else {
+    // Tarea única → Confirmación simple
+    confirmSingleDelete( dateStr, taskId, task );
   }
 }
+
+/**
+ * Buscar tareas idénticas para eliminación
+ */
+function findSimilarTasksForDelete( title, time ) {
+  let matchCount = 0;
+  const dates = [];
+
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    dayTasks.forEach( task => {
+      if ( task.title === title && task.time === time ) {
+        matchCount++;
+        dates.push( date );
+      }
+    } );
+  } );
+
+  return { count: matchCount, dates };
+}
+
+/**
+ * Confirmación de eliminación simple
+ */
+function confirmSingleDelete( dateStr, taskId, task ) {
+  if ( confirm( `¿Eliminar la tarea "${task.title}"?\n\nEsta acción no se puede deshacer.` ) ) {
+    executeSingleDelete( dateStr, taskId, task );
+  }
+}
+
+/**
+ * Ejecutar eliminación de una sola tarea
+ */
+function executeSingleDelete( dateStr, taskId, task ) {
+  // Eliminar de Firebase
+  if ( currentUser && isOnline ) {
+    enqueueSync( "delete", dateStr, { id: taskId } );
+    setTimeout( () => {
+      if ( syncQueue.size > 0 ) {
+        processSyncQueue();
+      }
+    }, 100 );
+  }
+
+  // Registrar eliminación
+  addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+
+  // Limpiar notificaciones
+  clearTaskNotifications( taskId );
+
+  // Eliminar localmente
+  tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+  if ( tasks[ dateStr ].length === 0 ) {
+    delete tasks[ dateStr ];
+  }
+
+  saveTasks();
+  renderCalendar();
+  updateProgress();
+
+  // Actualizar panel si está abierto
+  if ( selectedDateForPanel === dateStr ) {
+    const day = new Date( dateStr + "T12:00:00" ).getDate();
+    showDailyTaskPanel( dateStr, day );
+  }
+
+  showNotification( "Tarea eliminada exitosamente", "success" );
+}
+
+// ============================================
+// MODAL DE ELIMINACIÓN MASIVA
+// ============================================
+
+/**
+ * Mostrar modal con opciones de eliminación
+ */
+function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
+  closeAllModals();
+
+  const modal = document.createElement( "div" );
+  modal.id = "bulkDeleteModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-trash-alt text-red-500 mr-2"></i>Eliminar Tarea Recurrente
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <!-- Información de la tarea -->
+      <div class="bg-red-50 border-l-4 border-red-400 p-4 rounded-lg mb-4">
+        <div class="flex items-start">
+          <i class="fas fa-exclamation-triangle text-red-600 mt-1 mr-3 flex-shrink-0"></i>
+          <div class="flex-1">
+            <p class="text-sm font-medium text-red-800">
+              <strong>Tarea:</strong> ${task.title}
+            </p>
+            ${task.time ? `<p class="text-xs text-red-600 mt-1">Hora: ${task.time}</p>` : ''}
+            <p class="text-xs text-red-600 mt-2">
+              Esta tarea se repite en <strong>${similarTasks.count} días</strong>.
+              Selecciona cómo deseas eliminarla:
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opciones de eliminación -->
+      <div class="space-y-3 mb-6">
+        <!-- Opción 1: Solo esta tarea -->
+        <button onclick="deleteSingleTaskFromBulk('${dateStr}', '${taskId}')" 
+                class="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 p-4 rounded-lg transition text-left group">
+          <div class="flex items-center">
+            <div class="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
+              <i class="fas fa-calendar-day text-lg"></i>
+            </div>
+            <div class="flex-1">
+              <div class="font-semibold">Eliminar solo esta tarea</div>
+              <div class="text-xs opacity-75 mt-1">
+                Solo en ${new Date( dateStr + 'T12:00:00' ).toLocaleDateString( 'es-ES', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long'
+  } )}
+              </div>
+            </div>
+            <i class="fas fa-chevron-right text-blue-400 ml-2"></i>
+          </div>
+        </button>
+
+        <!-- Opción 2: Todas las ocurrencias -->
+        <button onclick="showBulkDeleteConfirmation('${dateStr}', '${taskId}', 'all')" 
+                class="w-full bg-red-100 hover:bg-red-200 text-red-800 p-4 rounded-lg transition text-left group">
+          <div class="flex items-center">
+            <div class="w-10 h-10 bg-red-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
+              <i class="fas fa-calendar-alt text-lg"></i>
+            </div>
+            <div class="flex-1">
+              <div class="font-semibold">Eliminar en todos los días</div>
+              <div class="text-xs opacity-75 mt-1">
+                Buscar y eliminar todas las ${similarTasks.count} ocurrencias
+              </div>
+            </div>
+            <i class="fas fa-chevron-right text-red-400 ml-2"></i>
+          </div>
+        </button>
+
+        <!-- Opción 3: Días personalizados -->
+        <button onclick="showCustomDatesDeleteSelector('${dateStr}', '${taskId}')" 
+                class="w-full bg-orange-100 hover:bg-orange-200 text-orange-800 p-4 rounded-lg transition text-left group">
+          <div class="flex items-center">
+            <div class="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
+              <i class="fas fa-calendar-check text-lg"></i>
+            </div>
+            <div class="flex-1">
+              <div class="font-semibold">Eliminar en días personalizados</div>
+              <div class="text-xs opacity-75 mt-1">
+                Selecciona fechas específicas para eliminar
+              </div>
+            </div>
+            <i class="fas fa-chevron-right text-orange-400 ml-2"></i>
+          </div>
+        </button>
+      </div>
+
+      <!-- Botón cancelar -->
+      <button onclick="closeAllModals()" 
+              class="w-full bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+        <i class="fas fa-times mr-2"></i>Cancelar
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+}
+
+// ============================================
+// OPCIÓN 1: ELIMINAR SOLO UNA TAREA
+// ============================================
+
+function deleteSingleTaskFromBulk( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  if ( confirm( `¿Confirmas eliminar esta tarea solo del día seleccionado?\n\n"${task.title}"\n\nEsta acción no se puede deshacer.` ) ) {
+    executeSingleDelete( dateStr, taskId, task );
+  }
+}
+
+// ============================================
+// OPCIÓN 2: ELIMINAR TODAS LAS OCURRENCIAS
+// ============================================
+
+function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  // Buscar todas las fechas con esta tarea
+  const similarTasks = findSimilarTasksForDelete( task.title, task.time );
+
+  const modal = document.createElement( "div" );
+  modal.id = "bulkDeleteConfirmModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+      <div class="text-center mb-6">
+        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-exclamation-triangle text-red-600 text-3xl"></i>
+        </div>
+        <h3 class="text-xl font-bold text-gray-800 mb-2">
+          Confirmar Eliminación Masiva
+        </h3>
+        <p class="text-gray-600 text-sm">
+          Estás a punto de eliminar <strong>${similarTasks.count} tareas</strong> en ${similarTasks.count} días diferentes.
+        </p>
+      </div>
+
+      <div class="bg-gray-50 rounded-lg p-4 mb-6">
+        <div class="text-sm text-gray-700">
+          <p class="font-semibold mb-2">Tarea a eliminar:</p>
+          <p class="text-gray-800 font-medium">"${task.title}"</p>
+          ${task.time ? `<p class="text-gray-600 text-xs mt-1">Hora: ${task.time}</p>` : ''}
+        </div>
+        
+        <div class="mt-4 text-xs text-gray-500">
+          <p class="font-semibold mb-1">Primeras fechas afectadas:</p>
+          <ul class="list-disc list-inside space-y-1">
+            ${similarTasks.dates.slice( 0, 5 ).map( date => {
+    const dateObj = new Date( date + 'T12:00:00' );
+    return `<li>${dateObj.toLocaleDateString( 'es-ES', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    } )}</li>`;
+  } ).join( '' )}
+            ${similarTasks.count > 5 ? `<li class="font-semibold">... y ${similarTasks.count - 5} más</li>` : ''}
+          </ul>
+        </div>
+      </div>
+
+      <div class="bg-red-50 border-l-4 border-red-400 p-3 mb-6 text-sm text-red-700">
+        <i class="fas fa-exclamation-circle mr-2"></i>
+        <strong>Esta acción no se puede deshacer.</strong> Todas las tareas idénticas serán eliminadas permanentemente.
+      </div>
+
+      <div class="flex space-x-3">
+        <button onclick="executeBulkDelete('${dateStr}', '${taskId}', 'all')" 
+                class="flex-1 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 transition font-medium">
+          <i class="fas fa-trash-alt mr-2"></i>Sí, Eliminar Todo
+        </button>
+        <button onclick="closeAllModals()" 
+                class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+}
+
+// ============================================
+// OPCIÓN 3: SELECTOR DE DÍAS PERSONALIZADOS
+// ============================================
+
+function showCustomDatesDeleteSelector( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  // Encontrar todas las fechas con esta tarea
+  const matchingDates = [];
+  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+    if ( dayTasks.some( t => t.title === task.title && t.time === task.time ) ) {
+      matchingDates.push( date );
+    }
+  } );
+
+  const modal = document.createElement( "div" );
+  modal.id = "customDatesDeleteModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-calendar-check text-orange-500 mr-2"></i>Seleccionar Fechas para Eliminar
+        </h3>
+        <button onclick="closeAllModals()" class="text-gray-500 hover:text-gray-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div class="bg-orange-50 border-l-4 border-orange-400 p-3 mb-4 text-sm text-orange-800">
+        <p class="font-medium">Tarea: <strong>"${task.title}"</strong></p>
+        <p class="text-xs mt-1">Selecciona los días donde deseas eliminar esta tarea</p>
+      </div>
+
+      <div class="mb-4">
+        <label class="flex items-center space-x-2 bg-blue-50 p-3 rounded cursor-pointer hover:bg-blue-100 transition">
+          <input type="checkbox" id="selectAllDeleteDates" onchange="toggleAllDeleteDates(this)" class="rounded">
+          <span class="text-sm font-medium">
+            <i class="fas fa-check-double mr-2 text-blue-600"></i>
+            Seleccionar todas (${matchingDates.length} fechas)
+          </span>
+        </label>
+      </div>
+
+      <div id="deleteDatesGrid" class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-80 overflow-y-auto mb-4 border border-gray-200 rounded-lg p-3 bg-gray-50">
+        ${matchingDates.map( date => {
+    const dateObj = new Date( date + 'T12:00:00' );
+    const formattedDate = dateObj.toLocaleDateString( 'es-ES', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    } );
+    const isToday = date === getTodayString();
+    return `
+            <label class="flex items-center space-x-2 bg-white p-3 rounded-lg hover:bg-gray-100 cursor-pointer border border-gray-200 transition ${isToday ? 'ring-2 ring-blue-400' : ''}">
+              <input type="checkbox" value="${date}" class="custom-delete-date-checkbox rounded" checked>
+              <span class="text-sm flex-1">
+                ${formattedDate}
+                ${isToday ? '<span class="text-xs text-blue-600 font-semibold ml-1">(Hoy)</span>' : ''}
+              </span>
+            </label>
+          `;
+  } ).join( '' )}
+      </div>
+
+      <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-4 text-sm text-yellow-800">
+        <i class="fas fa-info-circle mr-2"></i>
+        <span id="selectedDeleteCount">${matchingDates.length} fechas seleccionadas</span>
+      </div>
+
+      <div class="flex space-x-3">
+        <button onclick="proceedWithCustomDelete('${dateStr}', '${taskId}')" 
+                class="flex-1 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 transition font-medium">
+          <i class="fas fa-trash-alt mr-2"></i>Eliminar Seleccionadas
+        </button>
+        <button onclick="closeAllModals()" 
+                class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild( modal );
+
+  // Event listener para actualizar contador
+  document.querySelectorAll( '.custom-delete-date-checkbox' ).forEach( checkbox => {
+    checkbox.addEventListener( 'change', updateDeleteCounter );
+  } );
+}
+
+function toggleAllDeleteDates( checkbox ) {
+  const checkboxes = document.querySelectorAll( '.custom-delete-date-checkbox' );
+  checkboxes.forEach( cb => cb.checked = checkbox.checked );
+  updateDeleteCounter();
+}
+
+function updateDeleteCounter() {
+  const selected = document.querySelectorAll( '.custom-delete-date-checkbox:checked' ).length;
+  const counter = document.getElementById( 'selectedDeleteCount' );
+  if ( counter ) {
+    counter.textContent = `${selected} fecha${selected !== 1 ? 's' : ''} seleccionada${selected !== 1 ? 's' : ''}`;
+  }
+}
+
+function proceedWithCustomDelete( dateStr, taskId ) {
+  const selectedDates = Array.from( document.querySelectorAll( '.custom-delete-date-checkbox:checked' ) )
+    .map( cb => cb.value );
+
+  if ( selectedDates.length === 0 ) {
+    showNotification( "Selecciona al menos una fecha", "error" );
+    return;
+  }
+
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  closeAllModals();
+
+  // Confirmación final
+  const confirmMsg = `¿Eliminar "${task.title}" en ${selectedDates.length} día${selectedDates.length > 1 ? 's' : ''}?\n\nEsta acción no se puede deshacer.`;
+  if ( !confirm( confirmMsg ) ) {
+    return;
+  }
+
+  // Guardar fechas seleccionadas y ejecutar
+  window.selectedCustomDeleteDates = selectedDates;
+  executeBulkDelete( dateStr, taskId, 'custom' );
+}
+
+// ============================================
+// EJECUCIÓN DE ELIMINACIÓN MASIVA
+// ============================================
+
+function executeBulkDelete( dateStr, taskId, mode ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) {
+    showNotification( "Tarea no encontrada", "error" );
+    return;
+  }
+
+  let targetDates = [];
+  const originalTitle = task.title;
+  const originalTime = task.time;
+
+  // Determinar fechas según modo
+  if ( mode === 'custom' && window.selectedCustomDeleteDates ) {
+    targetDates = window.selectedCustomDeleteDates;
+  } else {
+    // Modo 'all': buscar todas las fechas con tareas idénticas
+    Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
+      if ( dayTasks.some( t => t.title === originalTitle && t.time === originalTime ) ) {
+        targetDates.push( date );
+      }
+    } );
+  }
+
+  if ( targetDates.length === 0 ) {
+    showNotification( "No se encontraron tareas para eliminar", "error" );
+    return;
+  }
+
+  let deletedCount = 0;
+
+  // Eliminar tareas en las fechas seleccionadas
+  targetDates.forEach( date => {
+    if ( !tasks[ date ] ) return;
+
+    const tasksToDelete = [];
+
+    tasks[ date ].forEach( ( t, index ) => {
+      if ( t.title === originalTitle && t.time === originalTime ) {
+        tasksToDelete.push( { task: t, index } );
+      }
+    } );
+
+    // Eliminar en orden inverso para no afectar índices
+    tasksToDelete.reverse().forEach( ( { task: t, index } ) => {
+      // Sync con Firebase
+      if ( currentUser && isOnline ) {
+        enqueueSync( "delete", date, { id: t.id } );
+      }
+
+      // Registrar eliminación
+      addToChangeLog( "deleted", t.title, date, null, null, t.id );
+
+      // Limpiar notificaciones
+      clearTaskNotifications( t.id );
+
+      // Eliminar localmente
+      tasks[ date ].splice( index, 1 );
+      deletedCount++;
+    } );
+
+    // Limpiar día si quedó vacío
+    if ( tasks[ date ].length === 0 ) {
+      delete tasks[ date ];
+    }
+  } );
+
+  // Limpiar fechas personalizadas guardadas
+  delete window.selectedCustomDeleteDates;
+
+  // Procesar sync
+  if ( currentUser && isOnline ) {
+    setTimeout( () => {
+      if ( syncQueue.size > 0 ) {
+        processSyncQueue();
+      }
+    }, 100 );
+  }
+
+  saveTasks();
+  renderCalendar();
+  updateProgress();
+
+  closeAllModals();
+  showNotification(
+    `✅ ${deletedCount} tarea${deletedCount > 1 ? 's' : ''} eliminada${deletedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
+    "success"
+  );
+
+  // Actualizar panel si está abierto
+  if ( selectedDateForPanel && targetDates.includes( selectedDateForPanel ) ) {
+    const day = new Date( selectedDateForPanel + "T12:00:00" ).getDate();
+    showDailyTaskPanel( selectedDateForPanel, day );
+  }
+}
+
 
 // ============================================
 // Edicion avanzada de tareas
@@ -3596,12 +4106,7 @@ function closeDailyTaskPanel() {
 }
 
 function quickDeleteTask( dateStr, taskId ) {
-  const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
-  if ( !task ) return;
-
-  if ( confirm( `¿Eliminar la tarea "${task.title}"?` ) ) {
-    deleteTaskWithUndoImproved( dateStr, taskId );
-  }
+  deleteTaskWithOptions( dateStr, taskId );
 }
 
 //showQuickAddTask con sync automático
