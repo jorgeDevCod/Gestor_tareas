@@ -1179,7 +1179,7 @@ async function requestFCMToken() {
     // ✅ Obtener token con VAPID key correcta
     console.log( '🔑 Solicitando token FCM...' );
     const token = await messaging.getToken( {
-      vapidKey: 'TU_VAPID_KEY_AQUI' // ← REEMPLAZAR con tu clave real de Firebase Console
+      vapidKey: 'BCqZPBWf51RsALY4R4_O7teHw10TCL1fAlWlKoQB4fI8WvMCfnUePvo2Lk9VnzPR8NsNyjMdcSShGEXbi_2PWH0'
     } );
 
     if ( token ) {
@@ -1882,6 +1882,7 @@ function hideLoadingScreen() {
   }, 300 );
 }
 
+// FUNCIÓN: Iniciar sesión con Google - CORREGIDO
 async function signInWithGoogle() {
   try {
     console.log( '🔑 Iniciando login con Google...' );
@@ -1899,60 +1900,8 @@ async function signInWithGoogle() {
       prompt: 'select_account'
     } );
 
-    const result = await auth.signInWithPopup( provider );
-
-    if ( result.user ) {
-      console.log( ' Login exitoso:', result.user.email );
-
-      //  CRÍTICO: Actualizar currentUser INMEDIATAMENTE
-      currentUser = result.user;
-
-      //  Guardar sesión persistente
-      localStorage.setItem( 'firebase_auth_active', 'true' );
-      localStorage.setItem( 'firebase_user_email', result.user.email );
-      localStorage.setItem( 'firebase_user_uid', result.user.uid );
-      localStorage.setItem( 'last_sync_time', Date.now().toString() );
-
-      //  ACTUALIZAR UI INMEDIATAMENTE (antes del modal)
-      updateUI();
-      updateSyncIndicator( 'success' );
-
-      // NUEVO: Solicitar token FCM después de login
-      if ( messaging ) {
-        setTimeout( async () => {
-          await requestFCMToken();
-          setupFCMListeners();
-        }, 1000 );
-      }
-
-      //  Enviar al Service Worker
-      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-        navigator.serviceWorker.controller.postMessage( {
-          type: 'SET_USER_ID',
-          data: {
-            userId: result.user.uid,
-            email: result.user.email
-          }
-        } );
-
-        // Sincronizar tareas al SW
-        setTimeout( () => {
-          sendTasksToServiceWorker();
-        }, 500 );
-      }
-
-      //  Cerrar modal DESPUÉS de actualizar UI
-      closeLoginModal();
-
-      showNotification( 'Sesión iniciada correctamente', 'success' );
-
-      //  Sync diferido (no bloquear UI)
-      setTimeout( () => {
-        if ( isOnline && !isSyncing ) {
-          syncFromFirebase();
-        }
-      }, 1500 );
-    }
+    // Esto redirige a Google y vuelve a tu app, evitando problemas COOP
+    await auth.signInWithRedirect( provider );
 
   } catch ( error ) {
     console.error( '❌ Error en login:', error );
@@ -1969,6 +1918,12 @@ async function signInWithGoogle() {
       case 'auth/too-many-requests':
         errorMessage = 'Demasiados intentos. Intenta más tarde';
         break;
+      case 'auth/operation-not-supported-in-this-environment':
+        errorMessage = 'Este navegador no soporta popup. Usando redirección...';
+        // Fallback automático
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithRedirect( provider );
+        return;
       default:
         errorMessage = `Error: ${error.message}`;
     }
@@ -1983,6 +1938,39 @@ async function signInWithGoogle() {
     }
   }
 }
+
+// ✅ IMPORTANTE: Agregar listener para redirecciones
+// Esto se ejecuta cuando Firebase redirige de vuelta a tu app
+auth.onAuthStateChanged( ( user ) => {
+  if ( user ) {
+    console.log( '✅ Usuario autenticado tras redirección:', user.email );
+    currentUser = user;
+
+    localStorage.setItem( 'firebase_auth_active', 'true' );
+    localStorage.setItem( 'firebase_user_email', user.email );
+    localStorage.setItem( 'firebase_user_uid', user.uid );
+
+    updateUI();
+    closeLoginModal();
+
+    showNotification( 'Sesión iniciada correctamente', 'success' );
+
+    // Solicitar FCM token
+    if ( messaging ) {
+      setTimeout( async () => {
+        await requestFCMToken();
+        setupFCMListeners();
+      }, 1000 );
+    }
+
+    // Sincronizar datos
+    setTimeout( () => {
+      if ( isOnline && !isSyncing ) {
+        syncFromFirebase();
+      }
+    }, 1500 );
+  }
+} );
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
