@@ -4549,7 +4549,7 @@ function handleDrop( e ) {
       return;
     }
 
-    /RESTRICCIÓN: Verificar si la tarea puede moverse
+    //RESTRICCIÓN: Verificar si la tarea puede moverse
     const task = tasks[ draggedFromDate ]?.find( ( t ) => t.id === draggedTask );
     if ( task && !canMoveTask( task ) ) {
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
