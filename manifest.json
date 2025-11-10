@@ -1,6 +1,7 @@
 {
   "name": "Calendario de Tareas",
-  "short_name": "Tareas",
+  "short_name": "TaskSmart",
+  "gcm_sender_id": "646091363424",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

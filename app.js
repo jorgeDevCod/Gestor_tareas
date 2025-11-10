@@ -20,6 +20,8 @@ let isOnline = navigator.onLine;
 let currentUser = null;
 let db = null;
 let auth = null;
+let messaging = null;
+let fcmToken = null;
 let notificationInterval = null;
 let sentNotifications = new Set();
 let notificationStatus = {
@@ -1007,7 +1009,7 @@ async function initFirebase() {
       return;
     }
 
-    //  PASO 1: Inicializar Firebase
+    // PASO 1: Inicializar Firebase
     if ( !firebase.apps.length ) {
       firebase.initializeApp( firebaseConfig );
     }
@@ -1015,117 +1017,133 @@ async function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    //  PASO 2: CRÍTICO - Configurar persistencia ANTES de cualquier operación
-    try {
-      // LOCAL = persiste entre sesiones (incluso al cerrar navegador)
-      await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-      console.log( ' Persistencia LOCAL configurada correctamente' );
-    } catch ( persistError ) {
-      console.error( '❌ Error configurando persistencia:', persistError );
-      // Continuar de todos modos
-    }
-
-    //  PASO 3: Configurar cache de Firestore
-    try {
-      await db.enablePersistence( {
-        synchronizeTabs: true
-      } );
-      console.log( ' Cache de Firestore habilitado' );
-    } catch ( cacheError ) {
-      if ( cacheError.code === 'failed-precondition' ) {
-        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
-      } else if ( cacheError.code === 'unimplemented' ) {
-        console.warn( '⚠️ Cache no soportado' );
-      }
-    }
-
-    //  PASO 4: Intentar recuperar usuario existente PRIMERO
-    console.log( '🔍 Verificando sesión existente...' );
-
-    // Verificar si hay un usuario ya autenticado (IndexedDB)
-    let currentAuthUser = auth.currentUser;
-
-    if ( currentAuthUser ) {
-      //  Usuario ya logueado desde cache
-      console.log( ' Sesión restaurada automáticamente:', currentAuthUser.email );
-      currentUser = currentAuthUser;
-
-      localStorage.setItem( 'firebase_auth_active', 'true' );
-      localStorage.setItem( 'firebase_user_email', currentAuthUser.email );
-      localStorage.setItem( 'firebase_user_uid', currentAuthUser.uid );
-
-      updateUI();
-      updateSyncIndicator( 'success' );
-      hideLoadingScreen();
-
-      // Sync diferido
-      setTimeout( () => {
-        if ( isOnline && !isSyncing ) {
-          syncFromFirebase();
-        }
-      }, 2000 );
-
-      return; // ← Salir aquí si ya hay sesión
-    }
-
-    //  PASO 5: Si no hay sesión, esperar listener
-    console.log( '⏳ Esperando estado de autenticación...' );
-
-    const authStatePromise = new Promise( ( resolve ) => {
-      const unsubscribe = auth.onAuthStateChanged( ( user ) => {
-        unsubscribe();
-        resolve( user );
-      } );
-
-      // Timeout de 8 segundos
-      setTimeout( () => resolve( null ), 8000 );
-    } );
-
-    const user = await authStatePromise;
-
-    if ( user ) {
-      console.log( ' Usuario detectado:', user.email );
-      currentUser = user;
-
-      localStorage.setItem( 'firebase_auth_active', 'true' );
-      localStorage.setItem( 'firebase_user_email', user.email );
-      localStorage.setItem( 'firebase_user_uid', user.uid );
-
-      updateUI();
-      updateSyncIndicator( 'success' );
-
-      // Enviar al SW
-      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-        navigator.serviceWorker.controller.postMessage( {
-          type: 'SET_USER_ID',
-          data: { userId: user.uid, email: user.email }
-        } );
-      }
-
-      setTimeout( () => {
-        if ( isOnline && !isSyncing ) {
-          syncFromFirebase();
-        }
-      }, 2000 );
-
+    //NUEVO: Inicializar Messaging
+    if ( firebase.messaging.isSupported() ) {
+      messaging = firebase.messaging();
+      console.log( '✅ FCM habilitado' );
     } else {
-      console.log( '❌ No hay sesión activa' );
-      currentUser = null;
-      updateUI();
+      console.warn( '⚠️ FCM no soportado en este navegador' );
     }
 
-    hideLoadingScreen();
+    // ... resto del código existente de initFirebase()
+
+    //NUEVO: Solicitar token FCM después de login exitoso
+    if ( currentUser && messaging ) {
+      await requestFCMToken();
+    }
 
   } catch ( error ) {
     console.error( '❌ Error crítico en initFirebase:', error );
-    hideLoadingScreen();
-    showNotification( 'Error conectando con Firebase', 'error' );
-
-    // Modo offline de emergencia
-    currentUser = null;
-    updateUI();
+    // ... resto del manejo de errores
   }
 }
+
+// ====================================
+// NUEVA FUNCIÓN: Solicitar token FCM
+// ====================================
+async function requestFCMToken() {
+  if ( !messaging ) {
+    console.warn( '⚠️ Messaging no inicializado' );
+    return null;
+  }
+
+  if ( !currentUser || currentUser.isOffline ) {
+    console.log( '⚠️ No hay usuario logueado para FCM' );
+    return null;
+  }
+
+  try {
+    // Verificar permisos de notificación
+    if ( Notification.permission !== 'granted' ) {
+      console.log( '📢 Solicitando permisos de notificación...' );
+      const permission = await Notification.requestPermission();
+
+      if ( permission !== 'granted' ) {
+        console.warn( '❌ Permisos de notificación denegados' );
+        return null;
+      }
+    }
+
+    // Obtener token FCM
+    console.log( '🔑 Solicitando token FCM...' );
+    const token = await messaging.getToken( {
+      vapidKey: 'BCoaRN0rN86NtS5JY-kD1hbVchsKL-rfEkm_wDMU5pQlKJCSvCsWBYP-RKG6LTdgTbinO0MSZm5Z-JLy5WgY-wA'
+    } );
+
+    if ( token ) {
+      console.log( '✅ Token FCM obtenido:', token );
+      fcmToken = token;
+
+      // Guardar token en Firestore para enviar notificaciones push
+      await saveFCMToken( token );
+
+      // Enviar al Service Worker
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'FCM_TOKEN',
+          data: { token }
+        } );
+      }
+
+      return token;
+    }
+  } catch ( error ) {
+    console.error( '❌ Error obteniendo token FCM:', error );
+    return null;
+  }
+}
+
+// ====================================
+// NUEVA FUNCIÓN: Guardar token en Firestore
+// ====================================
+async function saveFCMToken( token ) {
+  if ( !currentUser || !db ) return;
+
+  try {
+    await db.collection( 'users' )
+      .doc( currentUser.uid )
+      .set( {
+        fcmToken: token,
+        lastTokenUpdate: new Date(),
+        email: currentUser.email
+      }, { merge: true } );
+
+    console.log( '💾 Token FCM guardado en Firestore' );
+  } catch ( error ) {
+    console.error( '❌ Error guardando token FCM:', error );
+  }
+}
+
+// ====================================
+// NUEVA FUNCIÓN: Escuchar mensajes en foreground
+// ====================================
+function setupFCMListeners() {
+  if ( !messaging ) return;
+
+  // Manejar notificaciones cuando la app está en primer plano
+  messaging.onMessage( ( payload ) => {
+    console.log( '📨 Mensaje FCM recibido (foreground):', payload );
+
+    const { notification } = payload;
+
+    if ( notification ) {
+      // Mostrar notificación visual en la app
+      showInAppNotification(
+        notification.title || 'Notificación',
+        notification.body || '',
+        'task'
+      );
+
+      // Vibrar si está disponible
+      if ( 'vibrate' in navigator ) {
+        navigator.vibrate( [ 200, 100, 200 ] );
+      }
+    }
+  } );
+
+  console.log( '✅ FCM listeners configurados' );
+}
+
 
 //  FUNCIÓN: Verificar y restaurar sesión al iniciar
 async function checkExistingSession() {
@@ -1783,6 +1801,14 @@ async function signInWithGoogle() {
       updateUI();
       updateSyncIndicator( 'success' );
 
+      // NUEVO: Solicitar token FCM después de login
+      if ( messaging ) {
+        setTimeout( async () => {
+          await requestFCMToken();
+          setupFCMListeners();
+        }, 1000 );
+      }
+
       //  Enviar al Service Worker
       if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
         navigator.serviceWorker.controller.postMessage( {
@@ -1844,14 +1870,17 @@ async function signInWithGoogle() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
-    //  Limpiar flags ANTES de cerrar sesión
-    localStorage.removeItem( 'firebase_auth_active' );
-    localStorage.removeItem( 'firebase_user_email' );
-    localStorage.removeItem( 'firebase_user_uid' );
-    localStorage.removeItem( 'last_sync_time' );
+    // Limpiar token FCM
+    if ( currentUser && fcmToken ) {
+      db.collection( 'users' )
+        .doc( currentUser.uid )
+        .update( {
+          fcmToken: firebase.firestore.FieldValue.delete()
+        } )
+        .catch( err => console.error( 'Error limpiando token FCM:', err ) );
+    }
 
-    //  Limpiar currentUser inmediatamente
-    currentUser = null;
+    fcmToken = null;
 
     //  Limpiar UI inmediatamente
     cleanupUIOnLogout();
@@ -5857,7 +5886,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  // ✅ CRÍTICO: Verificar sesión existente ANTES de cargar UI
+  //CRÍTICO: Verificar sesión existente ANTES de cargar UI
   const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
   console.log( '🔐 ¿Había sesión activa?', hadActiveSession );
 
@@ -5876,11 +5905,11 @@ document.addEventListener( "DOMContentLoaded", async function () {
   // Configurar notificaciones
   initNotifications();
 
-  // ✅ Inicializar Firebase (con persistencia)
+  //Inicializar Firebase (con persistencia)
   if ( isOnline ) {
     await initFirebase(); // ← Esperar a que termine
 
-    // ✅ Si había sesión, verificar que se restauró
+    //Si había sesión, verificar que se restauró
     if ( hadActiveSession && !currentUser ) {
       console.warn( '⚠️ Había sesión pero no se restauró, reintentando...' );
 
@@ -5925,6 +5954,14 @@ document.addEventListener( "DOMContentLoaded", async function () {
       }
     }
   }, 500 );
+
+  //NUEVO: Configurar FCM listeners
+  setTimeout( () => {
+    if ( currentUser && messaging ) {
+      setupFCMListeners();
+    }
+  }, 2000 );
+} );
 
   console.log( '✅ Aplicación inicializada correctamente' );
 } );
