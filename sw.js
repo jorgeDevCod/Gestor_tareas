@@ -1,25 +1,23 @@
 // ====================================
-// SERVICE WORKER v2.0 - NOTIFICACIONES PERSISTENTES
+// SERVICE WORKER v2.1 - CORRECCIONES CRÍTICAS
 // ====================================
-const CACHE_NAME = 'TaskSmart-app-2.0';
+const CACHE_NAME = 'TaskSmart-app-2.1';
 const FIREBASE_CONFIG = {
     apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
     authDomain: "calendario-tareas-app.firebaseapp.com",
     projectId: "calendario-tareas-app"
 };
 
-// ====================================
-// IMPORTAR FIREBASE
-// ====================================
+// Importar Firebase
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js' );
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
 
 let firebaseInitialized = false;
 let db = null;
 let auth = null;
 let currentUserId = null;
+let cachedTasks = {};
 
 // ====================================
 // INICIALIZACIÓN DE FIREBASE
@@ -32,7 +30,7 @@ function initFirebaseInSW() {
         db = firebase.firestore();
         auth = firebase.auth();
 
-        // CRÍTICO: Configurar persistencia offline
+        // Configurar persistencia offline
         db.enablePersistence( { synchronizeTabs: true } )
             .catch( err => console.warn( '⚠️ Persistencia no disponible:', err.code ) );
 
@@ -44,7 +42,7 @@ function initFirebaseInSW() {
 }
 
 // ====================================
-// GESTIÓN DE USUARIO PERSISTENTE
+// GESTIÓN DE USUARIO Y TAREAS PERSISTENTE
 // ====================================
 self.addEventListener( 'message', async ( event ) => {
     const { type, data } = event.data;
@@ -65,21 +63,25 @@ self.addEventListener( 'message', async ( event ) => {
     if ( type === 'LOGOUT' ) {
         currentUserId = null;
         await clearUserData();
-        console.log( '👋 Usuario deslogueado' );
+        await clearTasksCache();
+        console.log( '👋 Usuario deslogueado, cache limpiado' );
     }
 
     if ( type === 'CHECK_NOTIFICATIONS_NOW' ) {
-        console.log( '🔔 Verificación forzada' );
+        console.log( '🔔 Verificación forzada desde app' );
         await checkAndSendNotifications();
     }
 
     if ( type === 'UPDATE_TASKS' ) {
+        // CRÍTICO: Guardar tareas en cache del SW
         await saveTasksToCache( data.tasks );
-        console.log( '📝 Tareas actualizadas en cache' );
+        console.log( '📝 Tareas actualizadas en cache SW' );
     }
 } );
 
-// Persistir datos de usuario en IndexedDB
+// ====================================
+// PERSISTENCIA DE DATOS
+// ====================================
 async function saveUserData( userData ) {
     const cache = await caches.open( 'user-persistent' );
     const response = new Response( JSON.stringify( userData ) );
@@ -93,7 +95,7 @@ async function loadUserData() {
         if ( response ) {
             const data = await response.json();
             currentUserId = data.userId;
-            console.log( '✅ Usuario recuperado:', currentUserId );
+            console.log( '✅ Usuario recuperado en SW:', currentUserId );
             return data;
         }
     } catch ( error ) {
@@ -107,37 +109,75 @@ async function clearUserData() {
     await cache.delete( '/user-session' );
 }
 
+async function saveTasksToCache( tasks ) {
+    const cache = await caches.open( 'tasks-persistent' );
+    cachedTasks = tasks; // Guardar en memoria también
+    const response = new Response( JSON.stringify( {
+        tasks: tasks,
+        timestamp: Date.now()
+    } ) );
+    await cache.put( new Request( '/cached-tasks' ), response );
+    console.log( `💾 Tareas guardadas en cache: ${Object.keys( tasks ).length} días` );
+}
+
+async function loadTasksFromCache() {
+    try {
+        // Primero intentar de memoria
+        if ( Object.keys( cachedTasks ).length > 0 ) {
+            console.log( '✅ Tareas cargadas de memoria' );
+            return cachedTasks;
+        }
+
+        // Si no, cargar del cache
+        const cache = await caches.open( 'tasks-persistent' );
+        const response = await cache.match( '/cached-tasks' );
+        if ( response ) {
+            const data = await response.json();
+            cachedTasks = data.tasks || {};
+            console.log( `✅ Tareas cargadas de cache: ${Object.keys( cachedTasks ).length} días` );
+            return cachedTasks;
+        }
+    } catch ( error ) {
+        console.error( 'Error cargando tareas:', error );
+    }
+    return {};
+}
+
+async function clearTasksCache() {
+    cachedTasks = {};
+    const cache = await caches.open( 'tasks-persistent' );
+    await cache.delete( '/cached-tasks' );
+}
+
 // ====================================
-// SISTEMA DE NOTIFICACIONES PERSISTENTE
+// SISTEMA DE NOTIFICACIONES
 // ====================================
 async function startNotificationSystem() {
-    console.log( '🚀 Iniciando sistema de notificaciones persistente' );
+    console.log( '🚀 Iniciando sistema de notificaciones en SW' );
 
-    // Sincronizar tareas inmediatamente
+    // Sincronizar tareas desde Firebase
     await syncTasksFromFirebase();
 
     // Primera verificación
     await checkAndSendNotifications();
 
-    // Programar verificaciones futuras
+    // Programar verificaciones con Alarms API
     await scheduleNextCheck();
 }
 
-// CRÍTICO: Usar Alarms API para verificaciones persistentes
 async function scheduleNextCheck() {
-    // En navegadores que soporten alarms (Chrome/Edge)
     if ( 'alarms' in chrome ) {
         chrome.alarms.create( 'notification-check', {
-            delayInMinutes: 1, // Primera verificación en 1 minuto
-            periodInMinutes: 1  // Luego cada 1 minuto
+            delayInMinutes: 1,
+            periodInMinutes: 1
         } );
         console.log( '⏰ Alarma programada (cada 1 minuto)' );
     } else {
-        console.warn( '⚠️ Alarms API no disponible, usando fallback' );
+        console.warn( '⚠️ Alarms API no disponible' );
     }
 }
 
-// Escuchar alarmas
+// Listener de alarmas
 if ( 'alarms' in chrome ) {
     chrome.alarms.onAlarm.addListener( async ( alarm ) => {
         if ( alarm.name === 'notification-check' ) {
@@ -151,11 +191,13 @@ if ( 'alarms' in chrome ) {
 // SINCRONIZACIÓN DE TAREAS DESDE FIREBASE
 // ====================================
 async function syncTasksFromFirebase() {
+    // CRÍTICO: Cargar usuario si no está en memoria
     if ( !currentUserId ) {
         const userData = await loadUserData();
         if ( !userData ) {
-            console.log( '⚠️ No hay usuario para sincronizar' );
-            return {};
+            console.log( '⚠️ No hay usuario, cargando tareas del cache' );
+            await loadTasksFromCache();
+            return cachedTasks;
         }
     }
 
@@ -188,36 +230,14 @@ async function syncTasksFromFirebase() {
         } );
 
         await saveTasksToCache( tasks );
-        console.log( `✅ ${snapshot.size} tareas sincronizadas` );
+        console.log( `✅ ${snapshot.size} tareas sincronizadas desde Firebase` );
         return tasks;
 
     } catch ( error ) {
-        console.error( '❌ Error sincronizando:', error );
+        console.error( '❌ Error sincronizando desde Firebase:', error );
+        // Usar cache si falla Firebase
         return await loadTasksFromCache();
     }
-}
-
-async function saveTasksToCache( tasks ) {
-    const cache = await caches.open( 'tasks-persistent' );
-    const response = new Response( JSON.stringify( {
-        tasks: tasks,
-        timestamp: Date.now()
-    } ) );
-    await cache.put( new Request( '/cached-tasks' ), response );
-}
-
-async function loadTasksFromCache() {
-    try {
-        const cache = await caches.open( 'tasks-persistent' );
-        const response = await cache.match( '/cached-tasks' );
-        if ( response ) {
-            const data = await response.json();
-            return data.tasks || {};
-        }
-    } catch ( error ) {
-        console.error( 'Error cargando tareas:', error );
-    }
-    return {};
 }
 
 // ====================================
@@ -225,6 +245,13 @@ async function loadTasksFromCache() {
 // ====================================
 async function checkAndSendNotifications() {
     const tasks = await loadTasksFromCache();
+
+    if ( Object.keys( tasks ).length === 0 ) {
+        console.log( '📭 No hay tareas en cache, intentando sincronizar...' );
+        await syncTasksFromFirebase();
+        return;
+    }
+
     const now = new Date();
     const today = formatDate( now );
     const todayTasks = tasks[ today ] || [];
@@ -296,8 +323,8 @@ async function sendNotification( { title, body, tag, requireInteraction } ) {
             requireInteraction: requireInteraction,
             vibrate: [ 200, 100, 200 ],
             actions: requireInteraction ? [
-                { action: 'view', title: '👁️ Ver', icon: '/images/IconLogo.png' },
-                { action: 'dismiss', title: '❌ Cerrar', icon: '/images/IconLogo.png' }
+                { action: 'view', title: '👁️ Ver' },
+                { action: 'dismiss', title: '❌ Cerrar' }
             ] : []
         } );
 
@@ -361,7 +388,7 @@ self.addEventListener( 'sync', async ( event ) => {
     }
 } );
 
-// Periodic Background Sync (Chrome/Edge)
+// Periodic Background Sync
 self.addEventListener( 'periodicsync', async ( event ) => {
     console.log( '🔄 Periodic Sync:', event.tag );
 
@@ -373,26 +400,6 @@ self.addEventListener( 'periodicsync', async ( event ) => {
             ] )
         );
     }
-} );
-
-// ====================================
-// PUSH NOTIFICATIONS (FCM)
-// ====================================
-self.addEventListener( 'push', async ( event ) => {
-    if ( !event.data ) return;
-
-    const data = event.data.json();
-    await self.registration.showNotification(
-        data.title || 'Tarea',
-        {
-            body: data.body || 'Nueva notificación',
-            icon: '/images/IconLogo.png',
-            badge: '/images/favicon-192.png',
-            tag: data.tag || `notification-${Date.now()}`,
-            vibrate: [ 200, 100, 200 ],
-            data: data.data || {}
-        }
-    );
 } );
 
 // ====================================
@@ -431,7 +438,7 @@ const urlsToCache = [
 ];
 
 self.addEventListener( 'install', event => {
-    console.log( '🔧 Instalando Service Worker v2.0' );
+    console.log( '🔧 Instalando Service Worker v2.1' );
     event.waitUntil(
         caches.open( CACHE_NAME )
             .then( cache => cache.addAll( urlsToCache ) )
@@ -440,7 +447,7 @@ self.addEventListener( 'install', event => {
 } );
 
 self.addEventListener( 'activate', event => {
-    console.log( '✅ Activando Service Worker v2.0' );
+    console.log( '✅ Activando Service Worker v2.1' );
     event.waitUntil(
         caches.keys()
             .then( names => Promise.all(
@@ -477,4 +484,4 @@ function formatDate( date ) {
     return `${year}-${month}-${day}`;
 }
 
-console.log( '✅ Service Worker v2.0 cargado - Notificaciones persistentes activas' );
+console.log( '✅ Service Worker v2.1 cargado - Correcciones aplicadas' );

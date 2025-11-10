@@ -138,7 +138,7 @@ function handleInstallClick() {
 
   deferredPrompt.userChoice.then( ( choiceResult ) => {
     if ( choiceResult.outcome === 'accepted' ) {
-      console.log( '✅ Usuario instaló la PWA' );
+      console.log( ' Usuario instaló la PWA' );
       // Ocultar botón permanentemente
       if ( installButton ) {
         installButton.style.display = 'none';
@@ -203,7 +203,7 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
         requiresAction: requiresAction,
         notificationType: notificationType
       } );
-      console.log( '✅ Notificación PWA enviada via SW:', title );
+      console.log( ' Notificación PWA enviada via SW:', title );
     } else {
       // Notificación directa para navegador
       const notification = new Notification( title, options );
@@ -224,7 +224,7 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
         setTimeout( () => notification.close(), 8000 );
       }
 
-      console.log( '✅ Notificación web enviada:', title );
+      console.log( ' Notificación web enviada:', title );
     }
 
     if ( tag ) sentNotifications.add( tag );
@@ -682,7 +682,7 @@ async function processSyncQueue() {
   }
 
   if ( syncQueue.size === 0 ) {
-    console.log( '✅ Cola vacía, actualizando indicador' );
+    console.log( ' Cola vacía, actualizando indicador' );
     updateSyncIndicator( "success" );
     return;
   }
@@ -732,7 +732,7 @@ async function processSyncQueue() {
 
       if ( processedCount > 0 ) {
         await batch.commit();
-        console.log( `✅ Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
+        console.log( ` Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
       }
     }
 
@@ -997,9 +997,9 @@ function setupDateInput() {
 }
 
 // Inicializar Firebase
-function initFirebase() {
+async function initFirebase() {
   try {
-    console.log( '🔥 Inicializando Firebase...' );
+    console.log( '🔥 Iniciando Firebase...' );
 
     if ( !navigator.onLine ) {
       console.log( '📴 Sin conexión - iniciando modo offline' );
@@ -1007,7 +1007,7 @@ function initFirebase() {
       return;
     }
 
-    // Inicializar Firebase
+    //  PASO 1: Inicializar Firebase
     if ( !firebase.apps.length ) {
       firebase.initializeApp( firebaseConfig );
     }
@@ -1015,83 +1015,170 @@ function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    //CRÍTICO: Configurar persistencia ANTES de onAuthStateChanged
-    setupFirebasePersistence().then( () => {
+    //  PASO 2: CRÍTICO - Configurar persistencia ANTES de cualquier operación
+    try {
+      // LOCAL = persiste entre sesiones (incluso al cerrar navegador)
+      await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
+      console.log( ' Persistencia LOCAL configurada correctamente' );
+    } catch ( persistError ) {
+      console.error( '❌ Error configurando persistencia:', persistError );
+      // Continuar de todos modos
+    }
 
-      //NUEVO: Verificar si había sesión activa
-      const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
-
-      // Listener de autenticación
-      auth.onAuthStateChanged( ( user ) => {
-        console.log( '🔐 Auth state changed:', user ? 'logged in' : 'logged out' );
-
-        currentUser = user;
-        updateUI();
-
-        if ( user && navigator.onLine ) {
-          console.log( '✅ Usuario autenticado:', user.email );
-
-          // ✅ CRÍTICO: Enviar userId al Service Worker
-          if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-            navigator.serviceWorker.controller.postMessage( {
-              type: 'SET_USER_ID',
-              data: { userId: user.uid, email: user.email }
-            } );
-            console.log( '📤 userId enviado al Service Worker' );
-          }
-
-          // ✅ NUEVO: Forzar verificación inmediata de notificaciones
-          setTimeout( () => {
-            if ( navigator.serviceWorker.controller ) {
-              navigator.serviceWorker.controller.postMessage( {
-                type: 'CHECK_NOTIFICATIONS_NOW'
-              } );
-            }
-          }, 2000 );
-
-          updateSyncIndicator( "success" );
-
-          // Sync inicial
-          setTimeout( () => {
-            if ( isOnline && !isSyncing ) {
-              syncFromFirebase();
-            }
-          }, 1000 );
-
-        } else if ( !user ) {
-          console.log( '❌ Usuario no autenticado' );
-
-          //CRÍTICO: Solo limpiar si fue logout intencional
-          if ( !hadActiveSession ) {
-            localStorage.removeItem( 'firebase_auth_active' );
-
-            // Notificar logout al Service Worker
-            if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-              navigator.serviceWorker.controller.postMessage( { type: 'LOGOUT' } );
-            }
-
-            updateSyncIndicator( "offline" );
-            cleanupUIOnLogout();
-          } else {
-            //NUEVO: Intentar restaurar sesión
-            console.log( '⚠️ Sesión perdida, intentando restaurar...' );
-            setTimeout( () => {
-              // Si sigue sin usuario, fue un logout real
-              if ( !auth.currentUser ) {
-                localStorage.removeItem( 'firebase_auth_active' );
-              }
-            }, 2000 );
-          }
-        }
+    //  PASO 3: Configurar cache de Firestore
+    try {
+      await db.enablePersistence( {
+        synchronizeTabs: true
       } );
+      console.log( ' Cache de Firestore habilitado' );
+    } catch ( cacheError ) {
+      if ( cacheError.code === 'failed-precondition' ) {
+        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
+      } else if ( cacheError.code === 'unimplemented' ) {
+        console.warn( '⚠️ Cache no soportado' );
+      }
+    }
+
+    //  PASO 4: Intentar recuperar usuario existente PRIMERO
+    console.log( '🔍 Verificando sesión existente...' );
+
+    // Verificar si hay un usuario ya autenticado (IndexedDB)
+    let currentAuthUser = auth.currentUser;
+
+    if ( currentAuthUser ) {
+      //  Usuario ya logueado desde cache
+      console.log( ' Sesión restaurada automáticamente:', currentAuthUser.email );
+      currentUser = currentAuthUser;
+
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', currentAuthUser.email );
+      localStorage.setItem( 'firebase_user_uid', currentAuthUser.uid );
+
+      updateUI();
+      updateSyncIndicator( 'success' );
+      hideLoadingScreen();
+
+      // Sync diferido
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 2000 );
+
+      return; // ← Salir aquí si ya hay sesión
+    }
+
+    //  PASO 5: Si no hay sesión, esperar listener
+    console.log( '⏳ Esperando estado de autenticación...' );
+
+    const authStatePromise = new Promise( ( resolve ) => {
+      const unsubscribe = auth.onAuthStateChanged( ( user ) => {
+        unsubscribe();
+        resolve( user );
+      } );
+
+      // Timeout de 8 segundos
+      setTimeout( () => resolve( null ), 8000 );
     } );
+
+    const user = await authStatePromise;
+
+    if ( user ) {
+      console.log( ' Usuario detectado:', user.email );
+      currentUser = user;
+
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', user.email );
+      localStorage.setItem( 'firebase_user_uid', user.uid );
+
+      updateUI();
+      updateSyncIndicator( 'success' );
+
+      // Enviar al SW
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: { userId: user.uid, email: user.email }
+        } );
+      }
+
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 2000 );
+
+    } else {
+      console.log( '❌ No hay sesión activa' );
+      currentUser = null;
+      updateUI();
+    }
 
     hideLoadingScreen();
 
   } catch ( error ) {
-    console.error( '❌ Error inicializando Firebase:', error );
-    showNotification( 'Error conectando con el servidor', 'error' );
-    initOfflineMode();
+    console.error( '❌ Error crítico en initFirebase:', error );
+    hideLoadingScreen();
+    showNotification( 'Error conectando con Firebase', 'error' );
+
+    // Modo offline de emergencia
+    currentUser = null;
+    updateUI();
+  }
+}
+
+//  FUNCIÓN: Verificar y restaurar sesión al iniciar
+async function checkExistingSession() {
+  console.log( '🔍 Verificando sesión existente en cache...' );
+
+  try {
+    // Verificar flags locales
+    const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
+    const savedEmail = localStorage.getItem( 'firebase_user_email' );
+
+    if ( !hadActiveSession || !savedEmail ) {
+      console.log( '❌ No hay sesión guardada' );
+      return null;
+    }
+
+    console.log( ' Sesión guardada encontrada:', savedEmail );
+
+    // Esperar a que Firebase restaure la sesión
+    if ( !auth ) {
+      console.warn( '⚠️ Auth no inicializado aún' );
+      return null;
+    }
+
+    // Esperar usuario actual de Firebase
+    return new Promise( ( resolve ) => {
+      const unsubscribe = auth.onAuthStateChanged( ( user ) => {
+        unsubscribe();
+
+        if ( user ) {
+          console.log( ' Sesión restaurada de Firebase:', user.email );
+          resolve( user );
+        } else {
+          console.warn( '⚠️ Firebase no pudo restaurar sesión' );
+
+          // Limpiar flags inconsistentes
+          localStorage.removeItem( 'firebase_auth_active' );
+          localStorage.removeItem( 'firebase_user_email' );
+          localStorage.removeItem( 'firebase_user_uid' );
+
+          resolve( null );
+        }
+      } );
+
+      // Timeout de 5 segundos
+      setTimeout( () => {
+        console.warn( '⏱️ Timeout esperando restauración de sesión' );
+        resolve( null );
+      }, 5000 );
+    } );
+
+  } catch ( error ) {
+    console.error( '❌ Error verificando sesión:', error );
+    return null;
   }
 }
 
@@ -1103,7 +1190,7 @@ async function registerPeriodicSync() {
       await registration.periodicSync.register( 'check-tasks', {
         minInterval: 30 * 60 * 1000 // 30 minutos
       } );
-      console.log( '✅ Periodic Sync registrado para notificaciones' );
+      console.log( ' Periodic Sync registrado para notificaciones' );
     } catch ( error ) {
       console.warn( '⚠️ Periodic Sync no disponible:', error );
     }
@@ -1119,24 +1206,20 @@ document.addEventListener( "DOMContentLoaded", function () {
   }, 2000 );
 } );
 
-// CORRECCIÓN 5: Función separada para configurar persistencia
 
-// ============================================
-// REEMPLAZAR la función setupFirebasePersistence()
-// ============================================
-
+// función setupFirebasePersistence()
 async function setupFirebasePersistence() {
   try {
     //CRÍTICO: Usar LOCAL persistence (persiste entre reinicios)
     await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-    console.log( '✅ Auth persistence configurada como LOCAL' );
+    console.log( ' Auth persistence configurada como LOCAL' );
 
     //Firestore offline persistence
     await db.enablePersistence( {
       synchronizeTabs: true,
       experimentalTabSynchronization: true // NUEVO
     } );
-    console.log( '✅ Firestore persistence habilitada' );
+    console.log( ' Firestore persistence habilitada' );
 
     //NUEVO: Guardar flag de sesión activa
     localStorage.setItem( 'firebase_auth_active', 'true' );
@@ -1200,7 +1283,7 @@ function setupPWAReconnection() {
     // Intentar una operación simple para verificar conectividad Firebase
     db.collection( 'test' ).limit( 1 ).get()
       .then( () => {
-        console.log( '✅ Reconexión Firebase exitosa' );
+        console.log( ' Reconexión Firebase exitosa' );
         reconnectAttempts = 0; // Reset contador
         updateSyncIndicator( 'success' );
 
@@ -1239,7 +1322,7 @@ function initOfflineMode() {
     statusEl.classList.add( "force-hidden" );
   }
 
-  updateUI(); // Esto ocultará el botón de sync automáticamente
+  updateUI();
   hideLoadingScreen();
 
   // Mensaje más discreto para modo offline
@@ -1295,8 +1378,6 @@ function getOfflineUser() {
 }
 
 function setupOfflineFeatures() {
-  // Ya no deshabilitar el botón sync, simplemente ocultarlo (se hace en updateUI)
-
   // Deshabilitar funciones que requieren internet
   if ( notificationInterval ) {
     clearInterval( notificationInterval );
@@ -1413,7 +1494,7 @@ function loadPermissions() {
         permissions.notifications?.permission === 'granted' ) {
 
         notificationsEnabled = permissions.notifications.enabled !== false; // Default true
-        console.log( '✅ Permisos de notificaciones restaurados:', notificationsEnabled );
+        console.log( ' Permisos de notificaciones restaurados:', notificationsEnabled );
         return true;
       }
     }
@@ -1667,87 +1748,6 @@ function hideLoadingScreen() {
   }, 300 );
 }
 
-function updateUI() {
-  const loginBtn = document.getElementById( "loginBtn" );
-  const userInfo = document.getElementById( "userInfo" );
-  const syncBtn = document.getElementById( "syncBtn" );
-  const statusEl = document.getElementById( "firebaseStatus" );
-  const installBtn = document.getElementById( "install-button" );
-
-  console.log( '🎨 Actualizando UI - Usuario:', currentUser ? 'logged in' : 'not logged' );
-
-  if ( currentUser && !currentUser.isOffline ) {
-    // Usuario logueado correctamente
-    if ( loginBtn ) {
-      loginBtn.classList.add( "hidden" );
-      // MANTENER estilos originales del botón
-      loginBtn.className = loginBtn.className.replace( /bg-\w+-\d+/g, '' );
-      loginBtn.className += ' bg-blue-600 hover:bg-blue-700'; // Azul consistente
-    }
-
-    if ( userInfo ) {
-      userInfo.classList.remove( "hidden" );
-
-      // Actualizar información del usuario
-      const userName = document.getElementById( "userName" );
-      const userEmail = document.getElementById( "userEmail" );
-      const userPhoto = document.getElementById( "userPhoto" );
-
-      if ( userName ) userName.textContent = currentUser.displayName || "Usuario";
-      if ( userEmail ) userEmail.textContent = currentUser.email || "";
-      if ( userPhoto ) {
-        userPhoto.src = currentUser.photoURL || "https://via.placeholder.com/32";
-        userPhoto.onerror = () => userPhoto.src = "https://via.placeholder.com/32";
-      }
-    }
-
-    // Mostrar botón de sync
-    if ( syncBtn ) {
-      syncBtn.classList.remove( "hidden" );
-      syncBtn.disabled = false;
-    }
-
-    // Mostrar indicador de estado
-    if ( statusEl ) {
-      statusEl.classList.remove( "force-hidden" );
-    }
-
-  } else {
-    // Usuario no logueado
-    if ( loginBtn ) {
-      loginBtn.classList.remove( "hidden" );
-      // ASEGURAR estilos consistentes (mismo azul que instalación)
-      loginBtn.className = loginBtn.className.replace( /bg-\w+-\d+/g, '' ).replace( /text-\w+-\d+/g, '' );
-      loginBtn.className += ' bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-200';
-    }
-
-    if ( userInfo ) {
-      userInfo.classList.add( "hidden" );
-    }
-
-    // Ocultar botón de sync
-    if ( syncBtn ) {
-      syncBtn.classList.add( "hidden" );
-    }
-
-    // Ocultar indicador de estado
-    if ( statusEl ) {
-      statusEl.classList.add( "force-hidden" );
-    }
-  }
-
-  // MANEJAR botón de instalación independientemente
-  if ( installBtn ) {
-    if ( isPWAInstalled() ) {
-      installBtn.style.display = 'none';
-      installBtn.classList.add( 'hidden' );
-    } else if ( deferredPrompt && !installButtonShown ) {
-      installBtn.style.display = 'block';
-      installBtn.classList.remove( 'hidden' );
-    }
-  }
-}
-
 async function signInWithGoogle() {
   try {
     console.log( '🔑 Iniciando login con Google...' );
@@ -1761,8 +1761,6 @@ async function signInWithGoogle() {
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.addScope( 'profile' );
     provider.addScope( 'email' );
-
-    // Configurar provider para mejor experiencia
     provider.setCustomParameters( {
       prompt: 'select_account'
     } );
@@ -1770,9 +1768,48 @@ async function signInWithGoogle() {
     const result = await auth.signInWithPopup( provider );
 
     if ( result.user ) {
-      console.log( '✅ Login exitoso:', result.user.email );
-      showNotification( 'Sesión iniciada correctamente', 'success' );
+      console.log( ' Login exitoso:', result.user.email );
+
+      //  CRÍTICO: Actualizar currentUser INMEDIATAMENTE
+      currentUser = result.user;
+
+      //  Guardar sesión persistente
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', result.user.email );
+      localStorage.setItem( 'firebase_user_uid', result.user.uid );
+      localStorage.setItem( 'last_sync_time', Date.now().toString() );
+
+      //  ACTUALIZAR UI INMEDIATAMENTE (antes del modal)
+      updateUI();
+      updateSyncIndicator( 'success' );
+
+      //  Enviar al Service Worker
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: {
+            userId: result.user.uid,
+            email: result.user.email
+          }
+        } );
+
+        // Sincronizar tareas al SW
+        setTimeout( () => {
+          sendTasksToServiceWorker();
+        }, 500 );
+      }
+
+      //  Cerrar modal DESPUÉS de actualizar UI
       closeLoginModal();
+
+      showNotification( 'Sesión iniciada correctamente', 'success' );
+
+      //  Sync diferido (no bloquear UI)
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 1500 );
     }
 
   } catch ( error ) {
@@ -1797,7 +1834,6 @@ async function signInWithGoogle() {
     showNotification( errorMessage, 'error' );
 
   } finally {
-    // Restaurar botón
     const loginBtn = document.getElementById( "loginBtn" );
     if ( loginBtn ) {
       loginBtn.disabled = false;
@@ -1808,18 +1844,33 @@ async function signInWithGoogle() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
-    //Marcar como logout intencional
+    //  Limpiar flags ANTES de cerrar sesión
     localStorage.removeItem( 'firebase_auth_active' );
+    localStorage.removeItem( 'firebase_user_email' );
+    localStorage.removeItem( 'firebase_user_uid' );
+    localStorage.removeItem( 'last_sync_time' );
 
-    // Limpiar UI antes de cerrar sesión
+    //  Limpiar currentUser inmediatamente
+    currentUser = null;
+
+    //  Limpiar UI inmediatamente
     cleanupUIOnLogout();
+    updateUI(); // ← CRÍTICO: Actualizar UI antes del async
 
+    //  Notificar al Service Worker
+    if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+      navigator.serviceWorker.controller.postMessage( { type: 'LOGOUT' } );
+    }
+
+    //  Cerrar sesión en Firebase (async al final)
     auth.signOut()
       .then( () => {
+        console.log( ' Sesión cerrada correctamente' );
         showNotification( "Sesión cerrada", "info" );
       } )
       .catch( ( error ) => {
         console.error( "Error signing out:", error );
+        showNotification( "Error al cerrar sesión", "error" );
       } );
   }
 }
@@ -2165,7 +2216,7 @@ function showLoginModal() {
     return;
   }
 
-  console.log( '✅ Modal encontrado, removiendo clase hidden' );
+  console.log( ' Modal encontrado, removiendo clase hidden' );
   console.log( '📝 Clases antes:', loginModal.className );
 
   loginModal.classList.remove( "hidden" );
@@ -3303,13 +3354,9 @@ function executeSingleDelete( dateStr, taskId, task ) {
   showNotification( "Tarea eliminada exitosamente", "success" );
 }
 
-// ============================================
-// MODAL DE ELIMINACIÓN MASIVA
-// ============================================
 
-/**
- * Mostrar modal con opciones de eliminación
- */
+// MODAL DE ELIMINACIÓN MASIVA
+
 function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
   closeAllModals();
 
@@ -3414,9 +3461,9 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
   document.body.appendChild( modal );
 }
 
-// ============================================
+
 // OPCIÓN 1: ELIMINAR SOLO UNA TAREA
-// ============================================
+
 
 function deleteSingleTaskFromBulk( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -3429,9 +3476,9 @@ function deleteSingleTaskFromBulk( dateStr, taskId ) {
   }
 }
 
-// ============================================
+
 // OPCIÓN 2: ELIMINAR TODAS LAS OCURRENCIAS
-// ============================================
+
 
 function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -3504,9 +3551,9 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   document.body.appendChild( modal );
 }
 
-// ============================================
+
 // OPCIÓN 3: SELECTOR DE DÍAS PERSONALIZADOS
-// ============================================
+
 
 function showCustomDatesDeleteSelector( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -3638,9 +3685,9 @@ function proceedWithCustomDelete( dateStr, taskId ) {
   executeBulkDelete( dateStr, taskId, 'custom' );
 }
 
-// ============================================
+
 // EJECUCIÓN DE ELIMINACIÓN MASIVA
-// ============================================
+
 
 function executeBulkDelete( dateStr, taskId, mode ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -3726,7 +3773,7 @@ function executeBulkDelete( dateStr, taskId, mode ) {
 
   closeAllModals();
   showNotification(
-    `✅ ${deletedCount} tarea${deletedCount > 1 ? 's' : ''} eliminada${deletedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
+    ` ${deletedCount} tarea${deletedCount > 1 ? 's' : ''} eliminada${deletedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
     "success"
   );
 
@@ -3738,9 +3785,9 @@ function executeBulkDelete( dateStr, taskId, mode ) {
 }
 
 
-// ============================================
+
 // Edicion avanzada de tareas
-// ============================================
+
 function showAdvancedEditModal( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
   if ( !task ) {
@@ -3751,7 +3798,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
   // Cerrar cualquier modal existente
   closeAllModals();
 
-  // ✅ NUEVO: Buscar si hay tareas repetidas (mismo título y hora)
+  //  NUEVO: Buscar si hay tareas repetidas (mismo título y hora)
   const similarTasks = findSimilarTasks( task.title, task.time );
   const hasRecurring = similarTasks.count > 1;
 
@@ -3770,7 +3817,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
         </button>
       </div>
 
-      <!-- ✅ NUEVO: Botón de edición masiva (solo si hay tareas recurrentes) -->
+      <!--  NUEVO: Botón de edición masiva (solo si hay tareas recurrentes) -->
       ${hasRecurring ? `
         <div class="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
           <div class="flex items-center text-sm text-purple-700 mb-2">
@@ -4857,7 +4904,7 @@ function startNotificationService() {
     }
   }, 30000 ); // 30 segundos
 
-  console.log( "✅ Servicio de notificaciones iniciado (cada 30s)" );
+  console.log( " Servicio de notificaciones iniciado (cada 30s)" );
 }
 
 // Función para revisar notificaciones cuando la PWA vuelve del background
@@ -4951,7 +4998,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
         'task-reminder'
       );
       notificationStatus.taskReminders.add( reminderKey );
-      console.log( `✅ Notificación 15min enviada: ${task.title}` );
+      console.log( ` Notificación 15min enviada: ${task.title}` );
     }
 
     //2. NOTIFICACIÓN: Hora exacta (SIN CAMBIAR ESTADO)
@@ -4980,7 +5027,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
       );
 
       notificationStatus.taskReminders.add( startKey );
-      console.log( `✅ Notificación hora exacta enviada: ${task.title}` );
+      console.log( ` Notificación hora exacta enviada: ${task.title}` );
     }
 
     //3. NOTIFICACIÓN: Tarea retrasada (30 minutos después)
@@ -5109,9 +5156,9 @@ function showNotification( message, type = "success" ) {
   }, 3000 );
 }
 
-// ============================================
+
 // NUEVA FUNCIÓN: Modal de edición masiva
-// ============================================
+
 
 function showBulkEditModal( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -5194,18 +5241,17 @@ function showBulkEditModal( dateStr, taskId ) {
   document.body.appendChild( modal );
 }
 
-// ============================================
+
 // FUNCIÓN: Editar solo una tarea
-// ============================================
+
 
 function editSingleTask( dateStr, taskId ) {
   closeAllModals();
   showAdvancedEditModal( dateStr, taskId );
 }
 
-// ============================================
+
 // FUNCIÓN: Formulario de edición masiva
-// ============================================
 
 function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -5307,9 +5353,8 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
   } );
 }
 
-// ============================================
+
 // FUNCIÓN: Buscar tareas similares
-// ============================================
 
 function findSimilarTasks( title, time ) {
   let matchCount = 0;
@@ -5346,9 +5391,9 @@ function findSimilarTasks( title, time ) {
   return { count: matchCount, dates };
 }
 
-// ============================================
+
 // FUNCIÓN: Aplicar edición masiva
-// ============================================
+
 function applyBulkEdit( dateStr, taskId ) {
   const originalTitle = document.getElementById( "originalTitle" ).value;
   const originalTime = document.getElementById( "originalTime" ).value;
@@ -5423,7 +5468,7 @@ function applyBulkEdit( dateStr, taskId ) {
 
   closeAllModals();
   showNotification(
-    `✅ ${updatedCount} tarea${updatedCount > 1 ? 's' : ''} actualizada${updatedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
+    ` ${updatedCount} tarea${updatedCount > 1 ? 's' : ''} actualizada${updatedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
     "success"
   );
 
@@ -5434,9 +5479,8 @@ function applyBulkEdit( dateStr, taskId ) {
   }
 }
 
-// ============================================
+
 // FUNCIÓN: Selector de fechas personalizadas
-// ============================================
 
 function showCustomDatesSelector( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
@@ -5532,11 +5576,13 @@ function proceedWithCustomDates( dateStr, taskId ) {
 
 function saveTasks() {
   try {
-    // Solo tareas van a localStorage y Firebase
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
-
-    // Los logs van solo a localStorage (separados)
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
+
+    // CRÍTICO: Enviar al SW cada vez que se guardan tareas
+    if ( currentUser && !currentUser.isOffline ) {
+      sendTasksToServiceWorker();
+    }
   } catch ( error ) {
     console.error( "Error saving tasks:", error );
     showNotification( "Error al guardar tareas", "error" );
@@ -5632,40 +5678,156 @@ window.addEventListener( "beforeunload", () => {
   }
 } );
 
+function updateUI() {
+  const loginBtn = document.getElementById( "loginBtn" );
+  const userInfo = document.getElementById( "userInfo" );
+  const syncBtn = document.getElementById( "syncBtn" );
+  const statusEl = document.getElementById( "firebaseStatus" );
+
+  console.log( '🎨 Actualizando UI - Usuario:', currentUser ? `logged in (${currentUser.email})` : 'not logged' );
+
+  if ( currentUser && !currentUser.isOffline ) {
+    //  Usuario logueado correctamente
+    if ( loginBtn ) {
+      loginBtn.classList.add( "hidden" );
+    }
+
+    if ( userInfo ) {
+      userInfo.classList.remove( "hidden" );
+
+      // Actualizar información del usuario
+      const userName = document.getElementById( "userName" );
+      const userEmail = document.getElementById( "userEmail" );
+      const userPhoto = document.getElementById( "userPhoto" );
+
+      if ( userName ) userName.textContent = currentUser.displayName || "Usuario";
+      if ( userEmail ) userEmail.textContent = currentUser.email || "";
+      if ( userPhoto ) {
+        userPhoto.src = currentUser.photoURL || "https://via.placeholder.com/32";
+        userPhoto.onerror = () => userPhoto.src = "https://via.placeholder.com/32";
+      }
+    }
+
+    // Mostrar botón de sync
+    if ( syncBtn ) {
+      syncBtn.classList.remove( "hidden" );
+      syncBtn.disabled = false;
+    }
+
+    // Mostrar indicador de estado
+    if ( statusEl ) {
+      statusEl.classList.remove( "force-hidden" );
+    }
+
+    console.log( ' UI actualizada: Usuario logueado' );
+
+  } else {
+    //  Usuario no logueado
+    if ( loginBtn ) {
+      loginBtn.classList.remove( "hidden" );
+    }
+
+    if ( userInfo ) {
+      userInfo.classList.add( "hidden" );
+    }
+
+    // Ocultar botón de sync
+    if ( syncBtn ) {
+      syncBtn.classList.add( "hidden" );
+    }
+
+    // Ocultar indicador de estado
+    if ( statusEl ) {
+      statusEl.classList.add( "force-hidden" );
+    }
+
+    console.log( ' UI actualizada: Usuario no logueado' );
+  }
+
+  //  Manejar botón de instalación independientemente
+  const installBtn = document.getElementById( "install-button" );
+  if ( installBtn ) {
+    if ( isPWAInstalled() ) {
+      installBtn.style.display = 'none';
+      installBtn.classList.add( 'hidden' );
+    } else if ( deferredPrompt && !installButtonShown ) {
+      installBtn.style.display = 'block';
+      installBtn.classList.remove( 'hidden' );
+    }
+  }
+}
+
 // Manejar cambios de visibilidad de página
-document.addEventListener( "visibilitychange", () => {
-  if ( !document.hidden && syncQueue.size > 0 && currentUser && isOnline ) {
-    // Procesar cola cuando la página vuelva a ser visible
-    setTimeout( () => processSyncQueue(), 1000 );
+document.addEventListener( 'visibilitychange', () => {
+  if ( !document.hidden ) {
+    console.log( '📱 App volvió del background' );
+
+    // Verificar si el usuario sigue logueado
+    if ( auth && auth.currentUser ) {
+      console.log( ' Usuario todavía logueado:', auth.currentUser.email );
+
+      // Re-sincronizar
+      if ( isOnline && !isSyncing ) {
+        setTimeout( () => {
+          syncFromFirebase();
+          sendTasksToServiceWorker();
+        }, 1000 );
+      }
+    } else {
+      console.warn( '⚠️ Usuario no detectado, verificando...' );
+
+      // Verificar flag de sesión
+      const hadSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
+      if ( hadSession ) {
+        console.log( '🔄 Sesión previa detectada, esperando restauración...' );
+        // Firebase debería restaurar automáticamente
+        setTimeout( () => {
+          if ( !auth.currentUser ) {
+            console.error( '❌ No se pudo restaurar la sesión' );
+            localStorage.removeItem( 'firebase_auth_active' );
+          }
+        }, 3000 );
+      }
+    }
   }
 } );
 
 // Función para enviar tareas al Service Worker para verificación en background
 function sendTasksToServiceWorker() {
   if ( !( 'serviceWorker' in navigator ) || !navigator.serviceWorker.controller ) {
+    console.warn( '⚠️ Service Worker no disponible' );
     return;
   }
 
   const allTasks = [];
+  const today = getTodayString();
 
+  // Enviar solo tareas de hoy y futuras
   Object.keys( tasks ).forEach( dateStr => {
-    const dayTasks = tasks[ dateStr ] || [];
-    dayTasks.forEach( task => {
-      allTasks.push( {
-        id: task.id,
-        title: task.title,
-        time: task.time,
-        state: task.state,
-        priority: task.priority,
-        date: dateStr
+    if ( dateStr >= today ) {
+      const dayTasks = tasks[ dateStr ] || [];
+      dayTasks.forEach( task => {
+        if ( task.time && task.state !== 'completed' ) {
+          allTasks.push( {
+            id: task.id,
+            title: task.title,
+            time: task.time,
+            state: task.state,
+            priority: task.priority,
+            date: dateStr,
+            description: task.description || ''
+          } );
+        }
       } );
-    } );
+    }
   } );
 
   navigator.serviceWorker.controller.postMessage( {
-    type: 'CHECK_NOTIFICATIONS',
-    tasks: allTasks,
-    timestamp: Date.now()
+    type: 'UPDATE_TASKS',
+    data: {
+      tasks: tasks,
+      timestamp: Date.now()
+    }
   } );
 
   console.log( `📤 Enviadas ${allTasks.length} tareas al Service Worker` );
@@ -5685,28 +5847,28 @@ function saveTasks() {
   }
 }
 
-// Inicialización
-document.addEventListener( "DOMContentLoaded", function () {
+// ====================================
+// INICIALIZACIÓN PRINCIPAL
+// ====================================
+document.addEventListener( "DOMContentLoaded", async function () {
   console.log( '🚀 Inicializando aplicación...' );
 
-  // Verificar estado de red PRIMERO
+  // Verificar estado de red
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  // NUEVO: Verificar sesión guardada
+  // ✅ CRÍTICO: Verificar sesión existente ANTES de cargar UI
   const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
-  if ( hadActiveSession ) {
-    console.log( '🔐 Detectada sesión previa, esperando restauración...' );
-  }
+  console.log( '🔐 ¿Había sesión activa?', hadActiveSession );
 
   // Cargar datos locales
   loadTasks();
   loadPermissions();
 
-  // 3. Configurar UI básica
+  // Configurar UI básica
   renderCalendar();
   updateProgress();
-  setupEventListeners(); // Ya no duplica funcionalidad
+  setupEventListeners();
   setupDragAndDrop();
   setupTaskTooltips();
   setupDateInput();
@@ -5714,36 +5876,193 @@ document.addEventListener( "DOMContentLoaded", function () {
   // Configurar notificaciones
   initNotifications();
 
-  // Inicializar Firebase solo si hay conexión
+  // ✅ Inicializar Firebase (con persistencia)
   if ( isOnline ) {
-    initFirebase();
+    await initFirebase(); // ← Esperar a que termine
+
+    // ✅ Si había sesión, verificar que se restauró
+    if ( hadActiveSession && !currentUser ) {
+      console.warn( '⚠️ Había sesión pero no se restauró, reintentando...' );
+
+      setTimeout( async () => {
+        const restoredUser = await checkExistingSession();
+        if ( restoredUser ) {
+          currentUser = restoredUser;
+          updateUI();
+
+          if ( isOnline && !isSyncing ) {
+            syncFromFirebase();
+          }
+        }
+      }, 2000 );
+    }
   } else {
+    console.log( '📴 Sin conexión - modo offline' );
     currentUser = { isOffline: true };
     updateUI();
     hideLoadingScreen();
   }
 
-  // Configuraciones PWA (SOLO UNA VEZ)
+  // Configuraciones PWA (después de Firebase)
   setTimeout( () => {
-    // Service Worker messages
     handleServiceWorkerMessages();
 
-    // Panel de hoy (SOLO UNA VEZ)
-    initializeTodayPanel();
+    const isDesktop = window.innerWidth >= 768;
+    const isPWA = isPWAInstalled();
 
-    // PWA features
-    if ( isPWAInstalled() ) {
-      console.log( '🚀 PWA detectada - configurando características específicas' );
+    if ( isDesktop && !isPWA ) {
+      initializeTodayPanel();
+    }
+
+    if ( isPWA ) {
+      console.log( '🚀 PWA detectada - configurando características' );
       configurePWAFeatures();
 
-      // Ocultar botón instalación
       const installButton = document.getElementById( 'install-button' );
       if ( installButton ) {
         installButton.style.display = 'none';
         installButton.classList.add( 'hidden' );
       }
     }
-  }, 100 );
+  }, 500 );
 
   console.log( '✅ Aplicación inicializada correctamente' );
 } );
+
+// ====================================
+// HEARTBEAT: Mantener sesión activa
+// ====================================
+setInterval( () => {
+  if ( auth && auth.currentUser ) {
+    auth.currentUser.getIdToken( true )
+      .then( token => {
+        console.log( '💓 Heartbeat: Sesión activa' );
+
+        // Actualizar flags
+        localStorage.setItem( 'firebase_auth_active', 'true' );
+        localStorage.setItem( 'last_sync_time', Date.now().toString() );
+
+        // Asegurar que currentUser esté sincronizado
+        if ( !currentUser || currentUser.uid !== auth.currentUser.uid ) {
+          currentUser = auth.currentUser;
+          updateUI();
+        }
+      } )
+      .catch( error => {
+        console.error( '❌ Heartbeat falló:', error );
+
+        if ( error.code === 'auth/user-token-expired' ) {
+          console.log( '🔄 Token expirado, Firebase reautenticará automáticamente' );
+        } else if ( error.code === 'auth/network-request-failed' ) {
+          console.warn( '⚠️ Sin conexión, pero sesión local activa' );
+        } else {
+          console.error( '❌ Error crítico de sesión' );
+          currentUser = null;
+          localStorage.removeItem( 'firebase_auth_active' );
+          updateUI();
+        }
+      } );
+  }
+}, 5 * 60 * 1000 ); // Cada 5 minutos
+
+// ====================================
+// LISTENER ÚNICO: Cambios de autenticación
+// ====================================
+// ⚠️ SOLO UNO - Se ejecuta cuando auth está listo
+( function setupAuthListener() {
+  // Esperar a que Firebase esté inicializado
+  const waitForAuth = setInterval( () => {
+    if ( typeof firebase !== 'undefined' && firebase.auth ) {
+      clearInterval( waitForAuth );
+
+      const auth = firebase.auth();
+
+      auth.onAuthStateChanged( ( user ) => {
+        console.log( '🔄 onAuthStateChanged:', user ? user.email : 'no user' );
+
+        if ( user ) {
+          // Usuario logueado
+          if ( !currentUser || currentUser.uid !== user.uid ) {
+            console.log( '✅ Nueva sesión detectada:', user.email );
+            currentUser = user;
+
+            localStorage.setItem( 'firebase_auth_active', 'true' );
+            localStorage.setItem( 'firebase_user_email', user.email );
+            localStorage.setItem( 'firebase_user_uid', user.uid );
+
+            updateUI();
+
+            // Sync automático
+            if ( isOnline && !isSyncing ) {
+              setTimeout( () => syncFromFirebase(), 2000 );
+            }
+          }
+        } else {
+          // Usuario deslogueado
+          if ( currentUser && !currentUser.isOffline ) {
+            console.log( '👋 Sesión cerrada detectada' );
+            currentUser = null;
+
+            localStorage.removeItem( 'firebase_auth_active' );
+            localStorage.removeItem( 'firebase_user_email' );
+            localStorage.removeItem( 'firebase_user_uid' );
+
+            updateUI();
+          }
+        }
+      } );
+
+      console.log( '✅ Auth listener configurado' );
+    }
+  }, 100 );
+} )();
+
+// ====================================
+// LISTENER ÚNICO: Volver del background
+// ====================================
+document.addEventListener( 'visibilitychange', () => {
+  if ( !document.hidden ) {
+    console.log( '📱 App volvió del background - verificando sesión' );
+
+    // Verificar sesión actual
+    if ( auth && auth.currentUser ) {
+      console.log( '✅ Sesión activa:', auth.currentUser.email );
+
+      if ( !currentUser || currentUser.uid !== auth.currentUser.uid ) {
+        currentUser = auth.currentUser;
+        updateUI();
+      }
+
+      // Re-sincronizar
+      if ( isOnline && !isSyncing ) {
+        setTimeout( () => {
+          syncFromFirebase();
+          sendTasksToServiceWorker();
+        }, 1000 );
+      }
+    } else {
+      // Verificar si debería haber sesión
+      const shouldHaveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
+
+      if ( shouldHaveSession ) {
+        console.warn( '⚠️ Sesión esperada pero no encontrada, esperando restauración...' );
+
+        setTimeout( () => {
+          if ( auth && auth.currentUser ) {
+            currentUser = auth.currentUser;
+            updateUI();
+            console.log( '✅ Sesión restaurada:', currentUser.email );
+          } else {
+            console.error( '❌ No se pudo restaurar sesión' );
+            localStorage.removeItem( 'firebase_auth_active' );
+            currentUser = null;
+            updateUI();
+          }
+        }, 3000 );
+      }
+    }
+  }
+} );
+
+console.log( '✅ Listeners de persistencia configurados' );
+
