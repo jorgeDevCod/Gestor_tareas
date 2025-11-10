@@ -26,7 +26,6 @@ const STATIC_FILES = [
     '/images/IconLogo.png',
     '/images/favicon-192.png',
     '/favicon.png',
-    'https://cdn.tailwindcss.com',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css',
     'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
