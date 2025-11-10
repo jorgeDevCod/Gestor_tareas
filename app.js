@@ -244,7 +244,7 @@ function showDesktopNotificationPWA( title, message, tag, requiresAction = false
   }
 }
 
-// NUEVA función para patrones de vibración (también en app.js)
+// FUNCIÓN para patrones de vibración (también en app.js)
 function getVibrationPattern( type ) {
   const patterns = {
     'default': [ 200, 100, 200 ],
@@ -1017,30 +1017,142 @@ async function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    //NUEVO: Inicializar Messaging
-    if ( firebase.messaging.isSupported() ) {
-      messaging = firebase.messaging();
-      console.log( '✅ FCM habilitado' );
+    // ✅ CORREGIDO: Verificar si Firebase Messaging está disponible
+    if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
+      try {
+        messaging = firebase.messaging();
+        console.log( '✅ FCM habilitado' );
+      } catch ( messagingError ) {
+        console.warn( '⚠️ Error inicializando FCM:', messagingError );
+        messaging = null;
+      }
     } else {
       console.warn( '⚠️ FCM no soportado en este navegador' );
+      messaging = null;
     }
 
-    // ... resto del código existente de initFirebase()
-
-    //NUEVO: Solicitar token FCM después de login exitoso
-    if ( currentUser && messaging ) {
-      await requestFCMToken();
+    // PASO 2: CRÍTICO - Configurar persistencia ANTES de cualquier operación
+    try {
+      await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
+      console.log( '✅ Persistencia LOCAL configurada correctamente' );
+    } catch ( persistError ) {
+      console.error( '❌ Error configurando persistencia:', persistError );
     }
+
+    // PASO 3: Configurar cache de Firestore
+    try {
+      await db.enablePersistence( {
+        synchronizeTabs: true
+      } );
+      console.log( '✅ Cache de Firestore habilitado' );
+    } catch ( cacheError ) {
+      if ( cacheError.code === 'failed-precondition' ) {
+        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
+      } else if ( cacheError.code === 'unimplemented' ) {
+        console.warn( '⚠️ Cache no soportado' );
+      }
+    }
+
+    // PASO 4: Intentar recuperar usuario existente
+    console.log( '🔍 Verificando sesión existente...' );
+    let currentAuthUser = auth.currentUser;
+
+    if ( currentAuthUser ) {
+      console.log( '✅ Sesión restaurada automáticamente:', currentAuthUser.email );
+      currentUser = currentAuthUser;
+
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', currentAuthUser.email );
+      localStorage.setItem( 'firebase_user_uid', currentAuthUser.uid );
+
+      updateUI();
+      updateSyncIndicator( 'success' );
+      hideLoadingScreen();
+
+      // Sync diferido
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 2000 );
+
+      // ✅ Solicitar token FCM si messaging está disponible
+      if ( messaging ) {
+        setTimeout( async () => {
+          await requestFCMToken();
+          setupFCMListeners();
+        }, 1000 );
+      }
+
+      return;
+    }
+
+    // PASO 5: Esperar listener si no hay sesión
+    console.log( '⏳ Esperando estado de autenticación...' );
+
+    const authStatePromise = new Promise( ( resolve ) => {
+      const unsubscribe = auth.onAuthStateChanged( ( user ) => {
+        unsubscribe();
+        resolve( user );
+      } );
+
+      setTimeout( () => resolve( null ), 8000 );
+    } );
+
+    const user = await authStatePromise;
+
+    if ( user ) {
+      console.log( '✅ Usuario detectado:', user.email );
+      currentUser = user;
+
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', user.email );
+      localStorage.setItem( 'firebase_user_uid', user.uid );
+
+      updateUI();
+      updateSyncIndicator( 'success' );
+
+      // Enviar al SW
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: { userId: user.uid, email: user.email }
+        } );
+      }
+
+      // ✅ Solicitar token FCM si messaging está disponible
+      if ( messaging ) {
+        setTimeout( async () => {
+          await requestFCMToken();
+          setupFCMListeners();
+        }, 1000 );
+      }
+
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 2000 );
+
+    } else {
+      console.log( '❌ No hay sesión activa' );
+      currentUser = null;
+      updateUI();
+    }
+
+    hideLoadingScreen();
 
   } catch ( error ) {
     console.error( '❌ Error crítico en initFirebase:', error );
-    // ... resto del manejo de errores
+    hideLoadingScreen();
+    showNotification( 'Error conectando con Firebase', 'error' );
+
+    currentUser = null;
+    updateUI();
   }
 }
 
-// ====================================
-// NUEVA FUNCIÓN: Solicitar token FCM
-// ====================================
+// FUNCIÓN: Solicitar token FCM
 async function requestFCMToken() {
   if ( !messaging ) {
     console.warn( '⚠️ Messaging no inicializado' );
@@ -1093,9 +1205,7 @@ async function requestFCMToken() {
   }
 }
 
-// ====================================
-// NUEVA FUNCIÓN: Guardar token en Firestore
-// ====================================
+// FUNCIÓN: Guardar token en Firestore
 async function saveFCMToken( token ) {
   if ( !currentUser || !db ) return;
 
@@ -1114,9 +1224,7 @@ async function saveFCMToken( token ) {
   }
 }
 
-// ====================================
-// NUEVA FUNCIÓN: Escuchar mensajes en foreground
-// ====================================
+// FUNCIÓN: Escuchar mensajes en foreground
 function setupFCMListeners() {
   if ( !messaging ) return;
 
@@ -1253,7 +1361,7 @@ async function setupFirebasePersistence() {
   }
 }
 
-// NUEVA FUNCIÓN: Configuraciones específicas para PWA
+// FUNCIÓN: Configuraciones específicas para PWA
 function configurePWAFirebase() {
   // Configurar timeouts más agresivos para PWA
   if ( db ) {
@@ -1279,7 +1387,7 @@ function configurePWAFirebase() {
   }
 }
 
-// NUEVA FUNCIÓN: Reconexión automática para PWA
+// FUNCIÓN: Reconexión automática para PWA
 function setupPWAReconnection() {
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
@@ -2928,7 +3036,7 @@ function createPanelTaskElement( task, dateStr ) {
   `;
 }
 
-// NUEVA FUNCIÓN: Cambio de estado con tracking de retraso
+// FUNCIÓN: Cambio de estado con tracking de retraso
 function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -3982,7 +4090,7 @@ function clearTaskNotifications( taskId ) {
   console.log( `🧹 Notificaciones limpiadas para tarea: ${taskId}` );
 }
 
-//función para actualizar tareas desde el panel
+/// FUNCIÓN para actualizar tareas desde el panel
 function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
   const title = document.getElementById( "advancedEditTaskTitle" ).value.trim();
   const description = document
@@ -4309,7 +4417,7 @@ function showQuickAddTask( dateStr ) {
     } );
 }
 
-// NUEVA función para cerrar todos los modales
+// FUNCIÓN para cerrar todos los modales
 function closeAllModals() {
   const modals = [
     "advancedEditModal",
@@ -4441,7 +4549,7 @@ function handleDrop( e ) {
       return;
     }
 
-    // NUEVA RESTRICCIÓN: Verificar si la tarea puede moverse
+    /RESTRICCIÓN: Verificar si la tarea puede moverse
     const task = tasks[ draggedFromDate ]?.find( ( t ) => t.id === draggedTask );
     if ( task && !canMoveTask( task ) ) {
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
@@ -5186,7 +5294,7 @@ function showNotification( message, type = "success" ) {
 }
 
 
-// NUEVA FUNCIÓN: Modal de edición masiva
+// FUNCIÓN: Modal de edición masiva
 
 
 function showBulkEditModal( dateStr, taskId ) {
@@ -5876,9 +5984,7 @@ function saveTasks() {
   }
 }
 
-// ====================================
 // INICIALIZACIÓN PRINCIPAL
-// ====================================
 document.addEventListener( "DOMContentLoaded", async function () {
   console.log( '🚀 Inicializando aplicación...' );
 
@@ -5963,9 +6069,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
   }, 2000 );
 } );
 
-// ====================================
 // HEARTBEAT: Mantener sesión activa
-// ====================================
 setInterval( () => {
   if ( auth && auth.currentUser ) {
     auth.currentUser.getIdToken( true )
@@ -5999,9 +6103,7 @@ setInterval( () => {
   }
 }, 5 * 60 * 1000 ); // Cada 5 minutos
 
-// ====================================
 // LISTENER ÚNICO: Cambios de autenticación
-// ====================================
 // ⚠️ SOLO UNO - Se ejecuta cuando auth está listo
 ( function setupAuthListener() {
   // Esperar a que Firebase esté inicializado
@@ -6051,9 +6153,7 @@ setInterval( () => {
   }, 100 );
 } )();
 
-// ====================================
 // LISTENER ÚNICO: Volver del background
-// ====================================
 document.addEventListener( 'visibilitychange', () => {
   if ( !document.hidden ) {
     console.log( '📱 App volvió del background - verificando sesión' );
