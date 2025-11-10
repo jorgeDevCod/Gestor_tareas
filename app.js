@@ -20,6 +20,7 @@ let isOnline = navigator.onLine;
 let currentUser = null;
 let db = null;
 let auth = null;
+let authReady = false;
 let messaging = null;
 let fcmToken = null;
 let notificationInterval = null;
@@ -1938,39 +1939,6 @@ async function signInWithGoogle() {
     }
   }
 }
-
-// ✅ IMPORTANTE: Agregar listener para redirecciones
-// Esto se ejecuta cuando Firebase redirige de vuelta a tu app
-auth.onAuthStateChanged( ( user ) => {
-  if ( user ) {
-    console.log( '✅ Usuario autenticado tras redirección:', user.email );
-    currentUser = user;
-
-    localStorage.setItem( 'firebase_auth_active', 'true' );
-    localStorage.setItem( 'firebase_user_email', user.email );
-    localStorage.setItem( 'firebase_user_uid', user.uid );
-
-    updateUI();
-    closeLoginModal();
-
-    showNotification( 'Sesión iniciada correctamente', 'success' );
-
-    // Solicitar FCM token
-    if ( messaging ) {
-      setTimeout( async () => {
-        await requestFCMToken();
-        setupFCMListeners();
-      }, 1000 );
-    }
-
-    // Sincronizar datos
-    setTimeout( () => {
-      if ( isOnline && !isSyncing ) {
-        syncFromFirebase();
-      }
-    }, 1500 );
-  }
-} );
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
@@ -5988,10 +5956,6 @@ document.addEventListener( "DOMContentLoaded", async function () {
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  //CRÍTICO: Verificar sesión existente ANTES de cargar UI
-  const hadActiveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
-  console.log( '🔐 ¿Había sesión activa?', hadActiveSession );
-
   // Cargar datos locales
   loadTasks();
   loadPermissions();
@@ -6007,26 +5971,33 @@ document.addEventListener( "DOMContentLoaded", async function () {
   // Configurar notificaciones
   initNotifications();
 
-  //Inicializar Firebase (con persistencia)
+  // ✅ ESPERAR A QUE FIREBASE ESTÉ INICIALIZADO
+  console.log( '⏳ Esperando inicialización de Firebase...' );
+
+  await new Promise( resolve => {
+    const checkAuth = setInterval( () => {
+      if ( typeof firebase !== 'undefined' && firebase.auth && !authReady ) {
+        clearInterval( checkAuth );
+        authReady = true;
+        console.log( '✅ Firebase listo' );
+        resolve();
+      }
+    }, 100 );
+
+    // Timeout de 10 segundos
+    setTimeout( () => {
+      clearInterval( checkAuth );
+      if ( !authReady ) {
+        console.error( '❌ Firebase no se inicializó en tiempo' );
+        authReady = true;
+      }
+      resolve();
+    }, 10000 );
+  } );
+
+  // Inicializar Firebase
   if ( isOnline ) {
-    await initFirebase(); // ← Esperar a que termine
-
-    //Si había sesión, verificar que se restauró
-    if ( hadActiveSession && !currentUser ) {
-      console.warn( '⚠️ Había sesión pero no se restauró, reintentando...' );
-
-      setTimeout( async () => {
-        const restoredUser = await checkExistingSession();
-        if ( restoredUser ) {
-          currentUser = restoredUser;
-          updateUI();
-
-          if ( isOnline && !isSyncing ) {
-            syncFromFirebase();
-          }
-        }
-      }, 2000 );
-    }
+    await initFirebase();
   } else {
     console.log( '📴 Sin conexión - modo offline' );
     currentUser = { isOffline: true };
@@ -6034,7 +6005,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
     hideLoadingScreen();
   }
 
-  // Configuraciones PWA (después de Firebase)
+  // Configuraciones PWA
   setTimeout( () => {
     handleServiceWorkerMessages();
 
@@ -6057,26 +6028,91 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  //NUEVO: Configurar FCM listeners
+  // Configurar FCM listeners
   setTimeout( () => {
     if ( currentUser && messaging ) {
       setupFCMListeners();
     }
   }, 2000 );
+
+  // ✅ CONFIGURAR LISTENERS DE AUTENTICACIÓN - AHORA SÍ ESTÁ LISTO
+  setupAuthListeners();
+
 } );
 
+// ============================================
+// NUEVA FUNCIÓN: Configurar listeners después de DOMContentLoaded
+// ============================================
+function setupAuthListeners() {
+  console.log( '🔐 Configurando listeners de autenticación...' );
+
+  // Esperar a que auth esté disponible
+  if ( !auth ) {
+    console.warn( '⚠️ Auth no disponible aún, reintentando...' );
+    setTimeout( setupAuthListeners, 500 );
+    return;
+  }
+
+  // ✅ LISTENER ÚNICO: Cambios de autenticación
+  auth.onAuthStateChanged( ( user ) => {
+    console.log( '🔄 onAuthStateChanged:', user ? user.email : 'no user' );
+
+    if ( user ) {
+      // Usuario logueado
+      if ( !currentUser || currentUser.uid !== user.uid ) {
+        console.log( '✅ Nueva sesión detectada:', user.email );
+        currentUser = user;
+
+        localStorage.setItem( 'firebase_auth_active', 'true' );
+        localStorage.setItem( 'firebase_user_email', user.email );
+        localStorage.setItem( 'firebase_user_uid', user.uid );
+
+        updateUI();
+        closeLoginModal();
+
+        // Sync automático
+        if ( isOnline && !isSyncing ) {
+          setTimeout( () => syncFromFirebase(), 2000 );
+        }
+
+        // Solicitar token FCM
+        if ( messaging ) {
+          setTimeout( async () => {
+            await requestFCMToken();
+            setupFCMListeners();
+          }, 1000 );
+        }
+      }
+    } else {
+      // Usuario deslogueado
+      if ( currentUser && !currentUser.isOffline ) {
+        console.log( '👋 Sesión cerrada detectada' );
+        currentUser = null;
+
+        localStorage.removeItem( 'firebase_auth_active' );
+        localStorage.removeItem( 'firebase_user_email' );
+        localStorage.removeItem( 'firebase_user_uid' );
+
+        updateUI();
+      }
+    }
+  } );
+
+  console.log( '✅ Listeners de autenticación configurados' );
+}
+
+// ============================================
 // HEARTBEAT: Mantener sesión activa
+// ============================================
 setInterval( () => {
   if ( auth && auth.currentUser ) {
     auth.currentUser.getIdToken( true )
       .then( token => {
         console.log( '💓 Heartbeat: Sesión activa' );
 
-        // Actualizar flags
         localStorage.setItem( 'firebase_auth_active', 'true' );
         localStorage.setItem( 'last_sync_time', Date.now().toString() );
 
-        // Asegurar que currentUser esté sincronizado
         if ( !currentUser || currentUser.uid !== auth.currentUser.uid ) {
           currentUser = auth.currentUser;
           updateUI();
@@ -6099,62 +6135,13 @@ setInterval( () => {
   }
 }, 5 * 60 * 1000 ); // Cada 5 minutos
 
-// LISTENER ÚNICO: Cambios de autenticación
-// ⚠️ SOLO UNO - Se ejecuta cuando auth está listo
-( function setupAuthListener() {
-  // Esperar a que Firebase esté inicializado
-  const waitForAuth = setInterval( () => {
-    if ( typeof firebase !== 'undefined' && firebase.auth ) {
-      clearInterval( waitForAuth );
-
-      const auth = firebase.auth();
-
-      auth.onAuthStateChanged( ( user ) => {
-        console.log( '🔄 onAuthStateChanged:', user ? user.email : 'no user' );
-
-        if ( user ) {
-          // Usuario logueado
-          if ( !currentUser || currentUser.uid !== user.uid ) {
-            console.log( '✅ Nueva sesión detectada:', user.email );
-            currentUser = user;
-
-            localStorage.setItem( 'firebase_auth_active', 'true' );
-            localStorage.setItem( 'firebase_user_email', user.email );
-            localStorage.setItem( 'firebase_user_uid', user.uid );
-
-            updateUI();
-
-            // Sync automático
-            if ( isOnline && !isSyncing ) {
-              setTimeout( () => syncFromFirebase(), 2000 );
-            }
-          }
-        } else {
-          // Usuario deslogueado
-          if ( currentUser && !currentUser.isOffline ) {
-            console.log( '👋 Sesión cerrada detectada' );
-            currentUser = null;
-
-            localStorage.removeItem( 'firebase_auth_active' );
-            localStorage.removeItem( 'firebase_user_email' );
-            localStorage.removeItem( 'firebase_user_uid' );
-
-            updateUI();
-          }
-        }
-      } );
-
-      console.log( '✅ Auth listener configurado' );
-    }
-  }, 100 );
-} )();
-
-// LISTENER ÚNICO: Volver del background
+// ============================================
+// LISTENER: Volver del background
+// ============================================
 document.addEventListener( 'visibilitychange', () => {
   if ( !document.hidden ) {
     console.log( '📱 App volvió del background - verificando sesión' );
 
-    // Verificar sesión actual
     if ( auth && auth.currentUser ) {
       console.log( '✅ Sesión activa:', auth.currentUser.email );
 
@@ -6163,7 +6150,6 @@ document.addEventListener( 'visibilitychange', () => {
         updateUI();
       }
 
-      // Re-sincronizar
       if ( isOnline && !isSyncing ) {
         setTimeout( () => {
           syncFromFirebase();
@@ -6171,11 +6157,10 @@ document.addEventListener( 'visibilitychange', () => {
         }, 1000 );
       }
     } else {
-      // Verificar si debería haber sesión
       const shouldHaveSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
 
-      if ( shouldHaveSession ) {
-        console.warn( '⚠️ Sesión esperada pero no encontrada, esperando restauración...' );
+      if ( shouldHaveSession && auth ) {
+        console.warn( '⚠️ Sesión esperada pero no encontrada' );
 
         setTimeout( () => {
           if ( auth && auth.currentUser ) {
@@ -6194,5 +6179,4 @@ document.addEventListener( 'visibilitychange', () => {
   }
 } );
 
-console.log( '✅ Listeners de persistencia configurados' );
-
+console.log( '✅ Sistema de autenticación configurado' );
