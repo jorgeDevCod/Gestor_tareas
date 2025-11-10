@@ -5963,9 +5963,6 @@ document.addEventListener( "DOMContentLoaded", async function () {
   }, 2000 );
 } );
 
-  console.log( '✅ Aplicación inicializada correctamente' );
-} );
-
 // ====================================
 // HEARTBEAT: Mantener sesión activa
 // ====================================
