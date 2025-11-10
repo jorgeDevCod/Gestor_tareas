@@ -1017,10 +1017,21 @@ async function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    // ✅ CORREGIDO: Verificar si Firebase Messaging está disponible
+    // Verificar si Firebase Messaging está disponible
     if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
         messaging = firebase.messaging();
+
+        // ✅ CRÍTICO: Usar el Service Worker correcto
+        navigator.serviceWorker.register( '/firebase-messaging-sw.js' )
+          .then( ( registration ) => {
+            console.log( '✅ firebase-messaging-sw.js registrado:', registration );
+            messaging.useServiceWorker( registration );
+          } )
+          .catch( ( error ) => {
+            console.error( '❌ Error registrando firebase-messaging-sw.js:', error );
+          } );
+
         console.log( '✅ FCM habilitado' );
       } catch ( messagingError ) {
         console.warn( '⚠️ Error inicializando FCM:', messagingError );
@@ -1176,31 +1187,34 @@ async function requestFCMToken() {
       }
     }
 
+    // ✅ CRÍTICO: Esperar a que el SW esté listo
+    const registration = await navigator.serviceWorker.ready;
+    console.log( '✅ Service Worker listo para FCM' );
+
     // Obtener token FCM
     console.log( '🔑 Solicitando token FCM...' );
     const token = await messaging.getToken( {
-      vapidKey: 'BCoaRN0rN86NtS5JY-kD1hbVchsKL-rfEkm_wDMU5pQlKJCSvCsWBYP-RKG6LTdgTbinO0MSZm5Z-JLy5WgY-wA'
+      vapidKey: 'BCoaRN0rN86NtS5JY-kD1hbVchsKL-rfEkm_wDMU5pQlKJCSvCsWBYP-RKG6LTdgTbinO0MSZm5Z-JLy5WgY-wA',
+      serviceWorkerRegistration: registration // ✅ Pasar el registro explícitamente
     } );
 
     if ( token ) {
       console.log( '✅ Token FCM obtenido:', token );
       fcmToken = token;
 
-      // Guardar token en Firestore para enviar notificaciones push
+      // Guardar token en Firestore
       await saveFCMToken( token );
-
-      // Enviar al Service Worker
-      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-        navigator.serviceWorker.controller.postMessage( {
-          type: 'FCM_TOKEN',
-          data: { token }
-        } );
-      }
 
       return token;
     }
   } catch ( error ) {
     console.error( '❌ Error obteniendo token FCM:', error );
+
+    // Mensajes de error específicos
+    if ( error.code === 'messaging/failed-service-worker-registration' ) {
+      console.error( '💡 Solución: Verifica que firebase-messaging-sw.js existe en la raíz' );
+    }
+
     return null;
   }
 }
