@@ -128,30 +128,6 @@ self.addEventListener( 'activate', ( event ) => {
 // ====================================
 // FETCH STRATEGIES
 // ====================================
-self.addEventListener( 'fetch', ( event ) => {
-    const { request } = event;
-    const url = new URL( request.url );
-
-    // Ignorar peticiones a Firebase y APIs externas y no-GET
-    if ( request.method !== 'GET' ||
-        url.hostname.includes( 'firebaseio.com' ) ||
-        url.hostname.includes( 'googleapis.com' ) ||
-        url.hostname.includes( 'gstatic.com' ) ) {
-        return;
-    }
-
-    if ( request.url.includes( '.js' ) || request.url.includes( '.css' ) || request.url.includes( '/images/' ) ) {
-        event.respondWith( cacheFirst( request ) );
-        return;
-    }
-
-    if ( request.url.endsWith( '/' ) || request.url.includes( '.html' ) ) {
-        event.respondWith( networkFirst( request ) );
-        return;
-    }
-
-    event.respondWith( networkFirst( request ) );
-} );
 
 async function cacheFirst( request ) {
     try {
