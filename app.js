@@ -292,29 +292,41 @@ function getVibrationPattern( type ) {
 }
 
 // Función auxiliar para notificaciones web fallback
-function showInAppNotification( title, message, type = 'info' ) {
+function showInAppNotification( title, message, type = 'info', options = {} ) {
   const notification = document.createElement( 'div' );
+
   const typeIcons = {
     task: 'fa-tasks',
     success: 'fa-check-circle',
     warning: 'fa-exclamation-triangle',
-    info: 'fa-info-circle'
+    info: 'fa-info-circle',
+    reminder: 'fa-bell',
+    late: 'fa-clock'
   };
 
   const typeColors = {
     task: 'bg-blue-500',
     success: 'bg-green-500',
-    warning: 'bg-orange-500',
-    info: 'bg-gray-600'
+    warning: 'fa-exclamation-triangle',
+    info: 'bg-gray-600',
+    reminder: 'bg-purple-500',
+    late: 'bg-orange-500'
   };
 
   notification.className = `fixed top-20 right-4 ${typeColors[ type ]} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
+
   notification.innerHTML = `
     <div class="flex items-start space-x-3">
-      <i class="fas ${typeIcons[ type ]} mt-1 flex-shrink-0"></i>
+      ${options.icon ? `<img src="${options.icon}" class="w-8 h-8 rounded" alt="icon">` : `<i class="fas ${typeIcons[ type ]} text-xl mt-1 flex-shrink-0"></i>`}
       <div class="flex-1">
         <div class="font-semibold text-sm">${title}</div>
         <div class="text-xs opacity-90 mt-1">${message}</div>
+        ${options.taskId ? `
+          <button onclick="goToTask('${options.dateStr}', '${options.taskId}')" 
+                  class="mt-2 text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-2 py-1 rounded transition">
+            Ver tarea →
+          </button>
+        ` : ''}
       </div>
       <button onclick="this.parentElement.parentElement.remove()" 
               class="text-white hover:text-gray-200 ml-2 flex-shrink-0">
@@ -328,11 +340,38 @@ function showInAppNotification( title, message, type = 'info' ) {
   // Animación de entrada
   setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
 
-  // Auto-remove después de 5 segundos
+  // Auto-remove después de 8 segundos
   setTimeout( () => {
     notification.classList.add( 'translate-x-full' );
     setTimeout( () => notification.remove(), 300 );
-  }, 5000 );
+  }, 8000 );
+}
+
+function goToTask( dateStr, taskId ) {
+  if ( !dateStr || !taskId ) return;
+
+  // Cerrar notificación
+  document.querySelectorAll( '.fixed.top-20.right-4' ).forEach( n => n.remove() );
+
+  // Abrir panel de tareas del día
+  const date = new Date( dateStr + 'T12:00:00' );
+  showDailyTaskPanel( dateStr, date.getDate() );
+
+  // Scroll al panel
+  setTimeout( () => {
+    scrollToPanelSmoothly();
+
+    // Highlight de la tarea
+    const taskElement = document.querySelector( `[data-task-id="${taskId}"]` );
+    if ( taskElement ) {
+      taskElement.scrollIntoView( { behavior: 'smooth', block: 'center' } );
+      taskElement.classList.add( 'ring-4', 'ring-blue-400', 'animate-pulse' );
+
+      setTimeout( () => {
+        taskElement.classList.remove( 'animate-pulse' );
+      }, 2000 );
+    }
+  }, 300 );
 }
 
 function isPWAInstalled() {
@@ -1412,30 +1451,89 @@ async function saveFCMToken( token ) {
 
 // FUNCIÓN: Escuchar mensajes en foreground
 function setupFCMListeners() {
-  if ( !messaging ) return;
+  if ( !messaging ) {
+    console.warn( '⚠️ Messaging no disponible para listeners' );
+    return;
+  }
 
-  // Manejar notificaciones cuando la app está en primer plano
+  // 🔥 LISTENER PRINCIPAL: Mensajes cuando la app está abierta
   messaging.onMessage( ( payload ) => {
-    console.log( '📨 Mensaje FCM recibido (foreground):', payload );
+    console.log( '📨 Mensaje FCM recibido (app abierta):', payload );
 
-    const { notification } = payload;
+    const { notification, data } = payload;
 
     if ( notification ) {
+      const title = notification.title || 'Notificación';
+      const body = notification.body || '';
+      const taskId = data?.taskId;
+      const dateStr = data?.dateStr;
+
       // Mostrar notificación visual en la app
-      showInAppNotification(
-        notification.title || 'Notificación',
-        notification.body || '',
-        'task'
-      );
+      showInAppNotification( title, body, 'task', {
+        taskId,
+        dateStr,
+        icon: notification.icon || '/images/IconLogo.png'
+      } );
 
       // Vibrar si está disponible
       if ( 'vibrate' in navigator ) {
         navigator.vibrate( [ 200, 100, 200 ] );
       }
+
+      // Si es PWA o navegador con permisos, mostrar también notificación del sistema
+      if ( Notification.permission === 'granted' ) {
+        showDesktopNotificationPWA(
+          title,
+          body,
+          data?.tag || `fcm-${Date.now()}`,
+          data?.requiresAction === 'true',
+          data?.type || 'default'
+        );
+      }
+
+      // Actualizar UI si corresponde
+      if ( dateStr && taskId ) {
+        updateTaskUIFromNotification( dateStr, taskId );
+      }
     }
   } );
 
-  console.log( 'FCM listeners configurados' );
+  // 🔥 LISTENER: Errores de token
+  messaging.onTokenRefresh( async () => {
+    console.log( '🔄 Token FCM necesita renovación' );
+    try {
+      const newToken = await requestFCMToken();
+      if ( newToken ) {
+        console.log( '✅ Token FCM renovado' );
+      }
+    } catch ( error ) {
+      console.error( '❌ Error renovando token FCM:', error );
+    }
+  } );
+
+  console.log( '✅ FCM listeners configurados (foreground)' );
+}
+
+function updateTaskUIFromNotification( dateStr, taskId ) {
+  // Si el panel está abierto y es del mismo día, actualizarlo
+  if ( selectedDateForPanel === dateStr ) {
+    const date = new Date( dateStr + 'T12:00:00' );
+    showDailyTaskPanel( dateStr, date.getDate() );
+  }
+
+  // Actualizar calendario si está en el mes actual
+  const today = new Date();
+  const taskDate = new Date( dateStr + 'T12:00:00' );
+
+  if ( taskDate.getMonth() === currentDate.getMonth() &&
+    taskDate.getFullYear() === currentDate.getFullYear() ) {
+    renderCalendar();
+  }
+
+  // Actualizar progreso si es hoy
+  if ( dateStr === getTodayString() ) {
+    updateProgress();
+  }
 }
 
 // Registrar sincronización periódica (Solo Chrome/Edge)
@@ -1453,14 +1551,90 @@ async function registerPeriodicSync() {
   }
 }
 
-// Llamar en DOMContentLoaded
-document.addEventListener( "DOMContentLoaded", function () {
-  // ... código existente ...
+// Sistema de sincronización de notificaciones
+let lastNotificationSync = 0;
+const NOTIFICATION_SYNC_INTERVAL = 30000; // 30 segundos
 
-  setTimeout( () => {
-    registerPeriodicSync(); //Agregar aquí
-  }, 2000 );
-} );
+async function syncNotificationStatus() {
+  if ( !currentUser || !db ) return;
+
+  const now = Date.now();
+  if ( now - lastNotificationSync < NOTIFICATION_SYNC_INTERVAL ) {
+    return; // No sincronizar muy seguido
+  }
+
+  try {
+    // Guardar estado de notificaciones enviadas en Firestore
+    const notificationState = {
+      sentNotifications: Array.from( sentNotifications ),
+      morning: notificationStatus.morning,
+      midday: notificationStatus.midday,
+      evening: notificationStatus.evening,
+      timestamp: new Date(),
+      deviceId: getDeviceId()
+    };
+
+    await db.collection( 'users' )
+      .doc( currentUser.uid )
+      .collection( 'notificationStatus' )
+      .doc( getTodayString() )
+      .set( notificationState, { merge: true } );
+
+    lastNotificationSync = now;
+    console.log( '✅ Estado de notificaciones sincronizado' );
+
+  } catch ( error ) {
+    console.error( '❌ Error sincronizando notificaciones:', error );
+  }
+}
+
+// Generar ID único del dispositivo
+function getDeviceId() {
+  let deviceId = localStorage.getItem( 'device_id' );
+
+  if ( !deviceId ) {
+    deviceId = `device_${Date.now()}_${Math.random().toString( 36 ).substring( 7 )}`;
+    localStorage.setItem( 'device_id', deviceId );
+  }
+
+  return deviceId;
+}
+
+// Cargar estado de notificaciones de otros dispositivos
+async function loadNotificationStatus() {
+  if ( !currentUser || !db ) return;
+
+  try {
+    const doc = await db.collection( 'users' )
+      .doc( currentUser.uid )
+      .collection( 'notificationStatus' )
+      .doc( getTodayString() )
+      .get();
+
+    if ( doc.exists ) {
+      const data = doc.data();
+
+      // Solo cargar si es de hoy y de otro dispositivo
+      if ( data.deviceId !== getDeviceId() ) {
+        console.log( '📥 Cargando estado de notificaciones de otro dispositivo' );
+
+        // Restaurar notificaciones enviadas
+        if ( data.sentNotifications ) {
+          data.sentNotifications.forEach( tag => sentNotifications.add( tag ) );
+        }
+
+        // Restaurar estado de resúmenes diarios
+        notificationStatus.morning = data.morning || false;
+        notificationStatus.midday = data.midday || false;
+        notificationStatus.evening = data.evening || false;
+
+        console.log( '✅ Estado de notificaciones cargado' );
+      }
+    }
+  } catch ( error ) {
+    console.error( '❌ Error cargando estado de notificaciones:', error );
+  }
+}
 
 function initOfflineMode() {
   console.log( "🔧 Iniciando aplicación en modo offline" );
@@ -1785,16 +1959,22 @@ function handleServiceWorkerMessages() {
 
       switch ( type ) {
         case 'NOTIFICATION_CLICKED':
-          // Manejar clics en notificaciones
           window.focus();
-          if ( data.taskId ) {
-            const today = getTodayString();
-            showDailyTaskPanel( today, new Date().getDate() );
+          if ( data.taskId && data.dateStr ) {
+            goToTask( data.dateStr, data.taskId );
+          }
+          break;
+
+        case 'NOTIFICATION_SENT':
+          // Sincronizar que una notificación fue enviada desde el SW
+          if ( data.tag ) {
+            sentNotifications.add( data.tag );
+            notificationStatus.taskReminders.add( data.tag );
+            console.log( '📡 Notificación sincronizada desde SW:', data.tag );
           }
           break;
 
         case 'SYNC_REQUIRED':
-          // El SW solicita sincronización
           if ( currentUser && isOnline ) {
             processSyncQueue();
           }
@@ -2096,6 +2276,30 @@ async function handleRedirectResult() {
     if ( error.code !== 'auth/popup-closed-by-user' && error.message !== 'Timeout' ) {
       showNotification( 'Error al procesar inicio de sesión', 'error' );
     }
+  }
+}
+
+async function initializeNotificationSystem() {
+  if ( !currentUser || !messaging ) return;
+
+  try {
+    // 1. Cargar estado de notificaciones de otros dispositivos
+    await loadNotificationStatus();
+
+    // 2. Configurar listeners
+    setupFCMListeners();
+
+    // 3. Iniciar sincronización periódica
+    setInterval( () => {
+      if ( currentUser && isOnline ) {
+        syncNotificationStatus();
+      }
+    }, NOTIFICATION_SYNC_INTERVAL );
+
+    console.log( '✅ Sistema de notificaciones inicializado' );
+
+  } catch ( error ) {
+    console.error( '❌ Error inicializando sistema de notificaciones:', error );
   }
 }
 
@@ -5224,7 +5428,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
 
-  // Reset diario - SOLO cuando cambia el día
+  // Reset diario
   const todayKey = `${today}-reset`;
   if ( !sentNotifications.has( todayKey ) && currentHour === 0 && currentMinute <= 1 ) {
     notificationStatus.morning = false;
@@ -5233,10 +5437,13 @@ function checkDailyTasksImproved( forceCheck = false ) {
     notificationStatus.taskReminders.clear();
     sentNotifications.clear();
     sentNotifications.add( todayKey );
+
+    // Sincronizar reset
+    syncNotificationStatus();
+
     console.log( '🔄 Notificaciones reseteadas para nuevo día' );
   }
 
-  // Revisar tareas de HOY solamente
   const todayTasks = tasks[ today ] || [];
 
   todayTasks.forEach( task => {
@@ -5246,7 +5453,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
     const taskTimeInMinutes = taskHours * 60 + taskMinutes;
     const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-    //1. NOTIFICACIÓN: 15 minutos antes
+    // Recordatorio 15 minutos antes
     const reminderKey = `${task.id}-15min`;
     if ( !notificationStatus.taskReminders.has( reminderKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes - 15 &&
@@ -5262,10 +5469,13 @@ function checkDailyTasksImproved( forceCheck = false ) {
         'task-reminder'
       );
       notificationStatus.taskReminders.add( reminderKey );
-      console.log( ` Notificación 15min enviada: ${task.title}` );
+
+      // 🔥 NUEVO: Broadcast y sincronizar
+      broadcastNotificationSent( reminderKey );
+      syncNotificationStatus();
     }
 
-    //2. NOTIFICACIÓN: Hora exacta (SIN CAMBIAR ESTADO)
+    // Hora exacta
     const startKey = `${task.id}-start`;
     if ( !notificationStatus.taskReminders.has( startKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes &&
@@ -5273,9 +5483,6 @@ function checkDailyTasksImproved( forceCheck = false ) {
       task.state === 'pending' ) {
 
       const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-
-
-      //SOLO notificar
       showDesktopNotificationPWA(
         `🔔 Es hora de: ${task.title}`,
         `${priority.label} programada para ${task.time}`,
@@ -5287,14 +5494,18 @@ function checkDailyTasksImproved( forceCheck = false ) {
       showInAppNotification(
         '⏰ Recordatorio de Tarea',
         `${task.title} - ${task.time}`,
-        'task'
+        'task',
+        { taskId: task.id, dateStr: today }
       );
 
       notificationStatus.taskReminders.add( startKey );
-      console.log( ` Notificación hora exacta enviada: ${task.title}` );
+
+      // 🔥 NUEVO: Broadcast y sincronizar
+      broadcastNotificationSent( startKey );
+      syncNotificationStatus();
     }
 
-    //3. NOTIFICACIÓN: Tarea retrasada (30 minutos después)
+    // Tarea retrasada
     const lateKey = `${task.id}-late`;
     if ( !notificationStatus.taskReminders.has( lateKey ) &&
       currentTimeInMinutes >= taskTimeInMinutes + 30 &&
@@ -5308,7 +5519,10 @@ function checkDailyTasksImproved( forceCheck = false ) {
         'task-late'
       );
       notificationStatus.taskReminders.add( lateKey );
-      console.log( `⚠️ Notificación retraso enviada: ${task.title}` );
+
+      // 🔥 NUEVO: Broadcast y sincronizar
+      broadcastNotificationSent( lateKey );
+      syncNotificationStatus();
     }
   } );
 
@@ -5317,7 +5531,7 @@ function checkDailyTasksImproved( forceCheck = false ) {
   const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
   const totalActive = pendingTasks.length + inProgressTasks.length;
 
-  // Buenos días (9:00-9:30)
+  // Buenos días
   if ( !notificationStatus.morning &&
     currentHour === 9 && currentMinute <= 30 &&
     totalActive > 0 ) {
@@ -5339,9 +5553,12 @@ function checkDailyTasksImproved( forceCheck = false ) {
       'morning'
     );
     notificationStatus.morning = true;
+
+    // 🔥 NUEVO: Sincronizar
+    syncNotificationStatus();
   }
 
-  // Mediodía (12:00-12:30)
+  // Mediodía
   if ( !notificationStatus.midday &&
     currentHour === 12 && currentMinute <= 30 &&
     pendingTasks.length > 0 ) {
@@ -5354,9 +5571,12 @@ function checkDailyTasksImproved( forceCheck = false ) {
       'midday'
     );
     notificationStatus.midday = true;
+
+    // 🔥 NUEVO: Sincronizar
+    syncNotificationStatus();
   }
 
-  // Final del día (18:00-18:30)
+  // Final del día
   if ( !notificationStatus.evening &&
     currentHour === 18 && currentMinute <= 30 &&
     totalActive > 0 ) {
@@ -5369,6 +5589,9 @@ function checkDailyTasksImproved( forceCheck = false ) {
       'evening'
     );
     notificationStatus.evening = true;
+
+    // 🔥 NUEVO: Sincronizar
+    syncNotificationStatus();
   }
 }
 
@@ -5942,6 +6165,22 @@ window.addEventListener( "beforeunload", () => {
   }
 } );
 
+window.addEventListener( 'storage', ( e ) => {
+  // Detectar cambios de notificaciones en otras pestañas
+  if ( e.key === 'notification_update' && e.newValue ) {
+    try {
+      const update = JSON.parse( e.newValue );
+
+      if ( update.action === 'sent' ) {
+        sentNotifications.add( update.tag );
+        console.log( '📡 Notificación sincronizada de otra pestaña:', update.tag );
+      }
+    } catch ( error ) {
+      console.error( 'Error procesando storage event:', error );
+    }
+  }
+} );
+
 function updateUI() {
   const loginBtn = document.getElementById( "loginBtn" );
   const userInfo = document.getElementById( "userInfo" );
@@ -6103,11 +6342,31 @@ function saveTasks() {
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
 
-    // NUEVO: Enviar al SW para que pueda verificar incluso con app cerrada
-    sendTasksToServiceWorker();
+    // 🔥 IMPORTANTE: Enviar al SW después de cada guardado
+    if ( currentUser && !currentUser.isOffline ) {
+      sendTasksToServiceWorker();
+    }
   } catch ( error ) {
     console.error( "Error saving tasks:", error );
     showNotification( "Error al guardar tareas", "error" );
+  }
+}
+
+// Notificar a otras pestañas cuando enviamos una notificación
+function broadcastNotificationSent( tag ) {
+  try {
+    localStorage.setItem( 'notification_update', JSON.stringify( {
+      action: 'sent',
+      tag: tag,
+      timestamp: Date.now()
+    } ) );
+
+    // Limpiar después de 1 segundo
+    setTimeout( () => {
+      localStorage.removeItem( 'notification_update' );
+    }, 1000 );
+  } catch ( error ) {
+    console.error( 'Error broadcasting notification:', error );
   }
 }
 
@@ -6115,15 +6374,12 @@ function saveTasks() {
 document.addEventListener( "DOMContentLoaded", async function () {
   console.log( '🚀 Inicializando aplicación...' );
 
-  // Verificar estado de red
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  // Cargar datos locales
   loadTasks();
   loadPermissions();
 
-  // Configurar UI básica
   renderCalendar();
   updateProgress();
   setupEventListeners();
@@ -6131,10 +6387,8 @@ document.addEventListener( "DOMContentLoaded", async function () {
   setupTaskTooltips();
   setupDateInput();
 
-  // Configurar notificaciones
   initNotifications();
 
-  // ESPERAR A QUE FIREBASE ESTÉ INICIALIZADO
   console.log( '⏳ Esperando inicialización de Firebase...' );
 
   await new Promise( resolve => {
@@ -6142,12 +6396,11 @@ document.addEventListener( "DOMContentLoaded", async function () {
       if ( typeof firebase !== 'undefined' && firebase.auth && !authReady ) {
         clearInterval( checkAuth );
         authReady = true;
-        console.log( 'Firebase listo' );
+        console.log( '✅ Firebase listo' );
         resolve();
       }
     }, 100 );
 
-    // Timeout de 10 segundos
     setTimeout( () => {
       clearInterval( checkAuth );
       if ( !authReady ) {
@@ -6158,13 +6411,9 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }, 10000 );
   } );
 
-  // Inicializar Firebase
   if ( isOnline ) {
     await initFirebase();
-
-    // Manejar resultado de redirect inmediatamente
     await handleRedirectResult();
-
   } else {
     console.log( '📴 Sin conexión - modo offline' );
     currentUser = { isOffline: true };
@@ -6172,7 +6421,6 @@ document.addEventListener( "DOMContentLoaded", async function () {
     hideLoadingScreen();
   }
 
-  // Configuraciones PWA
   setTimeout( () => {
     handleServiceWorkerMessages();
 
@@ -6195,16 +6443,21 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  // Configurar FCM listeners
   setTimeout( () => {
     if ( currentUser && messaging ) {
-      setupFCMListeners();
+      // Ya se configuró en initFirebase o signInWithGoogle
     }
   }, 2000 );
 
-  // CONFIGURAR LISTENERS DE AUTENTICACIÓN - AHORA SÍ ESTÁ LISTO
-  setupAuthListeners();
+  // 🔥 NUEVO: Listener para sincronización de notificaciones
+  window.addEventListener( 'focus', async () => {
+    if ( currentUser && isOnline ) {
+      console.log( '🔄 App enfocada - cargando estado de notificaciones' );
+      await loadNotificationStatus();
+    }
+  } );
 
+  setupAuthListeners();
 } );
 
 // ============================================

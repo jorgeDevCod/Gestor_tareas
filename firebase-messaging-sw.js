@@ -274,8 +274,34 @@ async function sendNotification( options ) {
         await self.registration.showNotification( finalOptions.title, finalOptions );
         console.log( '✅ Notificación enviada:', finalOptions.title );
         sentNotifications.add( tag );
+
+        // 🔥 NUEVO: Notificar a la app que se envió una notificación
+        notifyClientsOfNotification( tag, finalOptions );
     } catch ( error ) {
         console.error( '❌ Error enviando notificación:', error );
+    }
+}
+
+// 🔥 NUEVA FUNCIÓN: Notificar a todos los clientes
+async function notifyClientsOfNotification( tag, options ) {
+    try {
+        const allClients = await clients.matchAll( {
+            includeUncontrolled: true,
+            type: 'window'
+        } );
+
+        allClients.forEach( client => {
+            client.postMessage( {
+                type: 'NOTIFICATION_SENT',
+                data: {
+                    tag: tag,
+                    title: options.title,
+                    timestamp: Date.now()
+                }
+            } );
+        } );
+    } catch ( error ) {
+        console.error( 'Error notificando clientes:', error );
     }
 }
 
