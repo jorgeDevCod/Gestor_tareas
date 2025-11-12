@@ -1,13 +1,12 @@
 // ====================================
-// firebase-messaging-sw.js (UNIFICADO)
-// Versión: 3.1 - Unifica SW + FCM + lógica de tareas
+// Versión: 3.2 - FCM optimizado para móvil
 // ====================================
 
-// IMPORTS: Firebase (compat)
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
+// IMPORTS: Firebase (compat) - Versión 10.x para mejor soporte móvil
+importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js' );
+importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js' );
+importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js' );
+importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js' );
 
 // ====================================
 // CONFIGURACIÓN FIREBASE (igual que en app.js)
@@ -22,11 +21,26 @@ const FIREBASE_CONFIG = {
 };
 
 // Inicializar Firebase (solo una vez)
+let app;
 try {
-    firebase.initializeApp( FIREBASE_CONFIG );
+    app = firebase.initializeApp( FIREBASE_CONFIG );
+    console.log( '✅ Firebase inicializado en SW' );
 } catch ( e ) {
-    // Si ya estaba inicializado, ignora
-    console.warn( 'Firebase init (ignorado si ya existía):', e.message || e );
+    console.warn( '⚠️ Firebase init (ignorado si ya existía):', e.message || e );
+}
+
+// Servicios
+let db = null;
+let auth = null;
+let messaging = null;
+
+try {
+    db = firebase.firestore();
+    auth = firebase.auth();
+    messaging = firebase.messaging();
+    console.log( '✅ Servicios Firebase inicializados en SW' );
+} catch ( e ) {
+    console.error( '❌ Error inicializando servicios firebase en SW:', e );
 }
 
 // Servicios
@@ -617,5 +631,5 @@ async function clearTasksCache() {
         console.error( 'Error al initServiceWorker:', err );
     }
 
-    console.log( '✅ firebase-messaging-sw.js (unificado) cargado - Con caché y notificaciones' );
+    console.log( '✅ firebase-messaging-sw.js cargado - Con caché y notificaciones' );
 } )();

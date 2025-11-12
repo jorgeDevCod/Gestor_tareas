@@ -1022,7 +1022,7 @@ async function initFirebase() {
     if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
         messaging = firebase.messaging();
-        console.log( '✅ FCM inicializado correctamente' );
+        console.log( 'FCM inicializado correctamente' );
       } catch ( messagingError ) {
         console.warn( '⚠️ Error inicializando FCM:', messagingError );
         messaging = null;
@@ -1035,7 +1035,7 @@ async function initFirebase() {
     // PASO 2: CRÍTICO - Configurar persistencia ANTES de cualquier operación
     try {
       await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-      console.log( '✅ Persistencia LOCAL configurada correctamente' );
+      console.log( 'Persistencia LOCAL configurada correctamente' );
     } catch ( persistError ) {
       console.error( '❌ Error configurando persistencia:', persistError );
     }
@@ -1045,7 +1045,7 @@ async function initFirebase() {
       await db.enablePersistence( {
         synchronizeTabs: true
       } );
-      console.log( '✅ Cache de Firestore habilitado' );
+      console.log( 'Cache de Firestore habilitado' );
     } catch ( cacheError ) {
       if ( cacheError.code === 'failed-precondition' ) {
         console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
@@ -1059,7 +1059,7 @@ async function initFirebase() {
     let currentAuthUser = auth.currentUser;
 
     if ( currentAuthUser ) {
-      console.log( '✅ Sesión restaurada automáticamente:', currentAuthUser.email );
+      console.log( 'Sesión restaurada automáticamente:', currentAuthUser.email );
       currentUser = currentAuthUser;
 
       localStorage.setItem( 'firebase_auth_active', 'true' );
@@ -1077,7 +1077,7 @@ async function initFirebase() {
         }
       }, 2000 );
 
-      // ✅ Solicitar token FCM si messaging está disponible
+      // Solicitar token FCM si messaging está disponible
       if ( messaging ) {
         setTimeout( async () => {
           await requestFCMToken();
@@ -1103,7 +1103,7 @@ async function initFirebase() {
     const user = await authStatePromise;
 
     if ( user ) {
-      console.log( '✅ Usuario detectado:', user.email );
+      console.log( 'Usuario detectado:', user.email );
       currentUser = user;
 
       localStorage.setItem( 'firebase_auth_active', 'true' );
@@ -1121,7 +1121,7 @@ async function initFirebase() {
         } );
       }
 
-      // ✅ Solicitar token FCM si messaging está disponible
+      // Solicitar token FCM si messaging está disponible
       if ( messaging ) {
         setTimeout( async () => {
           await requestFCMToken();
@@ -1177,14 +1177,14 @@ async function requestFCMToken() {
       }
     }
 
-    // ✅ Obtener token con VAPID key correcta
+    // Obtener token con VAPID key correcta
     console.log( '🔑 Solicitando token FCM...' );
     const token = await messaging.getToken( {
       vapidKey: 'BCqZPBWf51RsALY4R4_O7teHw10TCL1fAlWlKoQB4fI8WvMCfnUePvo2Lk9VnzPR8NsNyjMdcSShGEXbi_2PWH0'
     } );
 
     if ( token ) {
-      console.log( '✅ Token FCM obtenido:', token );
+      console.log( 'Token FCM obtenido:', token );
       fcmToken = token;
 
       // Guardar token en Firestore
@@ -1212,6 +1212,87 @@ async function requestFCMToken() {
 
     return null;
   }
+}
+// ============================================
+// NUEVA FUNCIÓN: Solicitar permisos FCM de forma amigable
+// ============================================
+async function promptForNotifications() {
+  // Solo ejecutar si:
+  // 1. El usuario está logueado
+  // 2. Los permisos están en 'default'
+  // 3. No se han solicitado recientemente
+
+  if ( !currentUser || currentUser.isOffline ) return;
+
+  const permission = Notification.permission;
+  const lastPrompt = localStorage.getItem( 'last_notification_prompt' );
+  const now = Date.now();
+
+  // No molestar si ya se pidió en las últimas 24 horas
+  if ( lastPrompt && ( now - parseInt( lastPrompt ) ) < 24 * 60 * 60 * 1000 ) {
+    console.log( '⏰ Ya se solicitaron permisos recientemente' );
+    return;
+  }
+
+  if ( permission === 'default' ) {
+    // Mostrar modal explicativo primero
+    const shouldAsk = await showNotificationPromptModal();
+
+    if ( shouldAsk ) {
+      localStorage.setItem( 'last_notification_prompt', now.toString() );
+      await requestFCMToken();
+    }
+  } else if ( permission === 'granted' ) {
+    // Ya tiene permisos, solo obtener token
+    await requestFCMToken();
+  }
+}
+
+// Modal amigable para solicitar permisos
+function showNotificationPromptModal() {
+  return new Promise( ( resolve ) => {
+    const modal = document.createElement( 'div' );
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+    modal.innerHTML = `
+      <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-fade-in">
+        <div class="text-center mb-4">
+          <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <i class="fas fa-bell text-blue-600 text-3xl"></i>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">
+            ¿Activar recordatorios?
+          </h3>
+          <p class="text-gray-600 text-sm">
+            Te enviaremos notificaciones para recordarte tus tareas programadas, incluso si cierras la app.
+          </p>
+        </div>
+        
+        <div class="space-y-3">
+          <button id="acceptNotifications" 
+                  class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium">
+            <i class="fas fa-check mr-2"></i>
+            Sí, activar recordatorios
+          </button>
+          <button id="declineNotifications" 
+                  class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition font-medium">
+            Ahora no
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild( modal );
+
+    document.getElementById( 'acceptNotifications' ).onclick = () => {
+      modal.remove();
+      resolve( true );
+    };
+
+    document.getElementById( 'declineNotifications' ).onclick = () => {
+      modal.remove();
+      resolve( false );
+    };
+  } );
 }
 
 // FUNCIÓN: Guardar token en Firestore
@@ -1258,7 +1339,7 @@ function setupFCMListeners() {
     }
   } );
 
-  console.log( '✅ FCM listeners configurados' );
+  console.log( 'FCM listeners configurados' );
 }
 
 
@@ -1883,7 +1964,9 @@ function hideLoadingScreen() {
   }, 300 );
 }
 
-// FUNCIÓN: Iniciar sesión con Google - CORREGIDO
+// ============================================
+// FUNCIÓN: Iniciar sesión con Google - MEJORADO
+// ============================================
 async function signInWithGoogle() {
   try {
     console.log( '🔑 Iniciando login con Google...' );
@@ -1901,11 +1984,15 @@ async function signInWithGoogle() {
       prompt: 'select_account'
     } );
 
-    // Esto redirige a Google y vuelve a tu app, evitando problemas COOP
+    // 🔥 NUEVO: Guardar flag ANTES de redirigir
+    localStorage.setItem( 'pending_google_login', 'true' );
+
+    // Redirigir (la página se recargará)
     await auth.signInWithRedirect( provider );
 
   } catch ( error ) {
     console.error( '❌ Error en login:', error );
+    localStorage.removeItem( 'pending_google_login' );
 
     let errorMessage = 'Error al iniciar sesión';
 
@@ -1919,23 +2006,111 @@ async function signInWithGoogle() {
       case 'auth/too-many-requests':
         errorMessage = 'Demasiados intentos. Intenta más tarde';
         break;
-      case 'auth/operation-not-supported-in-this-environment':
-        errorMessage = 'Este navegador no soporta popup. Usando redirección...';
-        // Fallback automático
-        const provider = new firebase.auth.GoogleAuthProvider();
-        auth.signInWithRedirect( provider );
-        return;
       default:
         errorMessage = `Error: ${error.message}`;
     }
 
     showNotification( errorMessage, 'error' );
 
-  } finally {
     const loginBtn = document.getElementById( "loginBtn" );
     if ( loginBtn ) {
       loginBtn.disabled = false;
       loginBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar Sesión';
+    }
+  }
+}
+
+// ============================================
+// NUEVA FUNCIÓN: Manejar resultado de Google Sign-In
+// ============================================
+async function handleRedirectResult() {
+  if ( !auth ) {
+    console.warn( '⚠️ Auth no disponible para redirect result' );
+    return;
+  }
+
+  try {
+    // 🔥 Verificar si hay un login pendiente
+    const pendingLogin = localStorage.getItem( 'pending_google_login' );
+
+    if ( !pendingLogin ) {
+      console.log( '✓ No hay redirect pendiente' );
+      return;
+    }
+
+    console.log( '🔍 Procesando resultado de redirect...' );
+
+    const result = await auth.getRedirectResult();
+
+    if ( result.user ) {
+      console.log( 'Login exitoso vía redirect:', result.user.email );
+
+      // Limpiar flag
+      localStorage.removeItem( 'pending_google_login' );
+
+      // Establecer usuario
+      currentUser = result.user;
+
+      // Guardar datos de sesión
+      localStorage.setItem( 'firebase_auth_active', 'true' );
+      localStorage.setItem( 'firebase_user_email', result.user.email );
+      localStorage.setItem( 'firebase_user_uid', result.user.uid );
+
+      // 🔥 ACTUALIZAR UI INMEDIATAMENTE
+      updateUI();
+      closeLoginModal();
+
+      // Mostrar notificación de éxito
+      showNotification( `¡Bienvenido ${result.user.displayName || 'Usuario'}!`, 'success' );
+
+      // Enviar al SW
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: { userId: result.user.uid, email: result.user.email }
+        } );
+      }
+
+      // Sincronizar después
+      setTimeout( () => {
+        if ( isOnline && !isSyncing ) {
+          syncFromFirebase();
+        }
+      }, 2000 );
+
+      // SOLICITAR PERMISOS Y TOKEN FCM de forma amigable
+      if ( messaging ) {
+        setTimeout( async () => {
+          await promptForNotifications(); // ← NUEVO
+          setupFCMListeners();
+        }, 2000 );
+      }
+
+    } else if ( pendingLogin ) {
+      // Redirect sin resultado pero había login pendiente
+      console.log( '⏳ Redirect sin resultado aún, esperando...' );
+
+      // Esperar un poco más
+      setTimeout( () => {
+        if ( auth.currentUser ) {
+          console.log( 'Usuario detectado después de espera' );
+          currentUser = auth.currentUser;
+          localStorage.removeItem( 'pending_google_login' );
+          updateUI();
+          closeLoginModal();
+        } else {
+          console.warn( '⚠️ No se detectó usuario después de redirect' );
+          localStorage.removeItem( 'pending_google_login' );
+        }
+      }, 2000 );
+    }
+
+  } catch ( error ) {
+    console.error( '❌ Error procesando redirect:', error );
+    localStorage.removeItem( 'pending_google_login' );
+
+    if ( error.code !== 'auth/popup-closed-by-user' ) {
+      showNotification( 'Error al procesar inicio de sesión', 'error' );
     }
   }
 }
@@ -2131,7 +2306,7 @@ function setupEventListeners() {
     syncBtn: syncToFirebase,
     loginBtn: showLoginModal,
     logoutBtn: signOut,
-    googleSignInBtn: signInWithGoogle,
+  
     closeLoginModal: closeLoginModal,
     resetFormBtn: resetForm,
     clearAllBtn: clearAll,
@@ -2296,38 +2471,42 @@ function resetForm() {
 function showLoginModal() {
   console.log( '🔍 Ejecutando showLoginModal...' );
 
-  // Debug del DOM
-  console.log( '📊 Estado del DOM:', document.readyState );
-  console.log( '📋 Todos los elementos con ID:',
-    Array.from( document.querySelectorAll( '[id]' ) ).map( el => el.id )
-  );
-
   const loginModal = document.getElementById( "loginModal" );
-  console.log( '🎯 loginModal encontrado:', loginModal );
 
   if ( !loginModal ) {
     console.error( "❌ Elemento 'loginModal' no encontrado" );
-    console.log( '🔍 Intentando buscar por clase...' );
-
-    // Búsqueda alternativa
-    const modalByClass = document.querySelector( '.fixed.inset-0.bg-black' );
-    console.log( '🎯 Modal por clase:', modalByClass );
-
     showNotification( "Error: Modal de login no disponible", "error" );
     return;
   }
 
-  console.log( ' Modal encontrado, removiendo clase hidden' );
-  console.log( '📝 Clases antes:', loginModal.className );
+  console.log( '✅ Modal encontrado, mostrando...' );
 
+  // Mostrar modal
   loginModal.classList.remove( "hidden" );
 
-  console.log( '📝 Clases después:', loginModal.className );
+  // 🔥 NUEVO: Configurar event listener del botón de Google DESPUÉS de mostrar el modal
+  setTimeout( () => {
+    const googleSignInBtn = document.getElementById( 'googleSignInBtn' );
+    if ( googleSignInBtn ) {
+      // Remover listeners anteriores si existen
+      const newBtn = googleSignInBtn.cloneNode( true );
+      googleSignInBtn.parentNode.replaceChild( newBtn, googleSignInBtn );
+
+      // Agregar nuevo listener
+      newBtn.addEventListener( 'click', signInWithGoogle );
+      console.log( '✅ Event listener de Google Sign-In configurado' );
+    } else {
+      console.error( '❌ Botón googleSignInBtn no encontrado' );
+    }
+  }, 100 );
 }
 
-
 function closeLoginModal() {
-  document.getElementById( "loginModal" ).classList.add( "hidden" );
+  const loginModal = document.getElementById( "loginModal" );
+  if ( loginModal ) {
+    loginModal.classList.add( "hidden" );
+    console.log( '🚪 Modal de login cerrado' );
+  }
 }
 
 function loadTasks() {
@@ -5971,7 +6150,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
   // Configurar notificaciones
   initNotifications();
 
-  // ✅ ESPERAR A QUE FIREBASE ESTÉ INICIALIZADO
+  // ESPERAR A QUE FIREBASE ESTÉ INICIALIZADO
   console.log( '⏳ Esperando inicialización de Firebase...' );
 
   await new Promise( resolve => {
@@ -5979,7 +6158,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
       if ( typeof firebase !== 'undefined' && firebase.auth && !authReady ) {
         clearInterval( checkAuth );
         authReady = true;
-        console.log( '✅ Firebase listo' );
+        console.log( 'Firebase listo' );
         resolve();
       }
     }, 100 );
@@ -5998,6 +6177,10 @@ document.addEventListener( "DOMContentLoaded", async function () {
   // Inicializar Firebase
   if ( isOnline ) {
     await initFirebase();
+
+    // Manejar resultado de redirect inmediatamente
+    await handleRedirectResult();
+
   } else {
     console.log( '📴 Sin conexión - modo offline' );
     currentUser = { isOffline: true };
@@ -6035,7 +6218,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 2000 );
 
-  // ✅ CONFIGURAR LISTENERS DE AUTENTICACIÓN - AHORA SÍ ESTÁ LISTO
+  // CONFIGURAR LISTENERS DE AUTENTICACIÓN - AHORA SÍ ESTÁ LISTO
   setupAuthListeners();
 
 } );
@@ -6053,14 +6236,14 @@ function setupAuthListeners() {
     return;
   }
 
-  // ✅ LISTENER ÚNICO: Cambios de autenticación
+  // LISTENER ÚNICO: Cambios de autenticación
   auth.onAuthStateChanged( ( user ) => {
     console.log( '🔄 onAuthStateChanged:', user ? user.email : 'no user' );
 
     if ( user ) {
       // Usuario logueado
       if ( !currentUser || currentUser.uid !== user.uid ) {
-        console.log( '✅ Nueva sesión detectada:', user.email );
+        console.log( 'Nueva sesión detectada:', user.email );
         currentUser = user;
 
         localStorage.setItem( 'firebase_auth_active', 'true' );
@@ -6098,7 +6281,7 @@ function setupAuthListeners() {
     }
   } );
 
-  console.log( '✅ Listeners de autenticación configurados' );
+  console.log( 'Listeners de autenticación configurados' );
 }
 
 // ============================================
@@ -6143,7 +6326,7 @@ document.addEventListener( 'visibilitychange', () => {
     console.log( '📱 App volvió del background - verificando sesión' );
 
     if ( auth && auth.currentUser ) {
-      console.log( '✅ Sesión activa:', auth.currentUser.email );
+      console.log( 'Sesión activa:', auth.currentUser.email );
 
       if ( !currentUser || currentUser.uid !== auth.currentUser.uid ) {
         currentUser = auth.currentUser;
@@ -6166,7 +6349,7 @@ document.addEventListener( 'visibilitychange', () => {
           if ( auth && auth.currentUser ) {
             currentUser = auth.currentUser;
             updateUI();
-            console.log( '✅ Sesión restaurada:', currentUser.email );
+            console.log( 'Sesión restaurada:', currentUser.email );
           } else {
             console.error( '❌ No se pudo restaurar sesión' );
             localStorage.removeItem( 'firebase_auth_active' );
@@ -6179,4 +6362,4 @@ document.addEventListener( 'visibilitychange', () => {
   }
 } );
 
-console.log( '✅ Sistema de autenticación configurado' );
+console.log( 'Sistema de autenticación configurado' );
