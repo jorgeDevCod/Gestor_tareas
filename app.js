@@ -1035,14 +1035,12 @@ async function initFirebase() {
   try {
     console.log( '🔥 Iniciando Firebase...' );
 
-    // Verificar conexión
     if ( !navigator.onLine ) {
       console.log( '📴 Sin conexión - iniciando modo offline' );
       initOfflineMode();
       return;
     }
 
-    // PASO 1: Inicializar Firebase (solo una vez)
     if ( !firebase.apps.length ) {
       firebase.initializeApp( firebaseConfig );
       console.log( '✅ Firebase App inicializada' );
@@ -1051,7 +1049,6 @@ async function initFirebase() {
     db = firebase.firestore();
     auth = firebase.auth();
 
-    // PASO 2: Configurar persistencia ANTES de cualquier operación
     try {
       await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
       console.log( '✅ Persistencia LOCAL configurada' );
@@ -1059,7 +1056,6 @@ async function initFirebase() {
       console.warn( '⚠️ Error configurando persistencia:', persistError.code );
     }
 
-    // PASO 3: Habilitar caché de Firestore
     try {
       await db.enablePersistence( { synchronizeTabs: true } );
       console.log( '✅ Cache de Firestore habilitado' );
@@ -1071,7 +1067,6 @@ async function initFirebase() {
       }
     }
 
-    // PASO 4: Inicializar Messaging (si está disponible)
     if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
         messaging = firebase.messaging();
@@ -1085,7 +1080,6 @@ async function initFirebase() {
       messaging = null;
     }
 
-    // PASO 5: Verificar usuario actual (sincrónico)
     currentUser = auth.currentUser;
 
     if ( currentUser ) {
@@ -1099,28 +1093,29 @@ async function initFirebase() {
       updateSyncIndicator( 'success' );
       hideLoadingScreen();
 
-      // Sync diferido
       setTimeout( () => {
         if ( isOnline && !isSyncing ) {
           syncFromFirebase();
         }
       }, 2000 );
 
-      // Solicitar token FCM
+      // 🔥 CORREGIDO: Esperar más tiempo para FCM
       if ( messaging ) {
         setTimeout( async () => {
-          await requestFCMToken();
-          setupFCMListeners();
-        }, 1000 );
+          try {
+            await requestFCMToken();
+            setupFCMListeners();
+          } catch ( error ) {
+            console.warn( '⚠️ No se pudo configurar FCM:', error );
+          }
+        }, 3000 ); // ← Aumentado a 3 segundos
       }
 
       return;
     }
 
-    // PASO 6: Si no hay usuario, configurar listener
     console.log( '⏳ No hay sesión activa, esperando...' );
 
-    // Esperar máximo 5 segundos por un usuario
     const authTimeout = new Promise( ( resolve ) => setTimeout( () => resolve( null ), 5000 ) );
     const authUser = await Promise.race( [
       new Promise( ( resolve ) => {
@@ -1150,11 +1145,16 @@ async function initFirebase() {
         } );
       }
 
+      // 🔥 CORREGIDO: Esperar más tiempo para FCM
       if ( messaging ) {
         setTimeout( async () => {
-          await requestFCMToken();
-          setupFCMListeners();
-        }, 1000 );
+          try {
+            await requestFCMToken();
+            setupFCMListeners();
+          } catch ( error ) {
+            console.warn( '⚠️ No se pudo configurar FCM:', error );
+          }
+        }, 3000 ); // ← Aumentado a 3 segundos
       }
 
       setTimeout( () => {
@@ -1181,6 +1181,55 @@ async function initFirebase() {
   }
 }
 
+async function waitForServiceWorker( timeout = 10000 ) {
+  if ( !( 'serviceWorker' in navigator ) ) {
+    console.warn( '⚠️ Service Workers no soportados' );
+    return null;
+  }
+
+  console.log( '⏳ Esperando Service Worker activo...' );
+
+  try {
+    // Esperar a que haya un SW registrado
+    const registration = await navigator.serviceWorker.ready;
+
+    // Verificar que esté activo
+    if ( registration.active ) {
+      console.log( '✅ Service Worker activo:', registration.active.state );
+      return registration;
+    }
+
+    // Si no está activo, esperar con timeout
+    return await new Promise( ( resolve, reject ) => {
+      const timeoutId = setTimeout( () => {
+        reject( new Error( 'Timeout esperando SW activo' ) );
+      }, timeout );
+
+      // Escuchar cambios de estado
+      const checkState = () => {
+        if ( registration.active ) {
+          clearTimeout( timeoutId );
+          console.log( '✅ SW ahora activo' );
+          resolve( registration );
+        } else if ( registration.installing ) {
+          registration.installing.addEventListener( 'statechange', function () {
+            if ( this.state === 'activated' ) {
+              clearTimeout( timeoutId );
+              resolve( registration );
+            }
+          } );
+        }
+      };
+
+      checkState();
+    } );
+
+  } catch ( error ) {
+    console.error( '❌ Error esperando SW:', error );
+    return null;
+  }
+}
+
 // FUNCIÓN: Solicitar token FCM
 async function requestFCMToken() {
   if ( !messaging ) {
@@ -1194,6 +1243,15 @@ async function requestFCMToken() {
   }
 
   try {
+    // 🔥 CRÍTICO: Esperar a que el SW esté activo
+    console.log( '🔍 Verificando Service Worker antes de FCM...' );
+    const registration = await waitForServiceWorker();
+
+    if ( !registration ) {
+      console.error( '❌ No hay Service Worker disponible para FCM' );
+      return null;
+    }
+
     // Verificar permisos de notificación
     if ( Notification.permission !== 'granted' ) {
       console.log( '📢 Solicitando permisos de notificación...' );
@@ -1205,21 +1263,22 @@ async function requestFCMToken() {
       }
     }
 
-    // Obtener token con VAPID key correcta
+    // 🔥 AHORA SÍ: Obtener token con SW activo
     console.log( '🔑 Solicitando token FCM...' );
     const token = await messaging.getToken( {
-      vapidKey: 'BCqZPBWf51RsALY4R4_O7teHw10TCL1fAlWlKoQB4fI8WvMCfnUePvo2Lk9VnzPR8NsNyjMdcSShGEXbi_2PWH0'
+      vapidKey: 'BCqZPBWf51RsALY4R4_O7teHw10TCL1fAlWlKoQB4fI8WvMCfnUePvo2Lk9VnzPR8NsNyjMdcSShGEXbi_2PWH0',
+      serviceWorkerRegistration: registration // ← IMPORTANTE: Pasar el registration
     } );
 
     if ( token ) {
-      console.log( 'Token FCM obtenido:', token );
+      console.log( '✅ Token FCM obtenido:', token.substring( 0, 20 ) + '...' );
       fcmToken = token;
 
       // Guardar token en Firestore
       await saveFCMToken( token );
 
       // Enviar al Service Worker
-      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+      if ( navigator.serviceWorker.controller ) {
         navigator.serviceWorker.controller.postMessage( {
           type: 'FCM_TOKEN',
           data: { token }
@@ -1227,7 +1286,11 @@ async function requestFCMToken() {
       }
 
       return token;
+    } else {
+      console.warn( '⚠️ No se pudo obtener token FCM' );
+      return null;
     }
+
   } catch ( error ) {
     console.error( '❌ Error obteniendo token FCM:', error );
 
@@ -1235,12 +1298,17 @@ async function requestFCMToken() {
     if ( error.code === 'messaging/permission-blocked' ) {
       console.error( '💡 Usuario bloqueó notificaciones' );
     } else if ( error.code === 'messaging/token-subscribe-failed' ) {
-      console.error( '💡 Error de autenticación FCM - verifica VAPID key' );
+      console.error( '💡 Error de suscripción FCM - verifica VAPID key y SW' );
+    } else if ( error.name === 'AbortError' ) {
+      console.error( '💡 Service Worker no está activo o accesible' );
+    } else if ( error.code === 'messaging/unsupported-browser' ) {
+      console.error( '💡 Navegador no soporta FCM' );
     }
 
     return null;
   }
 }
+
 // ============================================
 // NUEVA FUNCIÓN: Solicitar permisos FCM de forma amigable
 // ============================================
@@ -1845,16 +1913,11 @@ async function signInWithGoogle() {
       loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Conectando...';
     }
 
-    // 🔥 CRÍTICO: Usar signInWithPopup en lugar de redirect
-    // Esto evita el problema de timing y es más confiable
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.addScope( 'profile' );
     provider.addScope( 'email' );
-    provider.setCustomParameters( {
-      prompt: 'select_account'
-    } );
+    provider.setCustomParameters( { prompt: 'select_account' } );
 
-    // Intentar popup primero (mejor experiencia)
     try {
       const result = await auth.signInWithPopup( provider );
 
@@ -1863,18 +1926,15 @@ async function signInWithGoogle() {
 
         currentUser = result.user;
 
-        // Guardar sesión
         localStorage.setItem( 'firebase_auth_active', 'true' );
         localStorage.setItem( 'firebase_user_email', result.user.email );
         localStorage.setItem( 'firebase_user_uid', result.user.uid );
 
-        // Actualizar UI inmediatamente
         updateUI();
         closeLoginModal();
 
         showNotification( `¡Bienvenido ${result.user.displayName || 'Usuario'}!`, 'success' );
 
-        // Enviar al SW
         if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
           navigator.serviceWorker.controller.postMessage( {
             type: 'SET_USER_ID',
@@ -1882,42 +1942,40 @@ async function signInWithGoogle() {
           } );
         }
 
-        // Sync después de 2 segundos
         setTimeout( () => {
           if ( isOnline && !isSyncing ) {
             syncFromFirebase();
           }
         }, 2000 );
 
-        // Solicitar permisos FCM de forma amigable
+        // 🔥 CORREGIDO: Esperar más tiempo y verificar SW
         if ( messaging ) {
           setTimeout( async () => {
-            await promptForNotifications();
-            setupFCMListeners();
-          }, 2000 );
+            try {
+              await requestFCMToken(); // Ya tiene espera interna del SW
+              setupFCMListeners();
+            } catch ( error ) {
+              console.warn( '⚠️ No se pudo configurar FCM, continuando sin notificaciones push:', error );
+            }
+          }, 3000 ); // ← Aumentado a 3 segundos
         }
       }
 
     } catch ( popupError ) {
       console.warn( '⚠️ Popup bloqueado, intentando redirect:', popupError.code );
 
-      // Fallback a redirect solo si popup falla
       if ( popupError.code === 'auth/popup-blocked' ||
         popupError.code === 'auth/cancelled-popup-request' ) {
 
         localStorage.setItem( 'pending_google_login', 'true' );
         await auth.signInWithRedirect( provider );
-        // La página se recargará aquí
-
       } else {
-        throw popupError; // Re-lanzar otros errores
+        throw popupError;
       }
     }
 
   } catch ( error ) {
     console.error( '❌ Error en login:', error );
-
-    // Limpiar flag si hay error
     localStorage.removeItem( 'pending_google_login' );
 
     let errorMessage = 'Error al iniciar sesión';
@@ -1941,7 +1999,6 @@ async function signInWithGoogle() {
 
     showNotification( errorMessage, 'error' );
 
-    // Restaurar botón
     const loginBtn = document.getElementById( "loginBtn" );
     if ( loginBtn ) {
       loginBtn.disabled = false;
