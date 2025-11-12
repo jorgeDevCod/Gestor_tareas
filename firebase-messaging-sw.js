@@ -22,11 +22,18 @@ const FIREBASE_CONFIG = {
 
 // Inicializar Firebase (solo una vez)
 let app;
-try {
-    app = firebase.initializeApp( FIREBASE_CONFIG );
-    console.log( '✅ Firebase inicializado en SW' );
-} catch ( e ) {
-    console.warn( '⚠️ Firebase init (ignorado si ya existía):', e.message || e );
+// ====================================
+// INICIALIZAR FIREBASE - Evitar duplicados
+// ====================================
+if ( !firebase.apps.length ) {
+    try {
+        firebase.initializeApp( FIREBASE_CONFIG );
+        console.log( '✅ Firebase inicializado en Service Worker' );
+    } catch ( e ) {
+        console.error( '❌ Error inicializando Firebase en SW:', e );
+    }
+} else {
+    console.log( '✅ Firebase ya estaba inicializado en SW' );
 }
 
 // Servicios
@@ -43,22 +50,10 @@ try {
     console.error( '❌ Error inicializando servicios firebase en SW:', e );
 }
 
-// Servicios
-let db = null;
-let auth = null;
-let messaging = null;
-try {
-    db = firebase.firestore();
-    auth = firebase.auth();
-    messaging = firebase.messaging();
-} catch ( e ) {
-    console.warn( 'Error inicializando servicios firebase en SW:', e.message || e );
-}
-
 // ====================================
 // CACHÉ Y VARIABLES GLOBALES
 // ====================================
-const CACHE_VERSION = 'v3.2';
+const CACHE_VERSION = 'v3.3';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 const CACHE_IMAGES = `images-${CACHE_VERSION}`;

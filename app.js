@@ -90,15 +90,46 @@ let deferredPrompt;
 let installButtonShown = false;
 
 
+// ====================================
+// REGISTRO DEL SERVICE WORKER - Evitar duplicados
+// ====================================
 if ( 'serviceWorker' in navigator ) {
-  window.addEventListener( 'load', () => {
-    navigator.serviceWorker.register( '/firebase-messaging-sw.js' )
-      .then( registration => {
-        console.log( 'Service Worker registrado con éxito:', registration );
-      } )
-      .catch( error => {
-        console.log( 'Error al registrar el Service Worker:', error );
+  window.addEventListener( 'load', async () => {
+    try {
+      // Verificar si ya hay un SW registrado
+      const existingRegistration = await navigator.serviceWorker.getRegistration( '/firebase-messaging-sw.js' );
+
+      if ( existingRegistration ) {
+        console.log( '✅ Service Worker ya registrado:', existingRegistration.scope );
+
+        // Actualizar si hay una nueva versión
+        existingRegistration.update().then( () => {
+          console.log( '🔄 Service Worker actualizado' );
+        } );
+
+        return;
+      }
+
+      // Registrar nuevo SW
+      const registration = await navigator.serviceWorker.register( '/firebase-messaging-sw.js', {
+        scope: '/',
+        updateViaCache: 'none' // Forzar actualización sin caché
       } );
+
+      console.log( '✅ Service Worker registrado con éxito:', registration.scope );
+
+      // Esperar a que esté activo
+      if ( registration.installing ) {
+        console.log( '⏳ Service Worker instalándose...' );
+      } else if ( registration.waiting ) {
+        console.log( '⏳ Service Worker esperando...' );
+      } else if ( registration.active ) {
+        console.log( '✅ Service Worker activo' );
+      }
+
+    } catch ( error ) {
+      console.error( '❌ Error al registrar el Service Worker:', error );
+    }
   } );
 }
 
@@ -2306,7 +2337,7 @@ function setupEventListeners() {
     syncBtn: syncToFirebase,
     loginBtn: showLoginModal,
     logoutBtn: signOut,
-  
+
     closeLoginModal: closeLoginModal,
     resetFormBtn: resetForm,
     clearAllBtn: clearAll,
