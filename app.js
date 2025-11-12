@@ -23,6 +23,10 @@ let auth = null;
 let authReady = false;
 let messaging = null;
 let fcmToken = null;
+let firestoreListener = null;
+let lastFullSyncTime = 0;
+let syncInProgress = false;
+let localTaskFingerprint = ''; // Hash de las tareas locales
 let notificationInterval = null;
 let sentNotifications = new Set();
 let notificationStatus = {
@@ -730,7 +734,6 @@ async function processSyncQueue() {
     dbInitialized: !!db
   } );
 
-  // Verificaciones básicas mejoradas
   if ( !currentUser ) {
     console.log( '❌ No hay usuario logueado' );
     updateSyncIndicator( "offline" );
@@ -755,7 +758,7 @@ async function processSyncQueue() {
   }
 
   if ( syncQueue.size === 0 ) {
-    console.log( ' Cola vacía, actualizando indicador' );
+    console.log( '✅ Cola vacía, actualizando indicador' );
     updateSyncIndicator( "success" );
     return;
   }
@@ -772,8 +775,7 @@ async function processSyncQueue() {
       .doc( currentUser.uid )
       .collection( "tasks" );
 
-    // Procesar por lotes para evitar límites de Firestore
-    const BATCH_SIZE = 150; // Límite de Firestore
+    const BATCH_SIZE = 150;
     let processedCount = 0;
 
     for ( let i = 0; i < operations.length; i += BATCH_SIZE ) {
@@ -799,26 +801,32 @@ async function processSyncQueue() {
           case "delete":
             batch.delete( taskRef );
             processedCount++;
+            console.log( `🗑️ Eliminando de Firebase: ${taskDocId}` );
             break;
         }
       }
 
       if ( processedCount > 0 ) {
         await batch.commit();
-        console.log( ` Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
+        console.log( `✅ Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
       }
     }
 
-    // IMPORTANTE: Limpiar cola SOLO después de éxito
+    // CRÍTICO: Limpiar cola SOLO después de éxito
     syncQueue.clear();
     lastSyncTime = Date.now();
 
     console.log( `🎉 Sync completado: ${processedCount} operaciones procesadas` );
 
-    // Actualizar indicador a éxito
+    // 🔥 NUEVO: Después de subir cambios, hacer sync bidireccional
+    setTimeout( () => {
+      if ( !syncInProgress ) {
+        syncFromFirebaseBidirectional();
+      }
+    }, 1000 );
+
     updateSyncIndicator( "success" );
 
-    // Mostrar notificación solo para muchas operaciones
     if ( processedCount >= 3 ) {
       showNotification( `${processedCount} cambios sincronizados`, "success" );
     }
@@ -826,7 +834,6 @@ async function processSyncQueue() {
   } catch ( error ) {
     console.error( "❌ Error en processSyncQueue:", error );
 
-    // Manejar errores específicos
     if ( error.code === 'permission-denied' ) {
       showNotification( "Error de permisos en Firebase", "error" );
       updateSyncIndicator( "error" );
@@ -834,7 +841,6 @@ async function processSyncQueue() {
       showNotification( "Firebase temporalmente no disponible", "error" );
       updateSyncIndicator( "pending" );
 
-      // Reintentar después de 10 segundos
       setTimeout( () => {
         if ( syncQueue.size > 0 ) {
           processSyncQueue();
@@ -846,7 +852,7 @@ async function processSyncQueue() {
     }
   } finally {
     isSyncing = false;
-    console.log( '🏁 processSyncQueue finalizado, isSyncing = false' );
+    console.log( '🏁 processSyncQueue finalizado' );
   }
 }
 
@@ -2305,6 +2311,13 @@ async function initializeNotificationSystem() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
+    // 🔥 NUEVO: Limpiar listener de Firestore
+    if ( firestoreListener ) {
+      firestoreListener();
+      firestoreListener = null;
+      console.log( '🔇 Listener de Firestore desconectado' );
+    }
+
     // Limpiar token FCM
     if ( currentUser && fcmToken ) {
       db.collection( 'users' )
@@ -2317,19 +2330,16 @@ function signOut() {
 
     fcmToken = null;
 
-    //  Limpiar UI inmediatamente
     cleanupUIOnLogout();
-    updateUI(); // ← CRÍTICO: Actualizar UI antes del async
+    updateUI();
 
-    //  Notificar al Service Worker
     if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
       navigator.serviceWorker.controller.postMessage( { type: 'LOGOUT' } );
     }
 
-    //  Cerrar sesión en Firebase (async al final)
     auth.signOut()
       .then( () => {
-        console.log( ' Sesión cerrada correctamente' );
+        console.log( '✅ Sesión cerrada correctamente' );
         showNotification( "Sesión cerrada", "info" );
       } )
       .catch( ( error ) => {
@@ -3731,6 +3741,243 @@ function updatePanelProgress( dayTasks ) {
     `;
 }
 
+// Generar fingerprint de tareas locales
+
+function generateTaskFingerprint( tasks ) {
+  try {
+    // Crear un string único que represente el estado actual
+    const taskIds = [];
+
+    Object.keys( tasks ).sort().forEach( dateStr => {
+      const dayTasks = tasks[ dateStr ] || [];
+      dayTasks.forEach( task => {
+        taskIds.push( `${dateStr}:${task.id}` );
+      } );
+    } );
+
+    return taskIds.join( '|' );
+  } catch ( error ) {
+    console.error( 'Error generando fingerprint:', error );
+    return '';
+  }
+}
+
+
+//Sincronización bidireccional mejorada
+
+async function syncFromFirebaseBidirectional() {
+  if ( !currentUser || !isOnline || syncInProgress ) {
+    console.log( '⚠️ Sync cancelado: sin usuario, offline o ya sincronizando' );
+    return;
+  }
+
+  syncInProgress = true;
+  updateSyncIndicator( "syncing" );
+
+  try {
+    console.log( '🔄 Iniciando sincronización bidireccional...' );
+
+    const userTasksRef = db
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "tasks" );
+
+    //  Obtener todas las tareas remotas
+    const snapshot = await userTasksRef.get();
+
+    const remoteTasks = {};
+    const remoteTaskMap = new Map(); // Para búsqueda rápida
+
+    if ( !snapshot.empty ) {
+      snapshot.forEach( ( doc ) => {
+        const task = doc.data();
+        const date = task.date;
+
+        if ( !remoteTasks[ date ] ) {
+          remoteTasks[ date ] = [];
+        }
+
+        const taskData = {
+          id: task.id,
+          title: task.title,
+          description: task.description || "",
+          time: task.time || "",
+          completed: task.completed || false,
+          state: task.state || "pending",
+          priority: task.priority || 3,
+          lastModified: task.lastModified?.toMillis() || Date.now()
+        };
+
+        remoteTasks[ date ].push( taskData );
+        remoteTaskMap.set( `${date}_${task.id}`, taskData );
+      } );
+    }
+
+    // Detectar tareas locales que NO están en remoto
+    const localTaskMap = new Map();
+    const tasksToUpload = [];
+
+    Object.keys( tasks ).forEach( ( dateStr ) => {
+      const dayTasks = tasks[ dateStr ] || [];
+      dayTasks.forEach( ( task ) => {
+        const key = `${dateStr}_${task.id}`;
+        localTaskMap.set( key, { ...task, date: dateStr } );
+
+        // Si no existe en remoto, hay que subirla
+        if ( !remoteTaskMap.has( key ) ) {
+          tasksToUpload.push( { ...task, date: dateStr } );
+        }
+      } );
+    } );
+
+    // Detectar tareas remotas que NO están en local (ELIMINADAS)
+    const tasksToDeleteLocally = [];
+
+    remoteTaskMap.forEach( ( remoteTask, key ) => {
+      if ( !localTaskMap.has( key ) ) {
+        // Esta tarea está en remoto pero NO en local
+        // Verificar si fue eliminada recientemente
+        const [ dateStr, taskId ] = key.split( '_' );
+        tasksToDeleteLocally.push( { dateStr, taskId, task: remoteTask } );
+      }
+    } );
+
+    // 📊 PASO 4: Aplicar cambios
+    let tasksAdded = 0;
+    let tasksUpdated = 0;
+    let tasksDeleted = 0;
+
+    // 4A. Subir tareas locales nuevas a Firebase
+    if ( tasksToUpload.length > 0 ) {
+      console.log( `📤 Subiendo ${tasksToUpload.length} tareas nuevas a Firebase...` );
+
+      const uploadBatch = db.batch();
+      tasksToUpload.forEach( ( task ) => {
+        const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
+        uploadBatch.set( taskRef, {
+          ...task,
+          lastModified: new Date()
+        }, { merge: true } );
+      } );
+
+      await uploadBatch.commit();
+      tasksAdded = tasksToUpload.length;
+      console.log( `✅ ${tasksAdded} tareas subidas` );
+    }
+
+    // 4B. Descargar tareas remotas que faltan localmente
+    Object.keys( remoteTasks ).forEach( ( dateStr ) => {
+      if ( !tasks[ dateStr ] ) {
+        tasks[ dateStr ] = [];
+      }
+
+      remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
+        const existsLocally = tasks[ dateStr ].some(
+          ( localTask ) => localTask.id === remoteTask.id
+        );
+
+        if ( !existsLocally ) {
+          // Verificar que no sea una tarea recién eliminada localmente
+          const wasRecentlyDeleted = checkIfRecentlyDeleted( dateStr, remoteTask.id );
+
+          if ( !wasRecentlyDeleted ) {
+            tasks[ dateStr ].push( remoteTask );
+            tasksUpdated++;
+            console.log( `📥 Descargada tarea: ${remoteTask.title}` );
+          }
+        }
+      } );
+    } );
+
+    // 4C. Eliminar localmente tareas que NO existen en remoto
+    if ( tasksToDeleteLocally.length > 0 ) {
+      console.log( `🗑️ Eliminando ${tasksToDeleteLocally.length} tareas que fueron borradas en otro dispositivo...` );
+
+      tasksToDeleteLocally.forEach( ( { dateStr, taskId, task } ) => {
+        if ( tasks[ dateStr ] ) {
+          const initialLength = tasks[ dateStr ].length;
+          tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+
+          if ( tasks[ dateStr ].length < initialLength ) {
+            tasksDeleted++;
+            console.log( `🗑️ Eliminada localmente: ${task.title}` );
+
+            // Registrar eliminación
+            addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+          }
+
+          // Limpiar día si quedó vacío
+          if ( tasks[ dateStr ].length === 0 ) {
+            delete tasks[ dateStr ];
+          }
+        }
+      } );
+    }
+
+    // 📊 PASO 5: Guardar y actualizar UI si hubo cambios
+    if ( tasksAdded > 0 || tasksUpdated > 0 || tasksDeleted > 0 ) {
+      saveTasks();
+      renderCalendar();
+      updateProgress();
+
+      // Actualizar panel si está abierto y afectado
+      if ( selectedDateForPanel && tasksDeleted > 0 ) {
+        const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
+        showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
+      }
+
+      const message = [];
+      if ( tasksAdded > 0 ) message.push( `${tasksAdded} subidas` );
+      if ( tasksUpdated > 0 ) message.push( `${tasksUpdated} descargadas` );
+      if ( tasksDeleted > 0 ) message.push( `${tasksDeleted} eliminadas` );
+
+      showNotification( `Sincronización: ${message.join( ', ' )}`, "success" );
+    } else {
+      console.log( '✅ Todo sincronizado - sin cambios' );
+      showNotification( "Todo está sincronizado", "success" );
+    }
+
+    // Actualizar fingerprint local
+    localTaskFingerprint = generateTaskFingerprint( tasks );
+    lastFullSyncTime = Date.now();
+
+    updateSyncIndicator( "success" );
+
+    // Reiniciar notificaciones si están habilitadas
+    if ( notificationsEnabled && Notification.permission === "granted" ) {
+      stopNotificationService();
+      setTimeout( startNotificationService, 1000 );
+    }
+
+  } catch ( error ) {
+    console.error( "❌ Error en sync bidireccional:", error );
+    updateSyncIndicator( "error" );
+    showNotification( "Error al sincronizar: " + error.message, "error" );
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+
+// Verificar si una tarea fue eliminada recientemente
+
+function checkIfRecentlyDeleted( dateStr, taskId ) {
+  try {
+    // Verificar en el log de cambios si fue eliminada en los últimos 5 minutos
+    const dayLogs = dailyTaskLogs[ dateStr ] || [];
+    const fiveMinutesAgo = Date.now() - ( 5 * 60 * 1000 );
+
+    return dayLogs.some( log =>
+      log.taskId === taskId &&
+      log.action === 'deleted' &&
+      new Date( log.timestamp ).getTime() > fiveMinutesAgo
+    );
+  } catch ( error ) {
+    return false;
+  }
+}
+
+
 //deleteTaskFromPanel con sync automático
 function deleteTaskFromPanel( dateStr, taskId ) {
   deleteTaskWithOptions( dateStr, taskId );
@@ -3824,7 +4071,6 @@ function executeSingleDelete( dateStr, taskId, task ) {
 
 
 // MODAL DE ELIMINACIÓN MASIVA
-
 function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
   closeAllModals();
 
@@ -4622,6 +4868,127 @@ function closeDailyTaskPanel() {
 
 function quickDeleteTask( dateStr, taskId ) {
   deleteTaskWithOptions( dateStr, taskId );
+}
+
+function setupRealtimeSync() {
+  if ( !currentUser || !db ) {
+    console.warn( '⚠️ No se puede configurar sync en tiempo real sin usuario o db' );
+    return;
+  }
+
+  // Limpiar listener anterior si existe
+  if ( firestoreListener ) {
+    firestoreListener();
+    firestoreListener = null;
+  }
+
+  console.log( '👂 Configurando listener de cambios en tiempo real...' );
+
+  const userTasksRef = db
+    .collection( "users" )
+    .doc( currentUser.uid )
+    .collection( "tasks" );
+
+  // Escuchar cambios en tiempo real
+  firestoreListener = userTasksRef.onSnapshot(
+    ( snapshot ) => {
+      if ( syncInProgress ) {
+        console.log( '⏳ Sync en progreso, saltando snapshot' );
+        return;
+      }
+
+      console.log( '📡 Cambios detectados en Firebase:', snapshot.docChanges().length );
+
+      let hasChanges = false;
+
+      snapshot.docChanges().forEach( ( change ) => {
+        const task = change.doc.data();
+        const dateStr = task.date;
+        const taskId = task.id;
+
+        if ( change.type === "added" || change.type === "modified" ) {
+          // Verificar si ya existe localmente
+          const localTask = tasks[ dateStr ]?.find( t => t.id === taskId );
+
+          // Solo actualizar si es diferente o no existe
+          if ( !localTask || JSON.stringify( localTask ) !== JSON.stringify( task ) ) {
+            if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
+
+            const existingIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
+            if ( existingIndex >= 0 ) {
+              tasks[ dateStr ][ existingIndex ] = {
+                id: task.id,
+                title: task.title,
+                description: task.description || "",
+                time: task.time || "",
+                completed: task.completed || false,
+                state: task.state || "pending",
+                priority: task.priority || 3
+              };
+              console.log( `🔄 Tarea actualizada: ${task.title}` );
+            } else {
+              tasks[ dateStr ].push( {
+                id: task.id,
+                title: task.title,
+                description: task.description || "",
+                time: task.time || "",
+                completed: task.completed || false,
+                state: task.state || "pending",
+                priority: task.priority || 3
+              } );
+              console.log( `📥 Tarea nueva: ${task.title}` );
+            }
+
+            hasChanges = true;
+          }
+        } else if ( change.type === "removed" ) {
+          // Eliminar localmente
+          if ( tasks[ dateStr ] ) {
+            const initialLength = tasks[ dateStr ].length;
+            tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+
+            if ( tasks[ dateStr ].length < initialLength ) {
+              console.log( `🗑️ Tarea eliminada en tiempo real: ${task.title}` );
+              hasChanges = true;
+
+              // Registrar eliminación
+              addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+            }
+
+            if ( tasks[ dateStr ].length === 0 ) {
+              delete tasks[ dateStr ];
+            }
+          }
+        }
+      } );
+
+      if ( hasChanges ) {
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+
+        // Actualizar panel si está abierto
+        if ( selectedDateForPanel ) {
+          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
+          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
+        }
+
+        showNotification( 'Tareas actualizadas desde otro dispositivo', 'info' );
+      }
+    },
+    ( error ) => {
+      console.error( '❌ Error en listener de Firestore:', error );
+
+      // Reintentar después de 5 segundos
+      setTimeout( () => {
+        if ( currentUser && isOnline ) {
+          setupRealtimeSync();
+        }
+      }, 5000 );
+    }
+  );
+
+  console.log( '✅ Listener de tiempo real configurado' );
 }
 
 //showQuickAddTask con sync automático
@@ -6166,17 +6533,29 @@ window.addEventListener( "beforeunload", () => {
 } );
 
 window.addEventListener( 'storage', ( e ) => {
-  // Detectar cambios de notificaciones en otras pestañas
-  if ( e.key === 'notification_update' && e.newValue ) {
-    try {
-      const update = JSON.parse( e.newValue );
+  // Si otra pestaña guardó tareas, verificar si necesitamos actualizar
+  if ( e.key === 'tasks' && e.newValue !== e.oldValue ) {
+    console.log( '📡 Cambios detectados en otra pestaña' );
 
-      if ( update.action === 'sent' ) {
-        sentNotifications.add( update.tag );
-        console.log( '📡 Notificación sincronizada de otra pestaña:', update.tag );
+    try {
+      const newTasks = JSON.parse( e.newValue || '{}' );
+      const currentFingerprint = generateTaskFingerprint( tasks );
+      const newFingerprint = generateTaskFingerprint( newTasks );
+
+      if ( currentFingerprint !== newFingerprint ) {
+        console.log( '🔄 Actualizando desde otra pestaña' );
+        tasks = newTasks;
+        renderCalendar();
+        updateProgress();
+
+        // Actualizar panel si está abierto
+        if ( selectedDateForPanel ) {
+          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
+          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
+        }
       }
     } catch ( error ) {
-      console.error( 'Error procesando storage event:', error );
+      console.error( 'Error procesando cambio de otra pestaña:', error );
     }
   }
 } );

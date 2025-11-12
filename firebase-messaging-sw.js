@@ -1,5 +1,3 @@
-// ====================================
-// SERVICE WORKER OPTIMIZADO v4.0
 // Gestión de caché + Notificaciones push
 // ====================================
 
@@ -19,7 +17,7 @@ const FIREBASE_CONFIG = {
     appId: "1:646091363424:web:d923bbcc0224bd1bed5f05",
 };
 
-const CACHE_VERSION = 'v4.0';
+const CACHE_VERSION = 'v4.1';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
