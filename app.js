@@ -729,39 +729,15 @@ function enqueueSync( operation, dateStr, task ) {
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
-  console.log( 'Iniciando processSyncQueue...', {
-    currentUser: !!currentUser,
-    isOnline,
-    isSyncing,
-    queueSize: syncQueue.size,
-    dbInitialized: !!db
-  } );
+  console.log( '🔄 Iniciando processSyncQueue SIN DUPLICADOS...' );
 
-  if ( !currentUser ) {
-    console.log( '❌ No hay usuario logueado' );
-    updateSyncIndicator( "offline" );
-    return;
-  }
-
-  if ( !isOnline ) {
-    console.log( '❌ Sin conexión a internet' );
-    updateSyncIndicator( "offline" );
-    return;
-  }
-
-  if ( !db ) {
-    console.log( '❌ Firebase no inicializado' );
-    updateSyncIndicator( "error" );
-    return;
-  }
-
-  if ( isSyncing ) {
-    console.log( '⚠️ Sync ya en progreso' );
+  if ( !currentUser || !isOnline || isSyncing ) {
+    console.log( '⚠️ Sync cancelado:', { currentUser: !!currentUser, isOnline, isSyncing } );
     return;
   }
 
   if ( syncQueue.size === 0 ) {
-    console.log( '✅ Cola vacía, actualizando indicador' );
+    console.log( '✅ Cola vacía' );
     updateSyncIndicator( "success" );
     return;
   }
@@ -770,16 +746,26 @@ async function processSyncQueue() {
   updateSyncIndicator( "syncing" );
 
   try {
-    const operations = Array.from( syncQueue.values() );
-    console.log( `📤 Procesando ${operations.length} operaciones:`, operations );
-
     const userTasksRef = db
       .collection( "users" )
       .doc( currentUser.uid )
       .collection( "tasks" );
 
+    // 🔥 NUEVO: Obtener tareas existentes en Firebase ANTES de hacer cambios
+    const existingSnapshot = await userTasksRef.get();
+    const existingTaskIds = new Set();
+
+    existingSnapshot.forEach( doc => {
+      const task = doc.data();
+      existingTaskIds.add( `${task.date}_${task.id}` );
+    } );
+
+    const operations = Array.from( syncQueue.values() );
+    console.log( `📤 Procesando ${operations.length} operaciones` );
+
     const BATCH_SIZE = 150;
     let processedCount = 0;
+    const processedTaskIds = new Set(); // ← NUEVO: Evitar duplicados dentro del mismo batch
 
     for ( let i = 0; i < operations.length; i += BATCH_SIZE ) {
       const batch = db.batch();
@@ -787,46 +773,63 @@ async function processSyncQueue() {
 
       for ( const op of batchOps ) {
         const taskDocId = `${op.dateStr}_${op.task?.id}`;
+
+        // 🔥 CRÍTICO: Evitar duplicados dentro del batch
+        if ( processedTaskIds.has( taskDocId ) ) {
+          console.warn( `⚠️ Operación duplicada ignorada: ${taskDocId}` );
+          continue;
+        }
+
         const taskRef = userTasksRef.doc( taskDocId );
 
         switch ( op.operation ) {
           case "upsert":
             if ( op.task ) {
-              batch.set( taskRef, {
-                ...op.task,
-                date: op.dateStr,
-                lastModified: new Date(),
-              }, { merge: true } );
-              processedCount++;
+              // 🔥 NUEVO: Solo hacer set si no existe o es diferente
+              if ( !existingTaskIds.has( taskDocId ) ) {
+                batch.set( taskRef, {
+                  ...op.task,
+                  date: op.dateStr,
+                  lastModified: new Date(),
+                  syncVersion: Date.now() // ← NUEVO: Version tracking
+                }, { merge: false } ); // ← merge: false evita conflictos
+
+                processedTaskIds.add( taskDocId );
+                processedCount++;
+                console.log( `✅ Upsert programado: ${op.task.title}` );
+              } else {
+                console.log( `⏭️ Tarea ya existe, saltando: ${op.task.title}` );
+              }
             }
             break;
 
           case "delete":
             batch.delete( taskRef );
+            processedTaskIds.add( taskDocId );
             processedCount++;
-            console.log( `🗑️ Eliminando de Firebase: ${taskDocId}` );
+            console.log( `🗑️ Delete programado: ${taskDocId}` );
             break;
         }
       }
 
-      if ( processedCount > 0 ) {
+      if ( processedTaskIds.size > 0 ) {
         await batch.commit();
-        console.log( `✅ Lote ${Math.floor( i / BATCH_SIZE ) + 1} completado: ${batchOps.length} ops` );
+        console.log( `✅ Batch completado: ${batchOps.length} ops` );
       }
     }
 
-    // CRÍTICO: Limpiar cola SOLO después de éxito
+    // 🔥 CRÍTICO: Solo limpiar cola si TODO fue exitoso
     syncQueue.clear();
     lastSyncTime = Date.now();
 
-    console.log( `🎉 Sync completado: ${processedCount} operaciones procesadas` );
+    console.log( `🎉 Sync completado: ${processedCount} operaciones` );
 
-    // 🔥 NUEVO: Después de subir cambios, hacer sync bidireccional
+    // 🔥 NUEVO: Esperar 2 segundos antes de hacer sync bidireccional
     setTimeout( () => {
       if ( !syncInProgress ) {
         syncFromFirebaseBidirectional();
       }
-    }, 1000 );
+    }, 2000 );
 
     updateSyncIndicator( "success" );
 
@@ -836,29 +839,12 @@ async function processSyncQueue() {
 
   } catch ( error ) {
     console.error( "❌ Error en processSyncQueue:", error );
-
-    if ( error.code === 'permission-denied' ) {
-      showNotification( "Error de permisos en Firebase", "error" );
-      updateSyncIndicator( "error" );
-    } else if ( error.code === 'unavailable' ) {
-      showNotification( "Firebase temporalmente no disponible", "error" );
-      updateSyncIndicator( "pending" );
-
-      setTimeout( () => {
-        if ( syncQueue.size > 0 ) {
-          processSyncQueue();
-        }
-      }, 10000 );
-    } else {
-      updateSyncIndicator( "error" );
-      showNotification( "Error de sincronización: " + error.message, "error" );
-    }
+    updateSyncIndicator( "error" );
+    showNotification( "Error de sincronización: " + error.message, "error" );
   } finally {
     isSyncing = false;
-    console.log( '🏁 processSyncQueue finalizado' );
   }
 }
-
 
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
@@ -3563,15 +3549,22 @@ function generateTaskFingerprint( tasks ) {
 //Sincronización bidireccional mejorada
 async function syncFromFirebaseBidirectional() {
   if ( !currentUser || !isOnline || syncInProgress ) {
-    console.log( '⚠️ Sync cancelado: sin usuario, offline o ya sincronizando' );
+    console.log( '⚠️ Sync bidireccional cancelado' );
     return;
   }
 
+  // 🔥 NUEVO: Evitar múltiples syncs simultáneos
+  if ( window.syncBidirectionalInProgress ) {
+    console.log( '⏳ Sync bidireccional ya en progreso' );
+    return;
+  }
+
+  window.syncBidirectionalInProgress = true;
   syncInProgress = true;
   updateSyncIndicator( "syncing" );
 
   try {
-    console.log( '🔄 Iniciando sincronización bidireccional...' );
+    console.log( '🔄 Iniciando sync bidireccional ANTI-DUPLICADOS...' );
 
     const userTasksRef = db
       .collection( "users" )
@@ -3581,15 +3574,16 @@ async function syncFromFirebaseBidirectional() {
     const snapshot = await userTasksRef.get();
 
     const remoteTasks = {};
-    const remoteTaskIds = new Set(); // 🔥 NUEVO: Tracking de IDs remotos
+    const remoteTaskKeys = new Set(); // ← NUEVO: Tracking por key única
 
     if ( !snapshot.empty ) {
       snapshot.forEach( ( doc ) => {
         const task = doc.data();
-        const date = task.date;
+        const dateStr = task.date;
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`; // ← NUEVO: Key por contenido
 
-        if ( !remoteTasks[ date ] ) {
-          remoteTasks[ date ] = [];
+        if ( !remoteTasks[ dateStr ] ) {
+          remoteTasks[ dateStr ] = [];
         }
 
         const taskData = {
@@ -3603,17 +3597,18 @@ async function syncFromFirebaseBidirectional() {
           lastModified: task.lastModified?.toMillis() || Date.now()
         };
 
-        remoteTasks[ date ].push( taskData );
-        remoteTaskIds.add( `${date}_${task.id}` ); // 🔥 CLAVE ÚNICA
+        remoteTasks[ dateStr ].push( taskData );
+        remoteTaskKeys.add( uniqueKey );
       } );
     }
 
-    // 🔥 NUEVO: Crear mapa de tareas locales
-    const localTaskIds = new Set();
+    // 🔥 NUEVO: Crear índice de tareas locales por contenido
+    const localTaskKeys = new Map(); // key -> {dateStr, task}
     Object.keys( tasks ).forEach( ( dateStr ) => {
       const dayTasks = tasks[ dateStr ] || [];
       dayTasks.forEach( ( task ) => {
-        localTaskIds.add( `${dateStr}_${task.id}` );
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
+        localTaskKeys.set( uniqueKey, { dateStr, task } );
       } );
     } );
 
@@ -3621,27 +3616,27 @@ async function syncFromFirebaseBidirectional() {
     let tasksUpdated = 0;
     let tasksDeleted = 0;
 
-    // 🔥 PASO 1: Subir tareas locales que NO están en remoto
+    // 🔥 PASO 1: Subir tareas locales que NO están en remoto (por contenido)
     const uploadBatch = db.batch();
     let uploadCount = 0;
 
-    Object.keys( tasks ).forEach( ( dateStr ) => {
-      const dayTasks = tasks[ dateStr ] || [];
-      dayTasks.forEach( ( task ) => {
-        const key = `${dateStr}_${task.id}`;
+    for ( const [ uniqueKey, { dateStr, task } ] of localTaskKeys ) {
+      // Solo subir si NO existe en remoto (comparación por contenido)
+      if ( !remoteTaskKeys.has( uniqueKey ) ) {
+        const taskDocId = `${dateStr}_${task.id}`;
+        const taskRef = userTasksRef.doc( taskDocId );
 
-        // Solo subir si NO existe en remoto
-        if ( !remoteTaskIds.has( key ) ) {
-          const taskRef = userTasksRef.doc( key );
-          uploadBatch.set( taskRef, {
-            ...task,
-            date: dateStr,
-            lastModified: new Date()
-          }, { merge: true } );
-          uploadCount++;
-        }
-      } );
-    } );
+        uploadBatch.set( taskRef, {
+          ...task,
+          date: dateStr,
+          lastModified: new Date(),
+          syncVersion: Date.now()
+        }, { merge: false } ); // ← merge: false crítico
+
+        uploadCount++;
+        console.log( `📤 Subiendo: ${task.title}` );
+      }
+    }
 
     if ( uploadCount > 0 ) {
       await uploadBatch.commit();
@@ -3649,23 +3644,26 @@ async function syncFromFirebaseBidirectional() {
       console.log( `✅ ${uploadCount} tareas subidas a Firebase` );
     }
 
-    // 🔥 PASO 2: Descargar tareas remotas que NO están localmente
+    // 🔥 PASO 2: Descargar tareas remotas que NO están localmente (por contenido)
     Object.keys( remoteTasks ).forEach( ( dateStr ) => {
       if ( !tasks[ dateStr ] ) {
         tasks[ dateStr ] = [];
       }
 
       remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
-        const key = `${dateStr}_${remoteTask.id}`;
+        const uniqueKey = `${dateStr}:${remoteTask.title}:${remoteTask.time}`;
 
-        // ✅ SOLO agregar si NO existe localmente (verificación por ID único)
-        if ( !localTaskIds.has( key ) ) {
-          const exists = tasks[ dateStr ].some( t => t.id === remoteTask.id );
+        // ✅ Solo agregar si NO existe localmente (por contenido)
+        if ( !localTaskKeys.has( uniqueKey ) ) {
+          // ✅ Verificación adicional por ID
+          const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
 
-          if ( !exists ) {
+          if ( !existsById ) {
             tasks[ dateStr ].push( remoteTask );
             tasksUpdated++;
             console.log( `📥 Descargada: ${remoteTask.title}` );
+          } else {
+            console.log( `⏭️ Tarea duplicada ignorada: ${remoteTask.title}` );
           }
         }
       } );
@@ -3678,8 +3676,8 @@ async function syncFromFirebaseBidirectional() {
       const initialLength = tasks[ dateStr ].length;
 
       tasks[ dateStr ] = tasks[ dateStr ].filter( ( task ) => {
-        const key = `${dateStr}_${task.id}`;
-        const existsInRemote = remoteTaskIds.has( key );
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
+        const existsInRemote = remoteTaskKeys.has( uniqueKey );
 
         if ( !existsInRemote ) {
           console.log( `🗑️ Eliminada localmente: ${task.title}` );
@@ -3690,7 +3688,6 @@ async function syncFromFirebaseBidirectional() {
         return existsInRemote;
       } );
 
-      // Limpiar día si quedó vacío
       if ( tasks[ dateStr ].length === 0 ) {
         delete tasks[ dateStr ];
       }
@@ -3726,6 +3723,7 @@ async function syncFromFirebaseBidirectional() {
     showNotification( "Error al sincronizar: " + error.message, "error" );
   } finally {
     syncInProgress = false;
+    window.syncBidirectionalInProgress = false;
   }
 }
 
@@ -4618,86 +4616,89 @@ function quickDeleteTask( dateStr, taskId ) {
 
 function setupRealtimeSync() {
   if ( !currentUser || !db ) {
-    console.warn( '⚠️ No se puede configurar sync en tiempo real sin usuario o db' );
+    console.warn( '⚠️ No se puede configurar sync en tiempo real' );
     return;
   }
 
-  // Limpiar listener anterior si existe
   if ( firestoreListener ) {
     firestoreListener();
     firestoreListener = null;
   }
 
-  console.log( '👂 Configurando listener de cambios en tiempo real...' );
+  console.log( '👂 Configurando listener anti-duplicados...' );
 
   const userTasksRef = db
     .collection( "users" )
     .doc( currentUser.uid )
     .collection( "tasks" );
 
-  // Escuchar cambios en tiempo real
   firestoreListener = userTasksRef.onSnapshot(
     ( snapshot ) => {
-      if ( syncInProgress ) {
-        console.log( '⏳ Sync en progreso, saltando snapshot' );
+      // 🔥 NUEVO: Ignorar snapshots durante sync
+      if ( syncInProgress || window.syncBidirectionalInProgress ) {
+        console.log( '⏳ Sync en progreso, ignorando snapshot' );
         return;
       }
 
-      console.log( '📡 Cambios detectados en Firebase:', snapshot.docChanges().length );
+      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length );
 
       let hasChanges = false;
+      const processedKeys = new Set(); // ← NUEVO: Evitar duplicados en mismo snapshot
 
       snapshot.docChanges().forEach( ( change ) => {
         const task = change.doc.data();
         const dateStr = task.date;
         const taskId = task.id;
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
+
+        // 🔥 CRÍTICO: Evitar procesar mismo cambio múltiples veces
+        if ( processedKeys.has( uniqueKey ) ) {
+          console.log( `⏭️ Cambio duplicado ignorado: ${task.title}` );
+          return;
+        }
 
         if ( change.type === "added" || change.type === "modified" ) {
-          // Verificar si ya existe localmente
-          const localTask = tasks[ dateStr ]?.find( t => t.id === taskId );
+          // 🔥 NUEVO: Verificar si realmente es diferente
+          const localTask = tasks[ dateStr ]?.find( t =>
+            t.id === taskId ||
+            ( t.title === task.title && t.time === task.time )
+          );
 
-          // Solo actualizar si es diferente o no existe
-          if ( !localTask || JSON.stringify( localTask ) !== JSON.stringify( task ) ) {
+          const taskData = {
+            id: task.id,
+            title: task.title,
+            description: task.description || "",
+            time: task.time || "",
+            completed: task.completed || false,
+            state: task.state || "pending",
+            priority: task.priority || 3
+          };
+
+          // Solo actualizar si no existe o es diferente
+          if ( !localTask ) {
             if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-
-            const existingIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
-            if ( existingIndex >= 0 ) {
-              tasks[ dateStr ][ existingIndex ] = {
-                id: task.id,
-                title: task.title,
-                description: task.description || "",
-                time: task.time || "",
-                completed: task.completed || false,
-                state: task.state || "pending",
-                priority: task.priority || 3
-              };
-              console.log( `🔄 Tarea actualizada: ${task.title}` );
-            } else {
-              tasks[ dateStr ].push( {
-                id: task.id,
-                title: task.title,
-                description: task.description || "",
-                time: task.time || "",
-                completed: task.completed || false,
-                state: task.state || "pending",
-                priority: task.priority || 3
-              } );
-              console.log( `📥 Tarea nueva: ${task.title}` );
-            }
-
+            tasks[ dateStr ].push( taskData );
             hasChanges = true;
+            processedKeys.add( uniqueKey );
+            console.log( `📥 Nueva tarea: ${task.title}` );
+          } else if ( JSON.stringify( localTask ) !== JSON.stringify( taskData ) ) {
+            const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
+            if ( index >= 0 ) {
+              tasks[ dateStr ][ index ] = taskData;
+              hasChanges = true;
+              processedKeys.add( uniqueKey );
+              console.log( `🔄 Tarea actualizada: ${task.title}` );
+            }
           }
         } else if ( change.type === "removed" ) {
-          // Eliminar localmente
           if ( tasks[ dateStr ] ) {
             const initialLength = tasks[ dateStr ].length;
             tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
 
             if ( tasks[ dateStr ].length < initialLength ) {
-              console.log( `🗑️ Tarea eliminada en tiempo real: ${task.title}` );
+              console.log( `🗑️ Tarea eliminada: ${task.title}` );
               hasChanges = true;
-
-              // Registrar eliminación
+              processedKeys.add( uniqueKey );
               addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
             }
 
@@ -4713,7 +4714,6 @@ function setupRealtimeSync() {
         renderCalendar();
         updateProgress();
 
-        // Actualizar panel si está abierto
         if ( selectedDateForPanel ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
@@ -4723,9 +4723,7 @@ function setupRealtimeSync() {
       }
     },
     ( error ) => {
-      console.error( '❌ Error en listener de Firestore:', error );
-
-      // Reintentar después de 5 segundos
+      console.error( '❌ Error en listener:', error );
       setTimeout( () => {
         if ( currentUser && isOnline ) {
           setupRealtimeSync();
@@ -4734,7 +4732,7 @@ function setupRealtimeSync() {
     }
   );
 
-  console.log( '✅ Listener de tiempo real configurado' );
+  console.log( '✅ Listener anti-duplicados configurado' );
 }
 
 //showQuickAddTask con sync automático
@@ -6191,6 +6189,88 @@ function saveTasks() {
     showNotification( "Error al guardar tareas", "error" );
   }
 }
+
+// 1️FUNCIÓN MEJORADA: Generar ID único consistente
+function generateConsistentTaskId( dateStr, title, time ) {
+  const baseString = `${dateStr}-${title}-${time}`;
+  // Simple hash para ID único
+  let hash = 0;
+  for ( let i = 0; i < baseString.length; i++ ) {
+    const char = baseString.charCodeAt( i );
+    hash = ( ( hash << 5 ) - hash ) + char;
+    hash = hash & hash;
+  }
+  return `${dateStr}-${Math.abs( hash )}`;
+}
+
+// FUNCIÓN: Verificar duplicados por contenido
+function isDuplicateTask( dateStr, task ) {
+  if ( !tasks[ dateStr ] ) return false;
+
+  return tasks[ dateStr ].some( existingTask =>
+    existingTask.id === task.id ||
+    ( existingTask.title === task.title &&
+      existingTask.time === task.time &&
+      Math.abs( new Date( existingTask.id.split( '-' )[ 0 ] ) - new Date( task.id.split( '-' )[ 0 ] ) ) < 5000 )
+  );
+}
+
+// 6️⃣ NUEVO: Limpieza de duplicados existentes
+async function cleanupDuplicateTasks() {
+  console.log( '🧹 Iniciando limpieza de duplicados...' );
+
+  let cleaned = 0;
+
+  Object.keys( tasks ).forEach( dateStr => {
+    if ( !tasks[ dateStr ] ) return;
+
+    const seen = new Map(); // title:time -> task
+    const uniqueTasks = [];
+
+    tasks[ dateStr ].forEach( task => {
+      const key = `${task.title}:${task.time}`;
+
+      if ( !seen.has( key ) ) {
+        seen.set( key, task );
+        uniqueTasks.push( task );
+      } else {
+        console.log( `🗑️ Duplicado encontrado: ${task.title}` );
+        cleaned++;
+      }
+    } );
+
+    if ( uniqueTasks.length < tasks[ dateStr ].length ) {
+      tasks[ dateStr ] = uniqueTasks;
+    }
+
+    if ( tasks[ dateStr ].length === 0 ) {
+      delete tasks[ dateStr ];
+    }
+  } );
+
+  if ( cleaned > 0 ) {
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    showNotification( `🧹 ${cleaned} tareas duplicadas eliminadas`, 'success' );
+  } else {
+    console.log( '✅ No se encontraron duplicados' );
+  }
+
+  return cleaned;
+}
+
+// 7️EJECUTAR LIMPIEZA AL INICIO (una sola vez)
+if ( !localStorage.getItem( 'duplicates_cleaned_v2' ) ) {
+  cleanupDuplicateTasks().then( count => {
+    if ( count > 0 ) {
+      localStorage.setItem( 'duplicates_cleaned_v2', 'true' );
+      console.log( '✅ Limpieza de duplicados completada' );
+    }
+  } );
+}
+
+console.log( '✅ Sistema anti-duplicados cargado' );
 
 // Notificar a otras pestañas cuando enviamos una notificación
 function broadcastNotificationSent( tag ) {
