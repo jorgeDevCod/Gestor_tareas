@@ -3578,11 +3578,10 @@ async function syncFromFirebaseBidirectional() {
       .doc( currentUser.uid )
       .collection( "tasks" );
 
-    //  Obtener todas las tareas remotas
     const snapshot = await userTasksRef.get();
 
     const remoteTasks = {};
-    const remoteTaskMap = new Map(); // Para búsqueda rápida
+    const remoteTaskIds = new Set(); // 🔥 NUEVO: Tracking de IDs remotos
 
     if ( !snapshot.empty ) {
       snapshot.forEach( ( doc ) => {
@@ -3605,118 +3604,104 @@ async function syncFromFirebaseBidirectional() {
         };
 
         remoteTasks[ date ].push( taskData );
-        remoteTaskMap.set( `${date}_${task.id}`, taskData );
+        remoteTaskIds.add( `${date}_${task.id}` ); // 🔥 CLAVE ÚNICA
       } );
     }
 
-    // Detectar tareas locales que NO están en remoto
-    const localTaskMap = new Map();
-    const tasksToUpload = [];
+    // 🔥 NUEVO: Crear mapa de tareas locales
+    const localTaskIds = new Set();
+    Object.keys( tasks ).forEach( ( dateStr ) => {
+      const dayTasks = tasks[ dateStr ] || [];
+      dayTasks.forEach( ( task ) => {
+        localTaskIds.add( `${dateStr}_${task.id}` );
+      } );
+    } );
+
+    let tasksAdded = 0;
+    let tasksUpdated = 0;
+    let tasksDeleted = 0;
+
+    // 🔥 PASO 1: Subir tareas locales que NO están en remoto
+    const uploadBatch = db.batch();
+    let uploadCount = 0;
 
     Object.keys( tasks ).forEach( ( dateStr ) => {
       const dayTasks = tasks[ dateStr ] || [];
       dayTasks.forEach( ( task ) => {
         const key = `${dateStr}_${task.id}`;
-        localTaskMap.set( key, { ...task, date: dateStr } );
 
-        // Si no existe en remoto, hay que subirla
-        if ( !remoteTaskMap.has( key ) ) {
-          tasksToUpload.push( { ...task, date: dateStr } );
+        // Solo subir si NO existe en remoto
+        if ( !remoteTaskIds.has( key ) ) {
+          const taskRef = userTasksRef.doc( key );
+          uploadBatch.set( taskRef, {
+            ...task,
+            date: dateStr,
+            lastModified: new Date()
+          }, { merge: true } );
+          uploadCount++;
         }
       } );
     } );
 
-    // Detectar tareas remotas que NO están en local (ELIMINADAS)
-    const tasksToDeleteLocally = [];
-
-    remoteTaskMap.forEach( ( remoteTask, key ) => {
-      if ( !localTaskMap.has( key ) ) {
-        // Esta tarea está en remoto pero NO en local
-        // Verificar si fue eliminada recientemente
-        const [ dateStr, taskId ] = key.split( '_' );
-        tasksToDeleteLocally.push( { dateStr, taskId, task: remoteTask } );
-      }
-    } );
-
-    // 📊 PASO 4: Aplicar cambios
-    let tasksAdded = 0;
-    let tasksUpdated = 0;
-    let tasksDeleted = 0;
-
-    // 4A. Subir tareas locales nuevas a Firebase
-    if ( tasksToUpload.length > 0 ) {
-      console.log( `📤 Subiendo ${tasksToUpload.length} tareas nuevas a Firebase...` );
-
-      const uploadBatch = db.batch();
-      tasksToUpload.forEach( ( task ) => {
-        const taskRef = userTasksRef.doc( `${task.date}_${task.id}` );
-        uploadBatch.set( taskRef, {
-          ...task,
-          lastModified: new Date()
-        }, { merge: true } );
-      } );
-
+    if ( uploadCount > 0 ) {
       await uploadBatch.commit();
-      tasksAdded = tasksToUpload.length;
-      console.log( `✅ ${tasksAdded} tareas subidas` );
+      tasksAdded = uploadCount;
+      console.log( `✅ ${uploadCount} tareas subidas a Firebase` );
     }
 
-    // 4B. Descargar tareas remotas que faltan localmente
+    // 🔥 PASO 2: Descargar tareas remotas que NO están localmente
     Object.keys( remoteTasks ).forEach( ( dateStr ) => {
       if ( !tasks[ dateStr ] ) {
         tasks[ dateStr ] = [];
       }
 
       remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
-        const existsLocally = tasks[ dateStr ].some(
-          ( localTask ) => localTask.id === remoteTask.id
-        );
+        const key = `${dateStr}_${remoteTask.id}`;
 
-        if ( !existsLocally ) {
-          // Verificar que no sea una tarea recién eliminada localmente
-          const wasRecentlyDeleted = checkIfRecentlyDeleted( dateStr, remoteTask.id );
+        // ✅ SOLO agregar si NO existe localmente (verificación por ID único)
+        if ( !localTaskIds.has( key ) ) {
+          const exists = tasks[ dateStr ].some( t => t.id === remoteTask.id );
 
-          if ( !wasRecentlyDeleted ) {
+          if ( !exists ) {
             tasks[ dateStr ].push( remoteTask );
             tasksUpdated++;
-            console.log( `📥 Descargada tarea: ${remoteTask.title}` );
+            console.log( `📥 Descargada: ${remoteTask.title}` );
           }
         }
       } );
     } );
 
-    // 4C. Eliminar localmente tareas que NO existen en remoto
-    if ( tasksToDeleteLocally.length > 0 ) {
-      console.log( `🗑️ Eliminando ${tasksToDeleteLocally.length} tareas que fueron borradas en otro dispositivo...` );
+    // 🔥 PASO 3: Eliminar tareas locales que NO existen en remoto
+    Object.keys( tasks ).forEach( ( dateStr ) => {
+      if ( !tasks[ dateStr ] ) return;
 
-      tasksToDeleteLocally.forEach( ( { dateStr, taskId, task } ) => {
-        if ( tasks[ dateStr ] ) {
-          const initialLength = tasks[ dateStr ].length;
-          tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+      const initialLength = tasks[ dateStr ].length;
 
-          if ( tasks[ dateStr ].length < initialLength ) {
-            tasksDeleted++;
-            console.log( `🗑️ Eliminada localmente: ${task.title}` );
+      tasks[ dateStr ] = tasks[ dateStr ].filter( ( task ) => {
+        const key = `${dateStr}_${task.id}`;
+        const existsInRemote = remoteTaskIds.has( key );
 
-            // Registrar eliminación
-            addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
-          }
-
-          // Limpiar día si quedó vacío
-          if ( tasks[ dateStr ].length === 0 ) {
-            delete tasks[ dateStr ];
-          }
+        if ( !existsInRemote ) {
+          console.log( `🗑️ Eliminada localmente: ${task.title}` );
+          addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
+          tasksDeleted++;
         }
-      } );
-    }
 
-    // 📊 PASO 5: Guardar y actualizar UI si hubo cambios
+        return existsInRemote;
+      } );
+
+      // Limpiar día si quedó vacío
+      if ( tasks[ dateStr ].length === 0 ) {
+        delete tasks[ dateStr ];
+      }
+    } );
+
+    // 🔥 PASO 4: Guardar cambios
     if ( tasksAdded > 0 || tasksUpdated > 0 || tasksDeleted > 0 ) {
       saveTasks();
       renderCalendar();
       updateProgress();
 
-      // Actualizar panel si está abierto y afectado
       if ( selectedDateForPanel && tasksDeleted > 0 ) {
         const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
         showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
@@ -3730,14 +3715,11 @@ async function syncFromFirebaseBidirectional() {
       showNotification( `Sincronización: ${message.join( ', ' )}`, "success" );
     } else {
       console.log( '✅ Todo sincronizado - sin cambios' );
-      showNotification( "Todo está sincronizado", "success" );
     }
 
-    // Actualizar fingerprint local
-    localTaskFingerprint = generateTaskFingerprint( tasks );
     lastFullSyncTime = Date.now();
-
     updateSyncIndicator( "success" );
+
   } catch ( error ) {
     console.error( "❌ Error en sync bidireccional:", error );
     updateSyncIndicator( "error" );

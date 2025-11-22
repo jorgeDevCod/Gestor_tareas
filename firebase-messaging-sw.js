@@ -1,7 +1,23 @@
-// Service Worker Optimizado v5.0
-// ================================
+// 🔥 SERVICE WORKER CON FCM BACKGROUND v6.0
+// ==========================================
 
-const CACHE_VERSION = 'v5.0';
+importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
+importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
+
+// Configuración Firebase
+const firebaseConfig = {
+    apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
+    authDomain: "calendario-tareas-app.firebaseapp.com",
+    projectId: "calendario-tareas-app",
+    storageBucket: "calendario-tareas-app.firebasestorage.app",
+    messagingSenderId: "646091363424",
+    appId: "1:646091363424:web:d923bbcc0224bd1bed5f05",
+};
+
+firebase.initializeApp( firebaseConfig );
+const messaging = firebase.messaging();
+
+const CACHE_VERSION = 'v6.0';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -13,30 +29,22 @@ const STATIC_FILES = [
     '/images/IconLogo.png',
     '/images/favicon-192.png',
     '/favicon.png',
-    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css',
-    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
-// 🔥 NUEVA: Base de datos IndexedDB para tareas persistentes
+// IndexedDB
 const DB_NAME = 'TasksDB';
 const DB_VERSION = 1;
 const TASKS_STORE = 'tasks';
-
 let db = null;
 
-// ====================================
-// INDEXEDDB SETUP
-// ====================================
 async function initDB() {
     return new Promise( ( resolve, reject ) => {
         const request = indexedDB.open( DB_NAME, DB_VERSION );
-
         request.onerror = () => reject( request.error );
         request.onsuccess = () => {
             db = request.result;
             resolve( db );
         };
-
         request.onupgradeneeded = ( event ) => {
             const database = event.target.result;
             if ( !database.objectStoreNames.contains( TASKS_STORE ) ) {
@@ -48,14 +56,10 @@ async function initDB() {
 
 async function saveTasksToDB( tasks ) {
     if ( !db ) await initDB();
-
     const transaction = db.transaction( [ TASKS_STORE ], 'readwrite' );
     const store = transaction.objectStore( TASKS_STORE );
-
-    // Limpiar store anterior
     await store.clear();
 
-    // Guardar todas las tareas
     for ( const [ date, dayTasks ] of Object.entries( tasks ) ) {
         for ( const task of dayTasks ) {
             await store.put( {
@@ -65,13 +69,11 @@ async function saveTasksToDB( tasks ) {
             } );
         }
     }
-
     console.log( '✅ Tareas guardadas en IndexedDB' );
 }
 
 async function getTasksFromDB() {
     if ( !db ) await initDB();
-
     return new Promise( ( resolve, reject ) => {
         const transaction = db.transaction( [ TASKS_STORE ], 'readonly' );
         const store = transaction.objectStore( TASKS_STORE );
@@ -80,27 +82,23 @@ async function getTasksFromDB() {
         request.onsuccess = () => {
             const allTasks = request.result;
             const tasksByDate = {};
-
             allTasks.forEach( task => {
                 if ( !tasksByDate[ task.date ] ) {
                     tasksByDate[ task.date ] = [];
                 }
                 tasksByDate[ task.date ].push( task );
             } );
-
             resolve( tasksByDate );
         };
-
         request.onerror = () => reject( request.error );
     } );
 }
 
-// ====================================
+// ==========================================
 // INSTALL / ACTIVATE
-// ====================================
+// ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v5.0 instalando...' );
-
+    console.log( '🔧 SW v6.0 instalando...' );
     event.waitUntil(
         Promise.all( [
             caches.open( CACHE_STATIC ).then( cache => cache.addAll( STATIC_FILES ) ),
@@ -110,11 +108,9 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v5.0 activándose...' );
-
+    console.log( '🚀 SW v6.0 activándose...' );
     event.waitUntil(
         Promise.all( [
-            // Limpiar cachés antiguos
             caches.keys().then( keys =>
                 Promise.all(
                     keys.map( key => {
@@ -124,21 +120,49 @@ self.addEventListener( 'activate', ( event ) => {
                     } )
                 )
             ),
-            // Inicializar DB
             initDB(),
-            // Tomar control inmediato
             self.clients.claim()
         ] ).then( () => {
             console.log( '✅ SW activado y listo' );
-            // Iniciar verificación de notificaciones
             startNotificationScheduler();
         } )
     );
 } );
 
-// ====================================
+// ==========================================
+// 🔥 FCM BACKGROUND MESSAGING
+// ==========================================
+messaging.onBackgroundMessage( ( payload ) => {
+    console.log( '📨 Mensaje FCM recibido en background:', payload );
+
+    const { notification, data } = payload;
+
+    const notificationTitle = notification?.title || 'Recordatorio de Tarea';
+    const notificationOptions = {
+        body: notification?.body || 'Tienes una tarea programada',
+        icon: notification?.icon || '/images/IconLogo.png',
+        badge: '/images/favicon-192.png',
+        tag: data?.tag || `fcm-${Date.now()}`,
+        requireInteraction: data?.requiresAction === 'true',
+        vibrate: [ 200, 100, 200 ],
+        data: {
+            taskId: data?.taskId,
+            dateStr: data?.dateStr,
+            url: data?.url || '/',
+            timestamp: Date.now()
+        },
+        actions: [
+            { action: 'open', title: 'Ver tarea', icon: '/images/IconLogo.png' },
+            { action: 'close', title: 'Cerrar', icon: '/images/IconLogo.png' }
+        ]
+    };
+
+    return self.registration.showNotification( notificationTitle, notificationOptions );
+} );
+
+// ==========================================
 // FETCH (sin cambios)
-// ====================================
+// ==========================================
 self.addEventListener( 'fetch', ( event ) => {
     const { request } = event;
     const url = new URL( request.url );
@@ -194,24 +218,20 @@ async function networkFirst( request ) {
     }
 }
 
-// ====================================
-// 🔥 NUEVO: SISTEMA DE NOTIFICACIONES PERSISTENTE
-// ====================================
+// ==========================================
+// NOTIFICATION SCHEDULER (Local)
+// ==========================================
 let notificationTimer = null;
 const sentNotifications = new Set();
 
 function startNotificationScheduler() {
     console.log( '⏰ Iniciando scheduler de notificaciones...' );
-
-    // Limpiar timer anterior si existe
     if ( notificationTimer ) clearInterval( notificationTimer );
 
-    // Verificar cada 30 segundos
     notificationTimer = setInterval( async () => {
         await checkTaskNotifications();
-    }, 30000 );
+    }, 30000 ); // Cada 30 segundos
 
-    // Verificación inmediata
     checkTaskNotifications();
 }
 
@@ -228,9 +248,8 @@ async function checkTaskNotifications() {
         const currentMinute = now.getMinutes();
         const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today} a las ${currentHour}:${currentMinute}` );
+        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today}` );
 
-        // Reset diario
         const resetKey = `reset-${today}`;
         if ( !sentNotifications.has( resetKey ) && currentHour === 0 && currentMinute === 0 ) {
             sentNotifications.clear();
@@ -238,7 +257,6 @@ async function checkTaskNotifications() {
             console.log( '🔄 Reset diario de notificaciones' );
         }
 
-        // Verificar cada tarea
         for ( const task of todayTasks ) {
             if ( !task.time || task.state === 'completed' ) continue;
 
@@ -255,13 +273,10 @@ async function checkTaskNotifications() {
                     title: `⏰ Recordatorio: ${task.title}`,
                     body: `Inicia en 15 minutos (${task.time})`,
                     tag: reminderKey,
-                    icon: '/images/IconLogo.png',
                     requireInteraction: false,
                     vibrate: [ 300, 100, 300 ]
                 } );
-
                 sentNotifications.add( reminderKey );
-                console.log( `✅ Notificación 15min enviada: ${task.title}` );
             }
 
             // Hora exacta
@@ -274,16 +289,10 @@ async function checkTaskNotifications() {
                     title: `🔔 Es hora de: ${task.title}`,
                     body: `Programada para ${task.time}`,
                     tag: startKey,
-                    icon: '/images/IconLogo.png',
                     requireInteraction: true,
-                    vibrate: [ 200, 50, 200, 50, 400 ],
-                    actions: [
-                        { action: 'view', title: 'Ver tarea', icon: '/images/IconLogo.png' }
-                    ]
+                    vibrate: [ 200, 50, 200, 50, 400 ]
                 } );
-
                 sentNotifications.add( startKey );
-                console.log( `✅ Notificación inicio enviada: ${task.title}` );
             }
 
             // 30 minutos tarde
@@ -295,16 +304,12 @@ async function checkTaskNotifications() {
                     title: `⚠️ Tarea Retrasada: ${task.title}`,
                     body: 'Han pasado 30 minutos desde la hora programada',
                     tag: lateKey,
-                    icon: '/images/IconLogo.png',
                     requireInteraction: false,
                     vibrate: [ 100, 100, 100, 100, 100 ]
                 } );
-
                 sentNotifications.add( lateKey );
-                console.log( `⚠️ Notificación retraso enviada: ${task.title}` );
             }
         }
-
     } catch ( error ) {
         console.error( '❌ Error verificando notificaciones:', error );
     }
@@ -322,7 +327,6 @@ async function showNotification( options ) {
             data: { timestamp: Date.now(), ...options.data },
             actions: options.actions || []
         } );
-
         console.log( `✅ Notificación mostrada: ${options.title}` );
     } catch ( error ) {
         console.error( '❌ Error mostrando notificación:', error );
@@ -336,9 +340,9 @@ function formatDate( date ) {
     return `${year}-${month}-${day}`;
 }
 
-// ====================================
+// ==========================================
 // MENSAJES DESDE LA APP
-// ====================================
+// ==========================================
 self.addEventListener( 'message', async ( event ) => {
     const { type, data } = event.data || {};
 
@@ -362,29 +366,35 @@ self.addEventListener( 'message', async ( event ) => {
     }
 } );
 
-// ====================================
+// ==========================================
 // CLICK EN NOTIFICACIÓN
-// ====================================
+// ==========================================
 self.addEventListener( 'notificationclick', ( event ) => {
     console.log( '🖱️ Click en notificación:', event.notification.tag );
 
     event.notification.close();
 
+    const urlToOpen = event.notification.data?.url || '/';
+
     event.waitUntil(
         clients.matchAll( { type: 'window', includeUncontrolled: true } )
             .then( clientList => {
                 for ( const client of clientList ) {
-                    if ( 'focus' in client ) return client.focus();
+                    if ( client.url === urlToOpen && 'focus' in client ) {
+                        return client.focus();
+                    }
                 }
-                if ( clients.openWindow ) return clients.openWindow( '/' );
+                if ( clients.openWindow ) {
+                    return clients.openWindow( urlToOpen );
+                }
             } )
     );
 } );
 
-// ====================================
+// ==========================================
 // INICIALIZACIÓN
-// ====================================
+// ==========================================
 initDB().then( () => {
-    console.log( '✅ Service Worker v5.0 iniciado' );
+    console.log( '✅ Service Worker v6.0 con FCM iniciado' );
     startNotificationScheduler();
 } );
