@@ -36,6 +36,7 @@ let notificationStatus = {
   taskReminders: new Set(),
 };
 
+
 // Sistema de sincronización automática optimizada
 let syncQueue = new Map(); // Cola de operaciones pendientes
 let syncTimeout = null; // Timeout para batch sync
@@ -45,6 +46,7 @@ const SYNC_DEBOUNCE_TIME = 2000; // 2 segundos de debounce
 let dailyTaskLogs = JSON.parse( localStorage.getItem( "dailyTaskLogs" ) || "{}" );
 const PERMISSIONS_KEY = 'app_permissions';
 const USER_PREFERENCES_KEY = 'user_preferences';
+
 
 // constantes para estados y prioridades
 const TASK_STATES = {
@@ -89,14 +91,13 @@ const PRIORITY_LEVELS = {
   },
 };
 
+
 // install sw
 let deferredPrompt;
 let installButtonShown = false;
 
 
-// ====================================
 // REGISTRO DEL SERVICE WORKER - Evitar duplicados
-// ====================================
 if ( 'serviceWorker' in navigator ) {
   window.addEventListener( 'load', async () => {
     try {
@@ -660,6 +661,7 @@ function clearDayChangeLog( dateStr ) {
   closeAllModals();
 }
 
+
 //Encolar operaciones para sync automático
 function enqueueSync( operation, dateStr, task ) {
   if ( !task || !task.id ) {
@@ -723,6 +725,7 @@ function enqueueSync( operation, dateStr, task ) {
     }
   }, debounceTime );
 }
+
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
@@ -856,6 +859,7 @@ async function processSyncQueue() {
   }
 }
 
+
 //Sync manual mejorado (mantener para botón)
 async function syncToFirebase() {
   if ( !currentUser || !isOnline ) {
@@ -980,11 +984,6 @@ async function syncToFirebase() {
       showNotification( "Todo está sincronizado", "success" );
     }
 
-    // Reiniciar notificaciones si están habilitadas
-    if ( notificationsEnabled && Notification.permission === "granted" ) {
-      stopNotificationService();
-      setTimeout( () => startNotificationService(), 1000 );
-    }
   } catch ( error ) {
     console.error( "Error en sync manual:", error );
     updateSyncIndicator( "error" );
@@ -1000,41 +999,6 @@ async function syncToFirebase() {
     }
   }
 }
-
-function exportToExcelOffline() {
-  if ( typeof XLSX === "undefined" ) {
-    showNotification( "Funcionalidad de exportación no disponible sin conexión", "error" );
-    return;
-  }
-
-  const wb = XLSX.utils.book_new();
-  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Estado", "Prioridad" ] ];
-
-  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
-    dayTasks.forEach( ( task ) => {
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
-
-      data.push( [
-        date,
-        task.title,
-        task.description || "",
-        task.time || "",
-        state.label,
-        priority.label
-      ] );
-    } );
-  } );
-
-  const ws = XLSX.utils.aoa_to_sheet( data );
-  XLSX.utils.book_append_sheet( wb, ws, "Tareas" );
-
-  const filename = `tareas_offline_${getTodayString()}.xlsx`;
-  XLSX.writeFile( wb, filename );
-
-  showNotification( `Excel exportado: ${filename}`, "success" );
-}
-
 
 // FUNCIÓN única para obtener fecha actual en formato local
 function getTodayString() {
@@ -1075,13 +1039,20 @@ function setupDateInput() {
   }
 }
 
-// Inicializar Firebase
+// Firebase solo se inicializa al hacer login
+let firebaseInitialized = false;
+
 async function initFirebase() {
+  if ( firebaseInitialized ) {
+    console.log( '⚠️ Firebase ya inicializado' );
+    return;
+  }
+
   try {
-    console.log( '🔥 Iniciando Firebase...' );
+    console.log( '🔥 Inicializando Firebase...' );
 
     if ( !navigator.onLine ) {
-      console.log( '📴 Sin conexión - iniciando modo offline' );
+      console.log( '📴 Sin conexión - modo offline' );
       initOfflineMode();
       return;
     }
@@ -1107,8 +1078,6 @@ async function initFirebase() {
     } catch ( cacheError ) {
       if ( cacheError.code === 'failed-precondition' ) {
         console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
-      } else if ( cacheError.code === 'unimplemented' ) {
-        console.warn( '⚠️ Cache no soportado en este navegador' );
       }
     }
 
@@ -1120,94 +1089,23 @@ async function initFirebase() {
         console.warn( '⚠️ Error inicializando FCM:', messagingError );
         messaging = null;
       }
-    } else {
-      console.warn( '⚠️ FCM no soportado en este navegador' );
-      messaging = null;
     }
 
+    firebaseInitialized = true;
+
+    // Verificar si hay sesión activa
     currentUser = auth.currentUser;
 
     if ( currentUser ) {
-      console.log( '✅ Sesión restaurada automáticamente:', currentUser.email );
-
-      localStorage.setItem( 'firebase_auth_active', 'true' );
-      localStorage.setItem( 'firebase_user_email', currentUser.email );
-      localStorage.setItem( 'firebase_user_uid', currentUser.uid );
-
+      console.log( '✅ Sesión restaurada:', currentUser.email );
       updateUI();
       updateSyncIndicator( 'success' );
-      hideLoadingScreen();
 
       setTimeout( () => {
         if ( isOnline && !isSyncing ) {
           syncFromFirebase();
         }
       }, 2000 );
-
-      // 🔥 CORREGIDO: Esperar más tiempo para FCM
-      if ( messaging ) {
-        setTimeout( async () => {
-          try {
-            await requestFCMToken();
-            setupFCMListeners();
-          } catch ( error ) {
-            console.warn( '⚠️ No se pudo configurar FCM:', error );
-          }
-        }, 3000 ); // ← Aumentado a 3 segundos
-      }
-
-      return;
-    }
-
-    console.log( '⏳ No hay sesión activa, esperando...' );
-
-    const authTimeout = new Promise( ( resolve ) => setTimeout( () => resolve( null ), 5000 ) );
-    const authUser = await Promise.race( [
-      new Promise( ( resolve ) => {
-        const unsubscribe = auth.onAuthStateChanged( ( user ) => {
-          unsubscribe();
-          resolve( user );
-        } );
-      } ),
-      authTimeout
-    ] );
-
-    if ( authUser ) {
-      console.log( '✅ Usuario detectado:', authUser.email );
-      currentUser = authUser;
-
-      localStorage.setItem( 'firebase_auth_active', 'true' );
-      localStorage.setItem( 'firebase_user_email', authUser.email );
-      localStorage.setItem( 'firebase_user_uid', authUser.uid );
-
-      updateUI();
-      updateSyncIndicator( 'success' );
-
-      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-        navigator.serviceWorker.controller.postMessage( {
-          type: 'SET_USER_ID',
-          data: { userId: authUser.uid, email: authUser.email }
-        } );
-      }
-
-      // 🔥 CORREGIDO: Esperar más tiempo para FCM
-      if ( messaging ) {
-        setTimeout( async () => {
-          try {
-            await requestFCMToken();
-            setupFCMListeners();
-          } catch ( error ) {
-            console.warn( '⚠️ No se pudo configurar FCM:', error );
-          }
-        }, 3000 ); // ← Aumentado a 3 segundos
-      }
-
-      setTimeout( () => {
-        if ( isOnline && !isSyncing ) {
-          syncFromFirebase();
-        }
-      }, 2000 );
-
     } else {
       console.log( '❌ No hay sesión activa' );
       currentUser = null;
@@ -1220,9 +1118,114 @@ async function initFirebase() {
     console.error( '❌ Error crítico en initFirebase:', error );
     hideLoadingScreen();
     showNotification( 'Error conectando con Firebase', 'error' );
-
     currentUser = null;
     updateUI();
+  }
+}
+
+//Modificar función de login para inicializar Firebase
+async function signInWithGoogle() {
+  try {
+    console.log( '🔑 Iniciando login con Google...' );
+
+    // 🔥 INICIALIZAR FIREBASE AQUÍ
+    if ( !firebaseInitialized ) {
+      await initFirebase();
+    }
+
+    const loginBtn = document.getElementById( "loginBtn" );
+    if ( loginBtn ) {
+      loginBtn.disabled = true;
+      loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Conectando...';
+    }
+
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope( 'profile' );
+    provider.addScope( 'email' );
+    provider.setCustomParameters( { prompt: 'select_account' } );
+
+    try {
+      const result = await auth.signInWithPopup( provider );
+
+      if ( result.user ) {
+        console.log( '✅ Login exitoso:', result.user.email );
+
+        currentUser = result.user;
+
+        localStorage.setItem( 'firebase_auth_active', 'true' );
+        localStorage.setItem( 'firebase_user_email', result.user.email );
+        localStorage.setItem( 'firebase_user_uid', result.user.uid );
+
+        updateUI();
+        closeLoginModal();
+
+        showNotification( `¡Bienvenido ${result.user.displayName || 'Usuario'}!`, 'success' );
+
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'SET_USER_ID',
+            data: { userId: result.user.uid, email: result.user.email }
+          } );
+        }
+
+        setTimeout( () => {
+          if ( isOnline && !isSyncing ) {
+            syncFromFirebase();
+          }
+        }, 2000 );
+
+        if ( messaging ) {
+          setTimeout( async () => {
+            try {
+              await requestFCMToken();
+              setupFCMListeners();
+            } catch ( error ) {
+              console.warn( '⚠️ No se pudo configurar FCM:', error );
+            }
+          }, 3000 );
+        }
+      }
+
+    } catch ( popupError ) {
+      console.warn( '⚠️ Popup bloqueado, intentando redirect:', popupError.code );
+
+      if ( popupError.code === 'auth/popup-blocked' ||
+        popupError.code === 'auth/cancelled-popup-request' ) {
+
+        localStorage.setItem( 'pending_google_login', 'true' );
+        await auth.signInWithRedirect( provider );
+      } else {
+        throw popupError;
+      }
+    }
+
+  } catch ( error ) {
+    console.error( '❌ Error en login:', error );
+    localStorage.removeItem( 'pending_google_login' );
+
+    let errorMessage = 'Error al iniciar sesión';
+
+    switch ( error.code ) {
+      case 'auth/popup-closed-by-user':
+        errorMessage = 'Ventana de login cerrada';
+        break;
+      case 'auth/network-request-failed':
+        errorMessage = 'Error de conexión';
+        break;
+      case 'auth/too-many-requests':
+        errorMessage = 'Demasiados intentos. Intenta más tarde';
+        break;
+      default:
+        errorMessage = error.message || 'Error desconocido';
+    }
+
+    showNotification( errorMessage, 'error' );
+
+    const loginBtn = document.getElementById( "loginBtn" );
+    if ( loginBtn ) {
+      loginBtn.disabled = false;
+      loginBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar Sesión';
+    }
   }
 }
 
@@ -1354,9 +1357,7 @@ async function requestFCMToken() {
   }
 }
 
-// ============================================
 // NUEVA FUNCIÓN: Solicitar permisos FCM de forma amigable
-// ============================================
 async function promptForNotifications() {
   // Solo ejecutar si:
   // 1. El usuario está logueado
@@ -1561,86 +1562,6 @@ async function registerPeriodicSync() {
 let lastNotificationSync = 0;
 const NOTIFICATION_SYNC_INTERVAL = 30000; // 30 segundos
 
-async function syncNotificationStatus() {
-  if ( !currentUser || !db ) return;
-
-  const now = Date.now();
-  if ( now - lastNotificationSync < NOTIFICATION_SYNC_INTERVAL ) {
-    return; // No sincronizar muy seguido
-  }
-
-  try {
-    // Guardar estado de notificaciones enviadas en Firestore
-    const notificationState = {
-      sentNotifications: Array.from( sentNotifications ),
-      morning: notificationStatus.morning,
-      midday: notificationStatus.midday,
-      evening: notificationStatus.evening,
-      timestamp: new Date(),
-      deviceId: getDeviceId()
-    };
-
-    await db.collection( 'users' )
-      .doc( currentUser.uid )
-      .collection( 'notificationStatus' )
-      .doc( getTodayString() )
-      .set( notificationState, { merge: true } );
-
-    lastNotificationSync = now;
-    console.log( '✅ Estado de notificaciones sincronizado' );
-
-  } catch ( error ) {
-    console.error( '❌ Error sincronizando notificaciones:', error );
-  }
-}
-
-// Generar ID único del dispositivo
-function getDeviceId() {
-  let deviceId = localStorage.getItem( 'device_id' );
-
-  if ( !deviceId ) {
-    deviceId = `device_${Date.now()}_${Math.random().toString( 36 ).substring( 7 )}`;
-    localStorage.setItem( 'device_id', deviceId );
-  }
-
-  return deviceId;
-}
-
-// Cargar estado de notificaciones de otros dispositivos
-async function loadNotificationStatus() {
-  if ( !currentUser || !db ) return;
-
-  try {
-    const doc = await db.collection( 'users' )
-      .doc( currentUser.uid )
-      .collection( 'notificationStatus' )
-      .doc( getTodayString() )
-      .get();
-
-    if ( doc.exists ) {
-      const data = doc.data();
-
-      // Solo cargar si es de hoy y de otro dispositivo
-      if ( data.deviceId !== getDeviceId() ) {
-        console.log( '📥 Cargando estado de notificaciones de otro dispositivo' );
-
-        // Restaurar notificaciones enviadas
-        if ( data.sentNotifications ) {
-          data.sentNotifications.forEach( tag => sentNotifications.add( tag ) );
-        }
-
-        // Restaurar estado de resúmenes diarios
-        notificationStatus.morning = data.morning || false;
-        notificationStatus.midday = data.midday || false;
-        notificationStatus.evening = data.evening || false;
-
-        console.log( '✅ Estado de notificaciones cargado' );
-      }
-    }
-  } catch ( error ) {
-    console.error( '❌ Error cargando estado de notificaciones:', error );
-  }
-}
 
 function initOfflineMode() {
   console.log( "🔧 Iniciando aplicación en modo offline" );
@@ -1852,26 +1773,29 @@ function initNotifications() {
     return;
   }
 
-  // Cargar permisos guardados ya se hizo en loadPermissions()
+  // Cargar permisos guardados
+  loadPermissions();
 
   if ( Notification.permission === "granted" ) {
-    // Si notificationsEnabled no está definido, usar true por defecto
     if ( typeof notificationsEnabled === 'undefined' ) {
       notificationsEnabled = true;
     }
 
     updateNotificationButton();
 
-    if ( notificationsEnabled ) {
-      startNotificationService();
+    // 🔥 NUEVO: Forzar verificación inmediata en el SW
+    if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+      navigator.serviceWorker.controller.postMessage( {
+        type: 'FORCE_CHECK'
+      } );
+      console.log( '✅ Service Worker notificado para verificación' );
     }
+
   } else if ( Notification.permission === "default" ) {
-    // Solo solicitar permisos automáticamente en PWA instalada
     const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
       window.navigator.standalone === true;
 
     if ( isPWA ) {
-      // En PWA, solicitar permisos automáticamente
       setTimeout( () => {
         requestNotificationPermissionWithVibration();
       }, 2000 );
@@ -1889,8 +1813,7 @@ function setupNetworkListeners() {
   document.addEventListener( 'visibilitychange', () => {
     if ( !document.hidden && notificationsEnabled && Notification.permission === 'granted' ) {
       console.log( '📱 PWA volvió del background - sincronizando notificaciones' );
-      checkDailyTasksImproved( true );
-      sendTasksToServiceWorker();
+    
     }
   } );
 
@@ -2086,116 +2009,7 @@ function hideLoadingScreen() {
   }, 300 );
 }
 
-// ============================================
-// FUNCIÓN: Iniciar sesión con Google - MEJORADO
-// ============================================
-async function signInWithGoogle() {
-  try {
-    console.log( '🔑 Iniciando login con Google...' );
-
-    const loginBtn = document.getElementById( "loginBtn" );
-    if ( loginBtn ) {
-      loginBtn.disabled = true;
-      loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Conectando...';
-    }
-
-    const provider = new firebase.auth.GoogleAuthProvider();
-    provider.addScope( 'profile' );
-    provider.addScope( 'email' );
-    provider.setCustomParameters( { prompt: 'select_account' } );
-
-    try {
-      const result = await auth.signInWithPopup( provider );
-
-      if ( result.user ) {
-        console.log( '✅ Login exitoso:', result.user.email );
-
-        currentUser = result.user;
-
-        localStorage.setItem( 'firebase_auth_active', 'true' );
-        localStorage.setItem( 'firebase_user_email', result.user.email );
-        localStorage.setItem( 'firebase_user_uid', result.user.uid );
-
-        updateUI();
-        closeLoginModal();
-
-        showNotification( `¡Bienvenido ${result.user.displayName || 'Usuario'}!`, 'success' );
-
-        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-          navigator.serviceWorker.controller.postMessage( {
-            type: 'SET_USER_ID',
-            data: { userId: result.user.uid, email: result.user.email }
-          } );
-        }
-
-        setTimeout( () => {
-          if ( isOnline && !isSyncing ) {
-            syncFromFirebase();
-          }
-        }, 2000 );
-
-        // 🔥 CORREGIDO: Esperar más tiempo y verificar SW
-        if ( messaging ) {
-          setTimeout( async () => {
-            try {
-              await requestFCMToken(); // Ya tiene espera interna del SW
-              setupFCMListeners();
-            } catch ( error ) {
-              console.warn( '⚠️ No se pudo configurar FCM, continuando sin notificaciones push:', error );
-            }
-          }, 3000 ); // ← Aumentado a 3 segundos
-        }
-      }
-
-    } catch ( popupError ) {
-      console.warn( '⚠️ Popup bloqueado, intentando redirect:', popupError.code );
-
-      if ( popupError.code === 'auth/popup-blocked' ||
-        popupError.code === 'auth/cancelled-popup-request' ) {
-
-        localStorage.setItem( 'pending_google_login', 'true' );
-        await auth.signInWithRedirect( provider );
-      } else {
-        throw popupError;
-      }
-    }
-
-  } catch ( error ) {
-    console.error( '❌ Error en login:', error );
-    localStorage.removeItem( 'pending_google_login' );
-
-    let errorMessage = 'Error al iniciar sesión';
-
-    switch ( error.code ) {
-      case 'auth/popup-closed-by-user':
-        errorMessage = 'Ventana de login cerrada';
-        break;
-      case 'auth/network-request-failed':
-        errorMessage = 'Error de conexión';
-        break;
-      case 'auth/too-many-requests':
-        errorMessage = 'Demasiados intentos. Intenta más tarde';
-        break;
-      case 'auth/unauthorized-domain':
-        errorMessage = 'Dominio no autorizado en Firebase Console';
-        break;
-      default:
-        errorMessage = error.message || 'Error desconocido';
-    }
-
-    showNotification( errorMessage, 'error' );
-
-    const loginBtn = document.getElementById( "loginBtn" );
-    if ( loginBtn ) {
-      loginBtn.disabled = false;
-      loginBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar Sesión';
-    }
-  }
-}
-
-// ============================================
-// NUEVA FUNCIÓN: Manejar resultado de Google Sign-In
-// ============================================
+// Manejar resultado de Google Sign-In
 async function handleRedirectResult() {
   if ( !auth ) {
     console.warn( '⚠️ Auth no disponible para redirect result' );
@@ -2289,18 +2103,9 @@ async function initializeNotificationSystem() {
   if ( !currentUser || !messaging ) return;
 
   try {
-    // 1. Cargar estado de notificaciones de otros dispositivos
-    await loadNotificationStatus();
-
+    
     // 2. Configurar listeners
     setupFCMListeners();
-
-    // 3. Iniciar sincronización periódica
-    setInterval( () => {
-      if ( currentUser && isOnline ) {
-        syncNotificationStatus();
-      }
-    }, NOTIFICATION_SYNC_INTERVAL );
 
     console.log( '✅ Sistema de notificaciones inicializado' );
 
@@ -2445,11 +2250,6 @@ async function syncFromFirebase() {
 
     updateSyncIndicator( "success" );
 
-    // Reiniciar notificaciones si están habilitadas
-    if ( notificationsEnabled && Notification.permission === "granted" ) {
-      stopNotificationService();
-      setTimeout( startNotificationService, 1000 );
-    }
   } catch ( error ) {
     console.error( "Error syncing from Firebase:", error );
     updateSyncIndicator( "error" );
@@ -3097,7 +2897,7 @@ function createDayElement( day, dateStr, dayTasks ) {
       .join( "" )}
             ${dayTasks.length > 2
       ? `
-                <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors" 
+                <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors"
                      onclick="showDailyTaskPanel('${dateStr}', ${day})">
                     +${dayTasks.length - 2} más
                 </div>
@@ -3294,10 +3094,10 @@ function createPanelTaskElement( task, dateStr ) {
   const showLateWarning = isPastDate && task.state !== 'completed';
 
   return `
-    <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}" 
-         style="border-left-color: ${priority.color}" 
+    <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}"
+         style="border-left-color: ${priority.color}"
          data-priority="${task.priority}">
-        
+
         <!--Advertencia de retraso -->
         ${showLateWarning ? `
             <div class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-2 mb-3 rounded text-xs">
@@ -3310,7 +3110,7 @@ function createPanelTaskElement( task, dateStr ) {
             <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
                 <!-- Select de estado - AHORA SIEMPRE EDITABLE -->
                 <div class="flex flex-col space-y-2 mb-3 sm:mb-0 w-28">
-                    <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)" 
+                    <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)"
                             class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium pr-6 cursor-pointer transition-colors duration-200"
                             title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
                         <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
@@ -3319,13 +3119,13 @@ function createPanelTaskElement( task, dateStr ) {
                     </select>
 
                     <div class="flex items-center space-x-2">
-                        <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm" 
-                              style="background-color: ${priority.color}" 
+                        <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm"
+                              style="background-color: ${priority.color}"
                               title="Prioridad: ${priority.label}"></span>
                         <span class="text-xs text-gray-600 font-medium">${priority.label}</span>
                     </div>
                 </div>
-                
+
                 <!-- Información de la tarea -->
                 <div class="flex-1">
                     <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
@@ -3337,7 +3137,7 @@ function createPanelTaskElement( task, dateStr ) {
                     </div>
                 </div>
             </div>
-            
+
             <!-- Botones de acción - SIEMPRE DISPONIBLES -->
             <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
                 ${canPause ? `
@@ -3459,7 +3259,6 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
     notifType
   );
 }
-
 
 // FUNCIONES PARA PAUSAR Y REANUDAR
 function pauseTask( dateStr, taskId ) {
@@ -3683,7 +3482,7 @@ function createTaskElement( task, dateStr ) {
 
   return `
         <div class="task-item-wrapper relative group/task">
-            <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4" 
+            <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4"
                  data-task-id="${task.id}"
                  data-date="${dateStr}"
                  draggable="true"
@@ -3733,16 +3532,15 @@ function updatePanelProgress( dayTasks ) {
 
   progressBar.style.width = `${progress}%`;
   progressText.innerHTML = `
-        ${progress}% | 
-        <span class="text-green-600">${completedTasks} ✓</span> 
-        <span class="text-blue-600">${inProgressTasks} ▶</span> 
+        ${progress}% |
+        <span class="text-green-600">${completedTasks} ✓</span>
+        <span class="text-blue-600">${inProgressTasks} ▶</span>
         <span class="text-orange-600">${pausedTasks} ⏸</span>
         <span class="text-gray-600">${pendingTasks} ⏸</span>
     `;
 }
 
 // Generar fingerprint de tareas locales
-
 function generateTaskFingerprint( tasks ) {
   try {
     // Crear un string único que represente el estado actual
@@ -3762,9 +3560,7 @@ function generateTaskFingerprint( tasks ) {
   }
 }
 
-
 //Sincronización bidireccional mejorada
-
 async function syncFromFirebaseBidirectional() {
   if ( !currentUser || !isOnline || syncInProgress ) {
     console.log( '⚠️ Sync cancelado: sin usuario, offline o ya sincronizando' );
@@ -3942,13 +3738,6 @@ async function syncFromFirebaseBidirectional() {
     lastFullSyncTime = Date.now();
 
     updateSyncIndicator( "success" );
-
-    // Reiniciar notificaciones si están habilitadas
-    if ( notificationsEnabled && Notification.permission === "granted" ) {
-      stopNotificationService();
-      setTimeout( startNotificationService, 1000 );
-    }
-
   } catch ( error ) {
     console.error( "❌ Error en sync bidireccional:", error );
     updateSyncIndicator( "error" );
@@ -3958,9 +3747,7 @@ async function syncFromFirebaseBidirectional() {
   }
 }
 
-
 // Verificar si una tarea fue eliminada recientemente
-
 function checkIfRecentlyDeleted( dateStr, taskId ) {
   try {
     // Verificar en el log de cambios si fue eliminada en los últimos 5 minutos
@@ -3976,7 +3763,6 @@ function checkIfRecentlyDeleted( dateStr, taskId ) {
     return false;
   }
 }
-
 
 //deleteTaskFromPanel con sync automático
 function deleteTaskFromPanel( dateStr, taskId ) {
@@ -4002,9 +3788,7 @@ function deleteTaskWithOptions( dateStr, taskId ) {
   }
 }
 
-/**
- * Buscar tareas idénticas para eliminación
- */
+/* Buscar tareas idénticas para eliminación*/
 function findSimilarTasksForDelete( title, time ) {
   let matchCount = 0;
   const dates = [];
@@ -4021,18 +3805,14 @@ function findSimilarTasksForDelete( title, time ) {
   return { count: matchCount, dates };
 }
 
-/**
- * Confirmación de eliminación simple
- */
+/*Confirmación de eliminación simple*/
 function confirmSingleDelete( dateStr, taskId, task ) {
   if ( confirm( `¿Eliminar la tarea "${task.title}"?\n\nEsta acción no se puede deshacer.` ) ) {
     executeSingleDelete( dateStr, taskId, task );
   }
 }
 
-/**
- * Ejecutar eliminación de una sola tarea
- */
+/*Ejecutar eliminación de una sola tarea*/
 function executeSingleDelete( dateStr, taskId, task ) {
   // Eliminar de Firebase
   if ( currentUser && isOnline ) {
@@ -4068,7 +3848,6 @@ function executeSingleDelete( dateStr, taskId, task ) {
 
   showNotification( "Tarea eliminada exitosamente", "success" );
 }
-
 
 // MODAL DE ELIMINACIÓN MASIVA
 function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
@@ -4109,7 +3888,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
       <!-- Opciones de eliminación -->
       <div class="space-y-3 mb-6">
         <!-- Opción 1: Solo esta tarea -->
-        <button onclick="deleteSingleTaskFromBulk('${dateStr}', '${taskId}')" 
+        <button onclick="deleteSingleTaskFromBulk('${dateStr}', '${taskId}')"
                 class="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 p-4 rounded-lg transition text-left group">
           <div class="flex items-center">
             <div class="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
@@ -4130,7 +3909,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
         </button>
 
         <!-- Opción 2: Todas las ocurrencias -->
-        <button onclick="showBulkDeleteConfirmation('${dateStr}', '${taskId}', 'all')" 
+        <button onclick="showBulkDeleteConfirmation('${dateStr}', '${taskId}', 'all')"
                 class="w-full bg-red-100 hover:bg-red-200 text-red-800 p-4 rounded-lg transition text-left group">
           <div class="flex items-center">
             <div class="w-10 h-10 bg-red-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
@@ -4147,7 +3926,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
         </button>
 
         <!-- Opción 3: Días personalizados -->
-        <button onclick="showCustomDatesDeleteSelector('${dateStr}', '${taskId}')" 
+        <button onclick="showCustomDatesDeleteSelector('${dateStr}', '${taskId}')"
                 class="w-full bg-orange-100 hover:bg-orange-200 text-orange-800 p-4 rounded-lg transition text-left group">
           <div class="flex items-center">
             <div class="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center mr-3 flex-shrink-0 group-hover:scale-110 transition-transform">
@@ -4165,7 +3944,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
       </div>
 
       <!-- Botón cancelar -->
-      <button onclick="closeAllModals()" 
+      <button onclick="closeAllModals()"
               class="w-full bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
         <i class="fas fa-times mr-2"></i>Cancelar
       </button>
@@ -4175,10 +3954,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
   document.body.appendChild( modal );
 }
 
-
 // OPCIÓN 1: ELIMINAR SOLO UNA TAREA
-
-
 function deleteSingleTaskFromBulk( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -4190,10 +3966,7 @@ function deleteSingleTaskFromBulk( dateStr, taskId ) {
   }
 }
 
-
 // OPCIÓN 2: ELIMINAR TODAS LAS OCURRENCIAS
-
-
 function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -4227,7 +4000,7 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
           <p class="text-gray-800 font-medium">"${task.title}"</p>
           ${task.time ? `<p class="text-gray-600 text-xs mt-1">Hora: ${task.time}</p>` : ''}
         </div>
-        
+
         <div class="mt-4 text-xs text-gray-500">
           <p class="font-semibold mb-1">Primeras fechas afectadas:</p>
           <ul class="list-disc list-inside space-y-1">
@@ -4250,11 +4023,11 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
       </div>
 
       <div class="flex space-x-3">
-        <button onclick="executeBulkDelete('${dateStr}', '${taskId}', 'all')" 
+        <button onclick="executeBulkDelete('${dateStr}', '${taskId}', 'all')"
                 class="flex-1 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 transition font-medium">
           <i class="fas fa-trash-alt mr-2"></i>Sí, Eliminar Todo
         </button>
-        <button onclick="closeAllModals()" 
+        <button onclick="closeAllModals()"
                 class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
           Cancelar
         </button>
@@ -4265,10 +4038,7 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   document.body.appendChild( modal );
 }
 
-
 // OPCIÓN 3: SELECTOR DE DÍAS PERSONALIZADOS
-
-
 function showCustomDatesDeleteSelector( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -4340,11 +4110,11 @@ function showCustomDatesDeleteSelector( dateStr, taskId ) {
       </div>
 
       <div class="flex space-x-3">
-        <button onclick="proceedWithCustomDelete('${dateStr}', '${taskId}')" 
+        <button onclick="proceedWithCustomDelete('${dateStr}', '${taskId}')"
                 class="flex-1 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 transition font-medium">
           <i class="fas fa-trash-alt mr-2"></i>Eliminar Seleccionadas
         </button>
-        <button onclick="closeAllModals()" 
+        <button onclick="closeAllModals()"
                 class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
           Cancelar
         </button>
@@ -4399,10 +4169,7 @@ function proceedWithCustomDelete( dateStr, taskId ) {
   executeBulkDelete( dateStr, taskId, 'custom' );
 }
 
-
 // EJECUCIÓN DE ELIMINACIÓN MASIVA
-
-
 function executeBulkDelete( dateStr, taskId, mode ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) {
@@ -4498,10 +4265,7 @@ function executeBulkDelete( dateStr, taskId, mode ) {
   }
 }
 
-
-
 // Edicion avanzada de tareas
-
 function showAdvancedEditModal( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
   if ( !task ) {
@@ -4538,7 +4302,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
             <i class="fas fa-info-circle mr-2"></i>
             <span>Esta tarea se repite en <strong>${similarTasks.count} días</strong></span>
           </div>
-          <button onclick="showBulkEditModal('${dateStr}', '${taskId}')" 
+          <button onclick="showBulkEditModal('${dateStr}', '${taskId}')"
                   class="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition duration-200 flex items-center justify-center">
             <i class="fas fa-layer-group mr-2"></i>
             Editar en Múltiples Días
@@ -4552,13 +4316,13 @@ function showAdvancedEditModal( dateStr, taskId ) {
           <label class="block text-sm font-medium text-gray-700 mb-2">
             Título <span class="text-red-500">*</span>
           </label>
-          <input type="text" id="advancedEditTaskTitle" value="${task.title || ""}" required 
+          <input type="text" id="advancedEditTaskTitle" value="${task.title || ""}" required
                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
         </div>
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-          <textarea id="advancedEditTaskDescription" rows="3" 
+          <textarea id="advancedEditTaskDescription" rows="3"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ""}</textarea>
         </div>
 
@@ -4574,7 +4338,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
             <label class="block text-sm font-medium text-gray-700 mb-2">
               Prioridad <span class="text-red-500">*</span>
             </label>
-            <select id="advancedEditTaskPriority" required 
+            <select id="advancedEditTaskPriority" required
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
               <option value="" disabled>Selecciona una prioridad</option>
               <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
@@ -4598,7 +4362,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
           <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
             <i class="fas fa-save mr-2"></i>Guardar Solo Esta Tarea
           </button>
-          <button type="button" onclick="closeAllModals()" 
+          <button type="button" onclick="closeAllModals()"
                   class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
             Cancelar
           </button>
@@ -4642,7 +4406,7 @@ function checkIfTaskIsLate( dateStr, taskTime ) {
   return false;
 }
 
-// NUEVA: Limpiar notificaciones cuando se completa/elimina una tarea
+//Limpiar notificaciones cuando se completa/elimina una tarea
 function clearTaskNotifications( taskId ) {
   const keysToRemove = [
     `${taskId}-15min`,
@@ -4667,7 +4431,7 @@ function clearTaskNotifications( taskId ) {
   console.log( `🧹 Notificaciones limpiadas para tarea: ${taskId}` );
 }
 
-/// FUNCIÓN para actualizar tareas desde el panel
+// FUNCIÓN para actualizar tareas desde el panel
 function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
   const title = document.getElementById( "advancedEditTaskTitle" ).value.trim();
   const description = document
@@ -4759,7 +4523,7 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                    <textarea id="quickEditDescription" rows="3" 
+                    <textarea id="quickEditDescription" rows="3"
                               class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ""}</textarea>
                 </div>
                 <div>
@@ -4781,7 +4545,7 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
                     <button type="submit" class="flex-1 bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-700 transition">
                         <i class="fas fa-save mr-2"></i>Guardar
                     </button>
-                    <button type="button" onclick="closeAllModals()" 
+                    <button type="button" onclick="closeAllModals()"
                             class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
                         Cancelar
                     </button>
@@ -5019,12 +4783,12 @@ function showQuickAddTask( dateStr ) {
             <form id="quickAddTaskForm" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Título <span class="text-red-500">*</span></label>
-                    <input type="text" id="quickAddTaskTitle" required 
+                    <input type="text" id="quickAddTaskTitle" required
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
-                    <textarea id="quickAddTaskDescription" rows="3" 
+                    <textarea id="quickAddTaskDescription" rows="3"
                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
@@ -5048,7 +4812,7 @@ function showQuickAddTask( dateStr ) {
                     <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
                         <i class="fas fa-save mr-2"></i>Agregar Tarea
                     </button>
-                    <button type="button" onclick="closeAllModals()" 
+                    <button type="button" onclick="closeAllModals()"
                             class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
                         Cancelar
                     </button>
@@ -5586,9 +5350,9 @@ function updateProgress() {
   if ( progressBar ) progressBar.style.width = `${progress}%`;
   if ( progressText ) {
     progressText.innerHTML = `
-            ${progress}% | 
-            <span class="text-green-600">${completedTasks} ✓</span> 
-            <span class="text-blue-600">${inProgressTasks} ▶</span> 
+            ${progress}% |
+            <span class="text-green-600">${completedTasks} ✓</span>
+            <span class="text-blue-600">${inProgressTasks} ▶</span>
             <span class="text-orange-600">${pausedTasks} ⏸</span>
             <span class="text-gray-600">${pendingTasks} ⏸</span>
         `;
@@ -5652,10 +5416,8 @@ function toggleNotifications() {
       if ( 'vibrate' in navigator ) {
         navigator.vibrate( getVibrationPattern( 'success' ) );
       }
-      startNotificationService();
       showNotification( "Notificaciones activadas", "success" );
     } else {
-      stopNotificationService();
       showNotification( "Notificaciones desactivadas", "info" );
     }
   } else if ( Notification.permission === "default" ) {
@@ -5687,7 +5449,6 @@ function requestNotificationPermissionWithVibration() {
     updateNotificationButton();
 
     if ( permission === "granted" ) {
-      startNotificationService();
 
       if ( 'vibrate' in navigator ) {
         navigator.vibrate( getVibrationPattern( 'success' ) );
@@ -5712,54 +5473,16 @@ function requestNotificationPermissionWithVibration() {
   } );
 }
 
-function startNotificationService() {
-  if ( notificationInterval ) {
-    clearInterval( notificationInterval );
-    notificationInterval = null;
-  }
-
-  if ( !notificationsEnabled || Notification.permission !== "granted" ) {
-    console.log( "❌ Notificaciones no habilitadas" );
-    return;
-  }
-
-  // Verificación inmediata
-  setTimeout( () => {
-    checkDailyTasksImproved();
-    sendTasksToServiceWorker(); //Enviar al SW
-  }, 1000 );
-
-  // Intervalo cada 30 segundos (más frecuente)
-  notificationInterval = setInterval( () => {
-    if ( notificationsEnabled && Notification.permission === "granted" ) {
-      checkDailyTasksImproved();
-      sendTasksToServiceWorker(); //Mantener SW actualizado
-    } else {
-      stopNotificationService();
-    }
-  }, 30000 ); // 30 segundos
-
-  console.log( " Servicio de notificaciones iniciado (cada 30s)" );
-}
-
 // Función para revisar notificaciones cuando la PWA vuelve del background
 function onPageVisibilityChange() {
   if ( !document.hidden && notificationsEnabled && Notification.permission === "granted" ) {
     console.log( "📱 PWA volvió del background - revisando notificaciones" );
-    checkDailyTasksImproved( true );
   }
 }
 
 // Escuchar cuando la PWA vuelve del background
 document.addEventListener( "visibilitychange", onPageVisibilityChange );
 
-function stopNotificationService() {
-  if ( notificationInterval ) {
-    clearInterval( notificationInterval );
-    notificationInterval = null;
-    console.log( "Servicio de notificaciones detenido" );
-  }
-}
 
 function updateNotificationButton() {
   const btn = document.getElementById( "notificationsBtn" );
@@ -5781,184 +5504,6 @@ function updateNotificationButton() {
     btn.className = `bg-yellow-500 hover:bg-yellow-600 ${baseClasses}`;
     btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Permitir Notificaciones';
     btn.title = "Click para solicitar permisos de notificación";
-  }
-}
-
-// función para checkear tareas
-function checkDailyTasksImproved( forceCheck = false ) {
-  if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
-    return;
-  }
-
-  const now = new Date();
-  const today = getTodayString();
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-
-  // Reset diario
-  const todayKey = `${today}-reset`;
-  if ( !sentNotifications.has( todayKey ) && currentHour === 0 && currentMinute <= 1 ) {
-    notificationStatus.morning = false;
-    notificationStatus.midday = false;
-    notificationStatus.evening = false;
-    notificationStatus.taskReminders.clear();
-    sentNotifications.clear();
-    sentNotifications.add( todayKey );
-
-    // Sincronizar reset
-    syncNotificationStatus();
-
-    console.log( '🔄 Notificaciones reseteadas para nuevo día' );
-  }
-
-  const todayTasks = tasks[ today ] || [];
-
-  todayTasks.forEach( task => {
-    if ( !task.time || task.state === 'completed' ) return;
-
-    const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
-    const taskTimeInMinutes = taskHours * 60 + taskMinutes;
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
-
-    // Recordatorio 15 minutos antes
-    const reminderKey = `${task.id}-15min`;
-    if ( !notificationStatus.taskReminders.has( reminderKey ) &&
-      currentTimeInMinutes >= taskTimeInMinutes - 15 &&
-      currentTimeInMinutes <= taskTimeInMinutes - 13 &&
-      task.state === 'pending' ) {
-
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      showDesktopNotificationPWA(
-        `⏰ Recordatorio: ${task.title}`,
-        `${priority.label} - Inicia en 15 minutos (${task.time})`,
-        reminderKey,
-        false,
-        'task-reminder'
-      );
-      notificationStatus.taskReminders.add( reminderKey );
-
-      // 🔥 NUEVO: Broadcast y sincronizar
-      broadcastNotificationSent( reminderKey );
-      syncNotificationStatus();
-    }
-
-    // Hora exacta
-    const startKey = `${task.id}-start`;
-    if ( !notificationStatus.taskReminders.has( startKey ) &&
-      currentTimeInMinutes >= taskTimeInMinutes &&
-      currentTimeInMinutes <= taskTimeInMinutes + 2 &&
-      task.state === 'pending' ) {
-
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      showDesktopNotificationPWA(
-        `🔔 Es hora de: ${task.title}`,
-        `${priority.label} programada para ${task.time}`,
-        startKey,
-        true,
-        'task-start'
-      );
-
-      showInAppNotification(
-        '⏰ Recordatorio de Tarea',
-        `${task.title} - ${task.time}`,
-        'task',
-        { taskId: task.id, dateStr: today }
-      );
-
-      notificationStatus.taskReminders.add( startKey );
-
-      // 🔥 NUEVO: Broadcast y sincronizar
-      broadcastNotificationSent( startKey );
-      syncNotificationStatus();
-    }
-
-    // Tarea retrasada
-    const lateKey = `${task.id}-late`;
-    if ( !notificationStatus.taskReminders.has( lateKey ) &&
-      currentTimeInMinutes >= taskTimeInMinutes + 30 &&
-      task.state !== 'completed' ) {
-
-      showDesktopNotificationPWA(
-        `⚠️ Tarea Retrasada: ${task.title}`,
-        task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - 30min de retraso',
-        lateKey,
-        false,
-        'task-late'
-      );
-      notificationStatus.taskReminders.add( lateKey );
-
-      // 🔥 NUEVO: Broadcast y sincronizar
-      broadcastNotificationSent( lateKey );
-      syncNotificationStatus();
-    }
-  } );
-
-  // Notificaciones generales del día
-  const pendingTasks = todayTasks.filter( task => task.state === 'pending' );
-  const inProgressTasks = todayTasks.filter( task => task.state === 'inProgress' );
-  const totalActive = pendingTasks.length + inProgressTasks.length;
-
-  // Buenos días
-  if ( !notificationStatus.morning &&
-    currentHour === 9 && currentMinute <= 30 &&
-    totalActive > 0 ) {
-
-    let message = '';
-    if ( pendingTasks.length > 0 ) {
-      message += `${pendingTasks.length} pendiente${pendingTasks.length > 1 ? 's' : ''}`;
-    }
-    if ( inProgressTasks.length > 0 ) {
-      if ( message ) message += ' y ';
-      message += `${inProgressTasks.length} en proceso`;
-    }
-
-    showDesktopNotificationPWA(
-      '🌅 Buenos días',
-      `Tienes ${message} para hoy`,
-      'morning',
-      false,
-      'morning'
-    );
-    notificationStatus.morning = true;
-
-    // 🔥 NUEVO: Sincronizar
-    syncNotificationStatus();
-  }
-
-  // Mediodía
-  if ( !notificationStatus.midday &&
-    currentHour === 12 && currentMinute <= 30 &&
-    pendingTasks.length > 0 ) {
-
-    showDesktopNotificationPWA(
-      '🌞 Mediodía',
-      `${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''}`,
-      'midday',
-      false,
-      'midday'
-    );
-    notificationStatus.midday = true;
-
-    // 🔥 NUEVO: Sincronizar
-    syncNotificationStatus();
-  }
-
-  // Final del día
-  if ( !notificationStatus.evening &&
-    currentHour === 18 && currentMinute <= 30 &&
-    totalActive > 0 ) {
-
-    showDesktopNotificationPWA(
-      '🌆 Final del día',
-      `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
-      'evening',
-      false,
-      'evening'
-    );
-    notificationStatus.evening = true;
-
-    // 🔥 NUEVO: Sincronizar
-    syncNotificationStatus();
   }
 }
 
@@ -6010,10 +5555,7 @@ function showNotification( message, type = "success" ) {
   }, 3000 );
 }
 
-
 // FUNCIÓN: Modal de edición masiva
-
-
 function showBulkEditModal( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) {
@@ -6051,7 +5593,7 @@ function showBulkEditModal( dateStr, taskId ) {
 
       <!-- Opciones de edición -->
       <div class="space-y-3 mb-6">
-        <button onclick="editSingleTask('${dateStr}', '${taskId}')" 
+        <button onclick="editSingleTask('${dateStr}', '${taskId}')"
                 class="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 p-4 rounded-lg transition text-left">
           <div class="flex items-center">
             <i class="fas fa-calendar-day text-2xl mr-3"></i>
@@ -6062,7 +5604,7 @@ function showBulkEditModal( dateStr, taskId ) {
           </div>
         </button>
 
-        <button onclick="showBulkEditForm('${dateStr}', '${taskId}', 'all')" 
+        <button onclick="showBulkEditForm('${dateStr}', '${taskId}', 'all')"
                 class="w-full bg-green-100 hover:bg-green-200 text-green-800 p-4 rounded-lg transition text-left">
           <div class="flex items-center">
             <i class="fas fa-calendar-alt text-2xl mr-3"></i>
@@ -6073,7 +5615,7 @@ function showBulkEditModal( dateStr, taskId ) {
           </div>
         </button>
 
-        <button onclick="showCustomDatesSelector('${dateStr}', '${taskId}')" 
+        <button onclick="showCustomDatesSelector('${dateStr}', '${taskId}')"
                 class="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 p-4 rounded-lg transition text-left">
           <div class="flex items-center">
             <i class="fas fa-calendar-check text-2xl mr-3"></i>
@@ -6085,7 +5627,7 @@ function showBulkEditModal( dateStr, taskId ) {
         </button>
       </div>
 
-      <button onclick="closeAllModals()" 
+      <button onclick="closeAllModals()"
               class="w-full bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
         Cancelar
       </button>
@@ -6095,18 +5637,13 @@ function showBulkEditModal( dateStr, taskId ) {
   document.body.appendChild( modal );
 }
 
-
 // FUNCIÓN: Editar solo una tarea
-
-
 function editSingleTask( dateStr, taskId ) {
   closeAllModals();
   showAdvancedEditModal( dateStr, taskId );
 }
 
-
 // FUNCIÓN: Formulario de edición masiva
-
 function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -6144,7 +5681,7 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
           <label class="block text-sm font-medium text-gray-700 mb-2">
             Nuevo Título <span class="text-red-500">*</span>
           </label>
-          <input type="text" id="bulkEditTitle" value="${task.title}" required 
+          <input type="text" id="bulkEditTitle" value="${task.title}" required
                  class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">
         </div>
 
@@ -6152,7 +5689,7 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
           <label class="block text-sm font-medium text-gray-700 mb-2">
             Nueva Descripción
           </label>
-          <textarea id="bulkEditDescription" rows="3" 
+          <textarea id="bulkEditDescription" rows="3"
                     class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500">${task.description || ''}</textarea>
         </div>
 
@@ -6186,7 +5723,7 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
           <button type="submit" class="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">
             <i class="fas fa-save mr-2"></i>Aplicar Cambios
           </button>
-          <button type="button" onclick="closeAllModals()" 
+          <button type="button" onclick="closeAllModals()"
                   class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
             Cancelar
           </button>
@@ -6207,9 +5744,7 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
   } );
 }
 
-
 // FUNCIÓN: Buscar tareas similares
-
 function findSimilarTasks( title, time ) {
   let matchCount = 0;
   const dates = [];
@@ -6245,9 +5780,7 @@ function findSimilarTasks( title, time ) {
   return { count: matchCount, dates };
 }
 
-
 // FUNCIÓN: Aplicar edición masiva
-
 function applyBulkEdit( dateStr, taskId ) {
   const originalTitle = document.getElementById( "originalTitle" ).value;
   const originalTime = document.getElementById( "originalTime" ).value;
@@ -6333,9 +5866,7 @@ function applyBulkEdit( dateStr, taskId ) {
   }
 }
 
-
 // FUNCIÓN: Selector de fechas personalizadas
-
 function showCustomDatesSelector( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -6394,11 +5925,11 @@ function showCustomDatesSelector( dateStr, taskId ) {
       </div>
 
       <div class="flex space-x-3">
-        <button onclick="proceedWithCustomDates('${dateStr}', '${taskId}')" 
+        <button onclick="proceedWithCustomDates('${dateStr}', '${taskId}')"
                 class="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700">
           <i class="fas fa-arrow-right mr-2"></i>Continuar con Selección
         </button>
-        <button onclick="closeAllModals()" 
+        <button onclick="closeAllModals()"
                 class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
           Cancelar
         </button>
@@ -6426,21 +5957,6 @@ function proceedWithCustomDates( dateStr, taskId ) {
   // Guardar fechas seleccionadas y mostrar formulario
   window.selectedCustomDates = selectedDates;
   showBulkEditForm( dateStr, taskId, 'custom' );
-}
-
-function saveTasks() {
-  try {
-    localStorage.setItem( "tasks", JSON.stringify( tasks ) );
-    localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
-
-    // CRÍTICO: Enviar al SW cada vez que se guardan tareas
-    if ( currentUser && !currentUser.isOffline ) {
-      sendTasksToServiceWorker();
-    }
-  } catch ( error ) {
-    console.error( "Error saving tasks:", error );
-    showNotification( "Error al guardar tareas", "error" );
-  }
 }
 
 //clearAll con sync automático optimizado
@@ -6652,7 +6168,7 @@ document.addEventListener( 'visibilitychange', () => {
       if ( isOnline && !isSyncing ) {
         setTimeout( () => {
           syncFromFirebase();
-          sendTasksToServiceWorker();
+          
         }, 1000 );
       }
     } else {
@@ -6674,56 +6190,19 @@ document.addEventListener( 'visibilitychange', () => {
   }
 } );
 
-// Función para enviar tareas al Service Worker para verificación en background
-function sendTasksToServiceWorker() {
-  if ( !( 'serviceWorker' in navigator ) || !navigator.serviceWorker.controller ) {
-    console.warn( '⚠️ Service Worker no disponible' );
-    return;
-  }
-
-  const allTasks = [];
-  const today = getTodayString();
-
-  // Enviar solo tareas de hoy y futuras
-  Object.keys( tasks ).forEach( dateStr => {
-    if ( dateStr >= today ) {
-      const dayTasks = tasks[ dateStr ] || [];
-      dayTasks.forEach( task => {
-        if ( task.time && task.state !== 'completed' ) {
-          allTasks.push( {
-            id: task.id,
-            title: task.title,
-            time: task.time,
-            state: task.state,
-            priority: task.priority,
-            date: dateStr,
-            description: task.description || ''
-          } );
-        }
-      } );
-    }
-  } );
-
-  navigator.serviceWorker.controller.postMessage( {
-    type: 'UPDATE_TASKS',
-    data: {
-      tasks: tasks,
-      timestamp: Date.now()
-    }
-  } );
-
-  console.log( `📤 Enviadas ${allTasks.length} tareas al Service Worker` );
-}
-
 // Enviar tareas al SW cada vez que se actualiza la lista
 function saveTasks() {
   try {
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
 
-    // 🔥 IMPORTANTE: Enviar al SW después de cada guardado
-    if ( currentUser && !currentUser.isOffline ) {
-      sendTasksToServiceWorker();
+    // 🔥 NUEVO: Enviar al Service Worker para IndexedDB
+    if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+      navigator.serviceWorker.controller.postMessage( {
+        type: 'UPDATE_TASKS',
+        data: { tasks, timestamp: Date.now() }
+      } );
+      console.log( '📤 Tareas enviadas al SW' );
     }
   } catch ( error ) {
     console.error( "Error saving tasks:", error );
@@ -6768,36 +6247,16 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   initNotifications();
 
-  console.log( '⏳ Esperando inicialización de Firebase...' );
+  // 🔥 NUEVO: NO inicializar Firebase automáticamente
+  console.log( '⏸️ Firebase en espera (se inicializará al hacer login)' );
+  hideLoadingScreen();
+  updateUI();
 
-  await new Promise( resolve => {
-    const checkAuth = setInterval( () => {
-      if ( typeof firebase !== 'undefined' && firebase.auth && !authReady ) {
-        clearInterval( checkAuth );
-        authReady = true;
-        console.log( '✅ Firebase listo' );
-        resolve();
-      }
-    }, 100 );
-
-    setTimeout( () => {
-      clearInterval( checkAuth );
-      if ( !authReady ) {
-        console.error( '❌ Firebase no se inicializó en tiempo' );
-        authReady = true;
-      }
-      resolve();
-    }, 10000 );
-  } );
-
-  if ( isOnline ) {
-    await initFirebase();
-    await handleRedirectResult();
-  } else {
+  // Modo offline por defecto
+  if ( !isOnline ) {
     console.log( '📴 Sin conexión - modo offline' );
     currentUser = { isOffline: true };
     updateUI();
-    hideLoadingScreen();
   }
 
   setTimeout( () => {
@@ -6822,26 +6281,17 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  setTimeout( () => {
-    if ( currentUser && messaging ) {
-      // Ya se configuró en initFirebase o signInWithGoogle
-    }
-  }, 2000 );
-
-  // 🔥 NUEVO: Listener para sincronización de notificaciones
-  window.addEventListener( 'focus', async () => {
-    if ( currentUser && isOnline ) {
-      console.log( '🔄 App enfocada - cargando estado de notificaciones' );
-      await loadNotificationStatus();
-    }
-  } );
+  // 🔥 NUEVO: Verificar si hay sesión guardada
+  const hadSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
+  if ( hadSession && isOnline ) {
+    console.log( '🔄 Sesión previa detectada, restaurando...' );
+    await initFirebase();
+  }
 
   setupAuthListeners();
 } );
 
-// ============================================
-// NUEVA FUNCIÓN: Configurar listeners después de DOMContentLoaded
-// ============================================
+//Configurar listeners después de DOMContentLoaded
 function setupAuthListeners() {
   console.log( '🔐 Configurando listeners de autenticación...' );
 
@@ -6900,9 +6350,7 @@ function setupAuthListeners() {
   console.log( 'Listeners de autenticación configurados' );
 }
 
-// ============================================
 // LISTENER: Volver del background
-// ============================================
 document.addEventListener( 'visibilitychange', () => {
   if ( !document.hidden ) {
     console.log( '📱 App volvió del background - verificando sesión' );
@@ -6918,7 +6366,7 @@ document.addEventListener( 'visibilitychange', () => {
       if ( isOnline && !isSyncing ) {
         setTimeout( () => {
           syncFromFirebase();
-          sendTasksToServiceWorker();
+      
         }, 1000 );
       }
     } else {

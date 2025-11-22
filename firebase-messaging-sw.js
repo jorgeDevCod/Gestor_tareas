@@ -1,23 +1,7 @@
-// Gestión de caché + Notificaciones push
-// ====================================
+// Service Worker Optimizado v5.0
+// ================================
 
-// IMPORTS: Firebase (compat) - Solo para FCM
-importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js' );
-
-// ====================================
-// CONFIGURACIÓN
-// ====================================
-const FIREBASE_CONFIG = {
-    apiKey: "AIzaSyD9Lwkgd9NqJ5I0termPqVZxNxFk5Y-J4s",
-    authDomain: "calendario-tareas-app.firebaseapp.com",
-    projectId: "calendario-tareas-app",
-    storageBucket: "calendario-tareas-app.firebasestorage.app",
-    messagingSenderId: "646091363424",
-    appId: "1:646091363424:web:d923bbcc0224bd1bed5f05",
-};
-
-const CACHE_VERSION = 'v4.1';
+const CACHE_VERSION = 'v5.0';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -33,136 +17,158 @@ const STATIC_FILES = [
     'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
-// Variables globales
-let currentUserId = null;
-let tasksCache = {}; // Caché local de tareas
-let notificationCheckInterval = null;
-const sentNotifications = new Set();
-const recentNotificationTags = new Map();
-const DUPLICATE_WINDOW_MS = 5000;
+// 🔥 NUEVA: Base de datos IndexedDB para tareas persistentes
+const DB_NAME = 'TasksDB';
+const DB_VERSION = 1;
+const TASKS_STORE = 'tasks';
+
+let db = null;
 
 // ====================================
-// INICIALIZAR FIREBASE (SOLO MESSAGING)
+// INDEXEDDB SETUP
 // ====================================
-let messaging = null;
+async function initDB() {
+    return new Promise( ( resolve, reject ) => {
+        const request = indexedDB.open( DB_NAME, DB_VERSION );
 
-if ( !firebase.apps.length ) {
-    try {
-        firebase.initializeApp( FIREBASE_CONFIG );
-        console.log( '✅ Firebase inicializado en SW' );
+        request.onerror = () => reject( request.error );
+        request.onsuccess = () => {
+            db = request.result;
+            resolve( db );
+        };
 
-        if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
-            messaging = firebase.messaging();
-            console.log( '✅ FCM inicializado' );
-        } else {
-            console.warn( '⚠️ FCM no soportado en este navegador' );
-        }
-    } catch ( e ) {
-        console.error( '❌ Error inicializando Firebase en SW:', e );
-    }
+        request.onupgradeneeded = ( event ) => {
+            const database = event.target.result;
+            if ( !database.objectStoreNames.contains( TASKS_STORE ) ) {
+                database.createObjectStore( TASKS_STORE, { keyPath: 'id' } );
+            }
+        };
+    } );
 }
 
-// ====================================
-// HELPERS DE DEDUPLICADO
-// ====================================
-function tagWasShownRecently( tag ) {
-    if ( !tag ) return false;
-    const ts = recentNotificationTags.get( tag );
-    if ( !ts ) return false;
-    if ( Date.now() - ts < DUPLICATE_WINDOW_MS ) return true;
-    recentNotificationTags.delete( tag );
-    return false;
-}
+async function saveTasksToDB( tasks ) {
+    if ( !db ) await initDB();
 
-function markTagShown( tag ) {
-    if ( !tag ) return;
-    recentNotificationTags.set( tag, Date.now() );
+    const transaction = db.transaction( [ TASKS_STORE ], 'readwrite' );
+    const store = transaction.objectStore( TASKS_STORE );
 
-    // Limpiar entries viejos
-    for ( const [ k, v ] of recentNotificationTags.entries() ) {
-        if ( Date.now() - v > DUPLICATE_WINDOW_MS * 10 ) {
-            recentNotificationTags.delete( k );
+    // Limpiar store anterior
+    await store.clear();
+
+    // Guardar todas las tareas
+    for ( const [ date, dayTasks ] of Object.entries( tasks ) ) {
+        for ( const task of dayTasks ) {
+            await store.put( {
+                id: `${date}_${task.id}`,
+                date,
+                ...task
+            } );
         }
     }
+
+    console.log( '✅ Tareas guardadas en IndexedDB' );
+}
+
+async function getTasksFromDB() {
+    if ( !db ) await initDB();
+
+    return new Promise( ( resolve, reject ) => {
+        const transaction = db.transaction( [ TASKS_STORE ], 'readonly' );
+        const store = transaction.objectStore( TASKS_STORE );
+        const request = store.getAll();
+
+        request.onsuccess = () => {
+            const allTasks = request.result;
+            const tasksByDate = {};
+
+            allTasks.forEach( task => {
+                if ( !tasksByDate[ task.date ] ) {
+                    tasksByDate[ task.date ] = [];
+                }
+                tasksByDate[ task.date ].push( task );
+            } );
+
+            resolve( tasksByDate );
+        };
+
+        request.onerror = () => reject( request.error );
+    } );
 }
 
 // ====================================
 // INSTALL / ACTIVATE
 // ====================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 Service Worker instalando...' );
+    console.log( '🔧 SW v5.0 instalando...' );
 
     event.waitUntil(
-        caches.open( CACHE_STATIC )
-            .then( ( cache ) => {
-                console.log( '📦 Cacheando archivos estáticos...' );
-                return cache.addAll( STATIC_FILES );
-            } )
-            .then( () => self.skipWaiting() )
-            .catch( ( err ) => console.error( '❌ Error cacheando archivos:', err ) )
+        Promise.all( [
+            caches.open( CACHE_STATIC ).then( cache => cache.addAll( STATIC_FILES ) ),
+            initDB()
+        ] ).then( () => self.skipWaiting() )
     );
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 Service Worker activándose...' );
+    console.log( '🚀 SW v5.0 activándose...' );
 
     event.waitUntil(
-        caches.keys().then( ( cacheNames ) => {
-            return Promise.all(
-                cacheNames.map( ( cacheName ) => {
-                    if ( ![ CACHE_STATIC, CACHE_DYNAMIC ].includes( cacheName ) ) {
-                        console.log( '🗑️ Eliminando caché antigua:', cacheName );
-                        return caches.delete( cacheName );
-                    }
-                } )
-            );
-        } ).then( () => self.clients.claim() )
+        Promise.all( [
+            // Limpiar cachés antiguos
+            caches.keys().then( keys =>
+                Promise.all(
+                    keys.map( key => {
+                        if ( ![ CACHE_STATIC, CACHE_DYNAMIC ].includes( key ) ) {
+                            return caches.delete( key );
+                        }
+                    } )
+                )
+            ),
+            // Inicializar DB
+            initDB(),
+            // Tomar control inmediato
+            self.clients.claim()
+        ] ).then( () => {
+            console.log( '✅ SW activado y listo' );
+            // Iniciar verificación de notificaciones
+            startNotificationScheduler();
+        } )
     );
 } );
 
 // ====================================
-// FETCH STRATEGIES
+// FETCH (sin cambios)
 // ====================================
 self.addEventListener( 'fetch', ( event ) => {
     const { request } = event;
     const url = new URL( request.url );
 
-    // Ignorar requests a Firebase/Google APIs
     if ( url.hostname.includes( 'googleapis.com' ) ||
         url.hostname.includes( 'firebaseapp.com' ) ||
         url.hostname.includes( 'google.com' ) ) {
         return;
     }
 
-    // Network-first para API calls
-    if ( url.pathname.includes( '/api/' ) ) {
-        event.respondWith( networkFirst( request ) );
-        return;
-    }
-
-    // Cache-first para assets estáticos
     if ( url.pathname.match( /\.(js|css|png|jpg|jpeg|svg|woff|woff2)$/ ) ) {
         event.respondWith( cacheFirst( request ) );
         return;
     }
 
-    // Network-first para HTML
     event.respondWith( networkFirst( request ) );
 } );
 
 async function cacheFirst( request ) {
-    try {
-        const cachedResponse = await caches.match( request );
-        if ( cachedResponse ) return cachedResponse;
+    const cached = await caches.match( request );
+    if ( cached ) return cached;
 
+    try {
         const response = await fetch( request );
         if ( response && response.status === 200 ) {
             const cache = await caches.open( CACHE_DYNAMIC );
             cache.put( request, response.clone() );
         }
         return response;
-    } catch ( err ) {
-        console.error( 'cacheFirst error:', err );
+    } catch {
         return new Response( 'Offline', { status: 503 } );
     }
 }
@@ -175,9 +181,9 @@ async function networkFirst( request ) {
             cache.put( request, response.clone() );
         }
         return response;
-    } catch ( err ) {
-        const cachedResponse = await caches.match( request );
-        if ( cachedResponse ) return cachedResponse;
+    } catch {
+        const cached = await caches.match( request );
+        if ( cached ) return cached;
 
         if ( request.mode === 'navigate' ) {
             const fallback = await caches.match( '/index.html' );
@@ -189,59 +195,140 @@ async function networkFirst( request ) {
 }
 
 // ====================================
-// MENSAJES DESDE LA APP
+// 🔥 NUEVO: SISTEMA DE NOTIFICACIONES PERSISTENTE
 // ====================================
-self.addEventListener( 'message', async ( event ) => {
+let notificationTimer = null;
+const sentNotifications = new Set();
+
+function startNotificationScheduler() {
+    console.log( '⏰ Iniciando scheduler de notificaciones...' );
+
+    // Limpiar timer anterior si existe
+    if ( notificationTimer ) clearInterval( notificationTimer );
+
+    // Verificar cada 30 segundos
+    notificationTimer = setInterval( async () => {
+        await checkTaskNotifications();
+    }, 30000 );
+
+    // Verificación inmediata
+    checkTaskNotifications();
+}
+
+async function checkTaskNotifications() {
     try {
-        const { type, data } = event.data || {};
+        const tasks = await getTasksFromDB();
+        const now = new Date();
+        const today = formatDate( now );
+        const todayTasks = tasks[ today ] || [];
 
-        switch ( type ) {
-            case 'SET_USER_ID':
-                currentUserId = data.userId;
-                console.log( '👤 Usuario guardado en SW:', currentUserId );
+        if ( todayTasks.length === 0 ) return;
 
-                // Iniciar verificación de notificaciones
-                if ( notificationCheckInterval ) clearInterval( notificationCheckInterval );
-                await scheduleNextCheck();
-                break;
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-            case 'LOGOUT':
-                currentUserId = null;
-                tasksCache = {};
-                sentNotifications.clear();
-                if ( notificationCheckInterval ) clearInterval( notificationCheckInterval );
-                console.log( '👋 Usuario deslogueado, cache limpiado' );
-                break;
+        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today} a las ${currentHour}:${currentMinute}` );
 
-            case 'UPDATE_TASKS':
-                tasksCache = data.tasks || {};
-                console.log( '📝 Tareas actualizadas en SW:', Object.keys( tasksCache ).length, 'días' );
-                break;
-
-            case 'CHECK_NOTIFICATIONS_NOW':
-                console.log( '🔔 Verificación forzada desde app' );
-                await checkAndSendNotifications();
-                break;
-
-            case 'CLEAR_TASK_NOTIFICATION':
-                const taskId = data.taskId;
-                sentNotifications.delete( `${taskId}-15min` );
-                sentNotifications.delete( `${taskId}-start` );
-                sentNotifications.delete( `${taskId}-late` );
-                console.log( `🧹 Notificaciones limpiadas para tarea: ${taskId}` );
-                break;
-
-            default:
-                break;
+        // Reset diario
+        const resetKey = `reset-${today}`;
+        if ( !sentNotifications.has( resetKey ) && currentHour === 0 && currentMinute === 0 ) {
+            sentNotifications.clear();
+            sentNotifications.add( resetKey );
+            console.log( '🔄 Reset diario de notificaciones' );
         }
-    } catch ( err ) {
-        console.error( 'Error manejando message en SW:', err );
-    }
-} );
 
-// ====================================
-// NOTIFICACIONES
-// ====================================
+        // Verificar cada tarea
+        for ( const task of todayTasks ) {
+            if ( !task.time || task.state === 'completed' ) continue;
+
+            const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
+            const taskTimeInMinutes = taskHours * 60 + taskMinutes;
+
+            // 15 minutos antes
+            const reminderKey = `${task.id}-15min`;
+            if ( !sentNotifications.has( reminderKey ) &&
+                currentTimeInMinutes >= taskTimeInMinutes - 15 &&
+                currentTimeInMinutes < taskTimeInMinutes - 13 ) {
+
+                await showNotification( {
+                    title: `⏰ Recordatorio: ${task.title}`,
+                    body: `Inicia en 15 minutos (${task.time})`,
+                    tag: reminderKey,
+                    icon: '/images/IconLogo.png',
+                    requireInteraction: false,
+                    vibrate: [ 300, 100, 300 ]
+                } );
+
+                sentNotifications.add( reminderKey );
+                console.log( `✅ Notificación 15min enviada: ${task.title}` );
+            }
+
+            // Hora exacta
+            const startKey = `${task.id}-start`;
+            if ( !sentNotifications.has( startKey ) &&
+                currentTimeInMinutes >= taskTimeInMinutes &&
+                currentTimeInMinutes < taskTimeInMinutes + 2 ) {
+
+                await showNotification( {
+                    title: `🔔 Es hora de: ${task.title}`,
+                    body: `Programada para ${task.time}`,
+                    tag: startKey,
+                    icon: '/images/IconLogo.png',
+                    requireInteraction: true,
+                    vibrate: [ 200, 50, 200, 50, 400 ],
+                    actions: [
+                        { action: 'view', title: 'Ver tarea', icon: '/images/IconLogo.png' }
+                    ]
+                } );
+
+                sentNotifications.add( startKey );
+                console.log( `✅ Notificación inicio enviada: ${task.title}` );
+            }
+
+            // 30 minutos tarde
+            const lateKey = `${task.id}-late`;
+            if ( !sentNotifications.has( lateKey ) &&
+                currentTimeInMinutes >= taskTimeInMinutes + 30 ) {
+
+                await showNotification( {
+                    title: `⚠️ Tarea Retrasada: ${task.title}`,
+                    body: 'Han pasado 30 minutos desde la hora programada',
+                    tag: lateKey,
+                    icon: '/images/IconLogo.png',
+                    requireInteraction: false,
+                    vibrate: [ 100, 100, 100, 100, 100 ]
+                } );
+
+                sentNotifications.add( lateKey );
+                console.log( `⚠️ Notificación retraso enviada: ${task.title}` );
+            }
+        }
+
+    } catch ( error ) {
+        console.error( '❌ Error verificando notificaciones:', error );
+    }
+}
+
+async function showNotification( options ) {
+    try {
+        await self.registration.showNotification( options.title, {
+            body: options.body,
+            icon: options.icon || '/images/IconLogo.png',
+            badge: '/images/favicon-192.png',
+            tag: options.tag,
+            requireInteraction: options.requireInteraction || false,
+            vibrate: options.vibrate || [ 200, 100, 200 ],
+            data: { timestamp: Date.now(), ...options.data },
+            actions: options.actions || []
+        } );
+
+        console.log( `✅ Notificación mostrada: ${options.title}` );
+    } catch ( error ) {
+        console.error( '❌ Error mostrando notificación:', error );
+    }
+}
+
 function formatDate( date ) {
     const year = date.getFullYear();
     const month = String( date.getMonth() + 1 ).padStart( 2, '0' );
@@ -249,288 +336,55 @@ function formatDate( date ) {
     return `${year}-${month}-${day}`;
 }
 
-async function sendNotification( options ) {
-    const defaultOptions = {
-        icon: '/images/IconLogo.png',
-        badge: '/images/favicon-192.png',
-        requireInteraction: false,
-        vibrate: [ 200, 100, 200 ],
-        data: { timestamp: Date.now() }
-    };
-
-    const finalOptions = { ...defaultOptions, ...options };
-    const tag = finalOptions.tag || finalOptions.data?.tag || finalOptions.title;
-
-    if ( tagWasShownRecently( tag ) ) {
-        console.log( '⚠️ Saltando notificación duplicada:', tag );
-        return;
-    }
-
-    markTagShown( tag );
-
-    try {
-        await self.registration.showNotification( finalOptions.title, finalOptions );
-        console.log( '✅ Notificación enviada:', finalOptions.title );
-        sentNotifications.add( tag );
-
-        // 🔥 NUEVO: Notificar a la app que se envió una notificación
-        notifyClientsOfNotification( tag, finalOptions );
-    } catch ( error ) {
-        console.error( '❌ Error enviando notificación:', error );
-    }
-}
-
-// 🔥 NUEVA FUNCIÓN: Notificar a todos los clientes
-async function notifyClientsOfNotification( tag, options ) {
-    try {
-        const allClients = await clients.matchAll( {
-            includeUncontrolled: true,
-            type: 'window'
-        } );
-
-        allClients.forEach( client => {
-            client.postMessage( {
-                type: 'NOTIFICATION_SENT',
-                data: {
-                    tag: tag,
-                    title: options.title,
-                    timestamp: Date.now()
-                }
-            } );
-        } );
-    } catch ( error ) {
-        console.error( 'Error notificando clientes:', error );
-    }
-}
-
-async function checkAndSendNotifications() {
-    if ( !currentUserId ) return;
-
-    const now = new Date();
-    const today = formatDate( now );
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-
-    const todayTasks = tasksCache[ today ] || [];
-
-    if ( todayTasks.length === 0 ) return;
-
-    // Verificar tareas con hora específica
-    for ( const task of todayTasks ) {
-        if ( !task.time || task.state === 'completed' ) continue;
-
-        const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
-        const taskTimeInMinutes = taskHours * 60 + taskMinutes;
-        const currentTimeInMinutes = currentHour * 60 + currentMinute;
-
-        // Recordatorio 15 minutos antes
-        const reminderKey = `${task.id}-15min`;
-        if ( !sentNotifications.has( reminderKey ) &&
-            currentTimeInMinutes >= taskTimeInMinutes - 15 &&
-            currentTimeInMinutes <= taskTimeInMinutes - 13 &&
-            task.state === 'pending' ) {
-
-            await sendNotification( {
-                title: `⏰ Recordatorio: ${task.title}`,
-                body: `Inicia en 15 minutos (${task.time})`,
-                tag: reminderKey,
-                requireInteraction: false,
-                vibrate: [ 300, 100, 300 ]
-            } );
-        }
-
-        // Notificación hora exacta
-        const startKey = `${task.id}-start`;
-        if ( !sentNotifications.has( startKey ) &&
-            currentTimeInMinutes >= taskTimeInMinutes &&
-            currentTimeInMinutes <= taskTimeInMinutes + 2 &&
-            task.state === 'pending' ) {
-
-            await sendNotification( {
-                title: `🔔 Es hora de: ${task.title}`,
-                body: `Programada para ${task.time}`,
-                tag: startKey,
-                requireInteraction: true,
-                vibrate: [ 200, 50, 200, 50, 400 ]
-            } );
-        }
-
-        // Notificación tarea retrasada
-        const lateKey = `${task.id}-late`;
-        if ( !sentNotifications.has( lateKey ) &&
-            currentTimeInMinutes >= taskTimeInMinutes + 30 &&
-            task.state !== 'completed' ) {
-
-            await sendNotification( {
-                title: `⚠️ Tarea Retrasada: ${task.title}`,
-                body: task.state === 'inProgress' ? 'Aún en proceso' : 'No iniciada - 30min de retraso',
-                tag: lateKey,
-                requireInteraction: false,
-                vibrate: [ 100, 100, 100, 100, 100 ]
-            } );
-        }
-    }
-
-    // Notificaciones resumen del día
-    await sendDailySummaryNotifications( todayTasks, currentHour, currentMinute );
-}
-
-async function sendDailySummaryNotifications( tasks, hour, minute ) {
-    const pendingTasks = tasks.filter( t => t.state === 'pending' );
-    const inProgressTasks = tasks.filter( t => t.state === 'inProgress' );
-    const totalActive = pendingTasks.length + inProgressTasks.length;
-
-    if ( !totalActive ) return;
-
-    // Buenos días (9:00)
-    if ( !sentNotifications.has( 'morning' ) && hour === 9 && minute <= 1 ) {
-        let message = '';
-        if ( pendingTasks.length > 0 ) {
-            message += `${pendingTasks.length} pendiente${pendingTasks.length > 1 ? 's' : ''}`;
-        }
-        if ( inProgressTasks.length > 0 ) {
-            message += ( message ? ' y ' : '' ) + `${inProgressTasks.length} en proceso`;
-        }
-
-        await sendNotification( {
-            title: '🌅 Buenos días',
-            body: `Tienes ${message} para hoy`,
-            tag: 'morning'
-        } );
-        sentNotifications.add( 'morning' );
-    }
-
-    // Mediodía (12:00)
-    if ( !sentNotifications.has( 'midday' ) && hour === 12 && minute <= 1 && pendingTasks.length > 0 ) {
-        await sendNotification( {
-            title: '🌞 Mediodía',
-            body: `${pendingTasks.length} tarea${pendingTasks.length > 1 ? 's' : ''} pendiente${pendingTasks.length > 1 ? 's' : ''}`,
-            tag: 'midday'
-        } );
-        sentNotifications.add( 'midday' );
-    }
-
-    // Final del día (18:00)
-    if ( !sentNotifications.has( 'evening' ) && hour === 18 && minute <= 1 && totalActive > 0 ) {
-        await sendNotification( {
-            title: '🌆 Final del día',
-            body: `${totalActive} tarea${totalActive > 1 ? 's' : ''} sin completar`,
-            tag: 'evening'
-        } );
-        sentNotifications.add( 'evening' );
-    }
-}
-
-async function scheduleNextCheck() {
-    if ( notificationCheckInterval ) clearInterval( notificationCheckInterval );
-
-    await checkAndSendNotifications();
-
-    notificationCheckInterval = setInterval( async () => {
-        await checkAndSendNotifications();
-    }, 30000 ); // Cada 30 segundos
-
-    console.log( '⏰ Verificaciones programadas cada 30 segundos' );
-}
-
 // ====================================
-// MANEJO DE NOTIFICACIONES FCM
+// MENSAJES DESDE LA APP
 // ====================================
-if ( messaging && typeof messaging.onBackgroundMessage === 'function' ) {
-    messaging.onBackgroundMessage( ( payload ) => {
-        try {
-            console.log( '📬 FCM onBackgroundMessage:', payload );
+self.addEventListener( 'message', async ( event ) => {
+    const { type, data } = event.data || {};
 
-            const title = payload.notification?.title || 'Recordatorio de Tarea';
-            const body = payload.notification?.body || '';
-            const icon = payload.notification?.icon || '/images/IconLogo.png';
-            const badge = payload.notification?.badge || '/images/favicon-192.png';
-            const tag = payload.data?.tag || payload.notification?.tag || `fcm-${Date.now()}`;
+    switch ( type ) {
+        case 'UPDATE_TASKS':
+            await saveTasksToDB( data.tasks );
+            console.log( '📝 Tareas actualizadas en SW' );
+            break;
 
-            if ( tagWasShownRecently( tag ) ) {
-                console.log( '⚠️ FCM: saltando duplicado tag:', tag );
-                return;
-            }
+        case 'CLEAR_TASK_NOTIFICATION':
+            const taskId = data.taskId;
+            sentNotifications.delete( `${taskId}-15min` );
+            sentNotifications.delete( `${taskId}-start` );
+            sentNotifications.delete( `${taskId}-late` );
+            console.log( `🧹 Notificaciones limpiadas: ${taskId}` );
+            break;
 
-            markTagShown( tag );
-
-            return self.registration.showNotification( title, {
-                body,
-                icon,
-                badge,
-                tag,
-                requireInteraction: true,
-                vibrate: [ 200, 100, 200 ],
-                data: payload.data || {}
-            } );
-        } catch ( err ) {
-            console.error( 'Error en onBackgroundMessage:', err );
-        }
-    } );
-}
-
-// PUSH RAW (backup)
-self.addEventListener( 'push', ( event ) => {
-    try {
-        if ( !event.data ) return;
-
-        let payloadJson = {};
-        try {
-            payloadJson = event.data.json();
-        } catch ( e ) {
-            payloadJson = { notification: { title: 'Notificación', body: event.data.text() } };
-        }
-
-        const title = payloadJson.notification?.title || 'Recordatorio de Tarea';
-        const body = payloadJson.notification?.body || '';
-        const icon = payloadJson.notification?.icon || '/images/IconLogo.png';
-        const badge = payloadJson.notification?.badge || '/images/favicon-192.png';
-        const tag = payloadJson.data?.tag || payloadJson.notification?.tag || `push-${Date.now()}`;
-
-        if ( tagWasShownRecently( tag ) ) {
-            console.log( '⚠️ push: saltando duplicado tag:', tag );
-            return;
-        }
-
-        markTagShown( tag );
-
-        event.waitUntil(
-            self.registration.showNotification( title, {
-                body,
-                icon,
-                badge,
-                tag,
-                requireInteraction: true,
-                vibrate: [ 200, 100, 200 ],
-                data: payloadJson.data || {}
-            } )
-        );
-    } catch ( err ) {
-        console.error( 'Error manejando push raw:', err );
+        case 'FORCE_CHECK':
+            await checkTaskNotifications();
+            break;
     }
 } );
 
+// ====================================
 // CLICK EN NOTIFICACIÓN
+// ====================================
 self.addEventListener( 'notificationclick', ( event ) => {
-    console.log( '🖱️ Notificación clickeada:', event.notification?.tag );
+    console.log( '🖱️ Click en notificación:', event.notification.tag );
 
-    try {
-        event.notification.close();
+    event.notification.close();
 
-        event.waitUntil(
-            clients.matchAll( { type: 'window', includeUncontrolled: true } ).then( ( clientList ) => {
+    event.waitUntil(
+        clients.matchAll( { type: 'window', includeUncontrolled: true } )
+            .then( clientList => {
                 for ( const client of clientList ) {
                     if ( 'focus' in client ) return client.focus();
                 }
                 if ( clients.openWindow ) return clients.openWindow( '/' );
             } )
-        );
-    } catch ( err ) {
-        console.error( 'Error en notificationclick:', err );
-    }
+    );
 } );
 
 // ====================================
 // INICIALIZACIÓN
 // ====================================
-console.log( '✅ Service Worker v4.0 cargado - Optimizado' );
+initDB().then( () => {
+    console.log( '✅ Service Worker v5.0 iniciado' );
+    startNotificationScheduler();
+} );
