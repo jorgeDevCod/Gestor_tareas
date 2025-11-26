@@ -4654,7 +4654,7 @@ function setupRealtimeSync() {
     return;
   }
 
-  // ✅ Limpiar listener anterior
+  // Limpiar listener anterior
   if ( firestoreListener ) {
     firestoreListener();
     firestoreListener = null;
@@ -4668,20 +4668,20 @@ function setupRealtimeSync() {
     .doc( currentUser.uid )
     .collection( "tasks" );
 
-  //  Incluir metadatos para detectar cambios del servidor
+  // LISTENER CON MANEJO CORRECTO DE ELIMINACIONES
   firestoreListener = userTasksRef.onSnapshot(
     { includeMetadataChanges: false }, // Solo cambios reales del servidor
     ( snapshot ) => {
-      // 🔥 NUEVO: Ignorar snapshots durante sync
+      // Ignorar snapshots durante sync
       if ( syncInProgress || window.syncBidirectionalInProgress ) {
         console.log( '⏳ Sync en progreso, ignorando snapshot' );
         return;
       }
 
-      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length );
+      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length, 'cambios' );
 
       let hasChanges = false;
-      const processedKeys = new Set(); // ← NUEVO: Evitar duplicados en mismo snapshot
+      const processedKeys = new Set();
 
       snapshot.docChanges().forEach( ( change ) => {
         const task = change.doc.data();
@@ -4689,12 +4689,13 @@ function setupRealtimeSync() {
         const taskId = task.id;
         const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
 
-        // 🔥 CRÍTICO: Evitar procesar mismo cambio múltiples veces
+        // Evitar procesar mismo cambio múltiples veces
         if ( processedKeys.has( uniqueKey ) ) {
           console.log( `⏭️ Cambio duplicado ignorado: ${task.title}` );
           return;
         }
 
+        // ========== AGREGAR O MODIFICAR TAREA ==========
         if ( change.type === "added" || change.type === "modified" ) {
           const localTask = tasks[ dateStr ]?.find( t =>
             t.id === taskId ||
@@ -4707,19 +4708,16 @@ function setupRealtimeSync() {
             description: task.description || "",
             time: task.time || "",
             completed: task.completed || false,
-            state: task.state || ( task.completed ? "completed" : "pending" ), // ✅ PRESERVAR ESTADO
+            state: task.state || ( task.completed ? "completed" : "pending" ),
             priority: task.priority || 3,
             lastModified: task.lastModified?.toMillis() || Date.now()
           };
 
-          // ✅ Solo actualizar si NO existe o es REALMENTE diferente
           if ( !localTask ) {
             if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
 
-            // Verificar que no haya duplicado por contenido
             const isDuplicate = tasks[ dateStr ].some( t =>
-              t.title === task.title &&
-              t.time === task.time
+              t.title === task.title && t.time === task.time
             );
 
             if ( !isDuplicate ) {
@@ -4731,7 +4729,6 @@ function setupRealtimeSync() {
               console.log( `⏭️ Tarea duplicada IGNORADA: ${task.title}` );
             }
           } else {
-            // Verificar si es REALMENTE diferente
             const isDifferent =
               localTask.title !== task.title ||
               localTask.description !== taskData.description ||
@@ -4748,54 +4745,97 @@ function setupRealtimeSync() {
                 processedKeys.add( uniqueKey );
                 console.log( `🔄 Tarea actualizada: ${task.title} - Estado: ${taskData.state}` );
               }
-            } else {
-              console.log( `⏭️ Tarea sin cambios: ${task.title}` );
             }
           }
         }
+        // ========== ELIMINAR TAREA (CORREGIDO) ==========
         else if ( change.type === "removed" ) {
-          if ( tasks[ dateStr ] ) {
-            const initialLength = tasks[ dateStr ].length;
-            tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+          console.log( `🗑️ Eliminación detectada: ${task.title} (ID: ${taskId})` );
 
+          if ( tasks[ dateStr ] && tasks[ dateStr ].length > 0 ) {
+            const initialLength = tasks[ dateStr ].length;
+
+            // MÉTODO 1: Eliminar por ID exacto
+            tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
+              const shouldRemove = t.id === taskId;
+              if ( shouldRemove ) {
+                console.log( `  ✓ Tarea eliminada por ID: ${t.title}` );
+              }
+              return !shouldRemove;
+            } );
+
+            // MÉTODO 2: Si no se eliminó por ID, intentar por contenido
+            if ( tasks[ dateStr ].length === initialLength ) {
+              console.log( `  ⚠️ No se encontró por ID, buscando por contenido...` );
+              tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
+                const shouldRemove = ( t.title === task.title && t.time === task.time );
+                if ( shouldRemove ) {
+                  console.log( `  ✓ Tarea eliminada por contenido: ${t.title}` );
+                }
+                return !shouldRemove;
+              } );
+            }
+
+            // Verificar si se eliminó algo
             if ( tasks[ dateStr ].length < initialLength ) {
-              console.log( `🗑️ Tarea eliminada: ${task.title}` );
               hasChanges = true;
               processedKeys.add( uniqueKey );
+
+              // Limpiar notificaciones
+              clearTaskNotifications( taskId );
+
+              // Registrar eliminación
               addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+
+              console.log( `✅ Tarea eliminada del local storage: ${task.title}` );
+            } else {
+              console.warn( `⚠️ NO se pudo eliminar la tarea: ${task.title} (ID: ${taskId})` );
             }
 
+            // Limpiar día si quedó vacío
             if ( tasks[ dateStr ].length === 0 ) {
               delete tasks[ dateStr ];
+              console.log( `🗑️ Día ${dateStr} eliminado completamente (sin tareas)` );
             }
+          } else {
+            console.warn( `⚠️ No hay tareas para eliminar en ${dateStr}` );
           }
         }
       } );
 
+      // ========== ACTUALIZAR UI SI HUBO CAMBIOS ==========
       if ( hasChanges ) {
+        console.log( '💾 Guardando cambios y actualizando UI...' );
+
         saveTasks();
         renderCalendar();
         updateProgress();
 
+        // Actualizar panel si está abierto
         if ( selectedDateForPanel ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
         }
 
         showNotification( 'Tareas actualizadas desde otro dispositivo', 'info' );
+      } else {
+        console.log( 'ℹ️ Sin cambios para aplicar' );
       }
     },
     ( error ) => {
-      console.error( '❌ Error en listener:', error );
+      console.error( '❌ Error en listener de sync:', error );
+
+      // Reintentar después de 5 segundos
       setTimeout( () => {
         if ( currentUser && isOnline ) {
+          console.log( '🔄 Reintentando configurar listener...' );
           setupRealtimeSync();
         }
       }, 5000 );
     }
   );
 
-  console.log( '✅ Listener anti-duplicados configurado' );
+  console.log( '✅ Listener anti-duplicados con eliminaciones configurado' );
 }
 
 //showQuickAddTask con sync automático
