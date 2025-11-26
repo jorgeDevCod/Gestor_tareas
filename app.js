@@ -814,20 +814,22 @@ async function processSyncQueue() {
         switch ( op.operation ) {
           case "upsert":
             if ( op.task ) {
-              // NUEVO: Solo hacer set si no existe o es diferente
-              if ( !existingTaskIds.has( taskDocId ) ) {
+              // NUEVO: Verificar duplicados antes de insertar
+              const taskDocId = `${op.dateStr}_${op.task?.id}`;
+
+              if ( !existingTaskIds.has( taskDocId ) && !processedTaskIds.has( taskDocId ) ) {
                 batch.set( taskRef, {
                   ...op.task,
                   date: op.dateStr,
                   lastModified: new Date(),
-                  syncVersion: Date.now() // ← NUEVO: Version tracking
-                }, { merge: false } ); // ← merge: false evita conflictos
+                  syncVersion: Date.now()
+                }, { merge: false } );
 
                 processedTaskIds.add( taskDocId );
                 processedCount++;
-                console.log( `Upsert programado: ${op.task.title}` );
+                console.log( `✅ Upsert programado: ${op.task.title}` );
               } else {
-                console.log( `⏭️ Tarea ya existe, saltando: ${op.task.title}` );
+                console.log( `⏭️ Tarea ya existe o procesada: ${op.task.title}` );
               }
             }
             break;
@@ -1166,6 +1168,8 @@ async function signInWithGoogle() {
         console.log( 'Login exitoso:', result.user.email );
 
         currentUser = result.user;
+
+        resetListenerState();
 
         localStorage.setItem( 'firebase_auth_active', 'true' );
         localStorage.setItem( 'firebase_user_email', result.user.email );
@@ -3546,6 +3550,12 @@ function generateTaskFingerprint( tasks ) {
   }
 }
 
+// Resetear el listener cuando se hace login
+function resetListenerState() {
+  window.initialSnapshotProcessed = false;
+  console.log( '🔄 Estado del listener reseteado' );
+}
+
 //Sincronización bidireccional mejorada
 async function syncFromFirebaseBidirectional() {
   if ( !currentUser || !isOnline || syncInProgress ) {
@@ -3553,7 +3563,6 @@ async function syncFromFirebaseBidirectional() {
     return;
   }
 
-  // NUEVO: Evitar múltiples syncs simultáneos
   if ( window.syncBidirectionalInProgress ) {
     console.log( '⏳ Sync bidireccional ya en progreso' );
     return;
@@ -3564,7 +3573,7 @@ async function syncFromFirebaseBidirectional() {
   updateSyncIndicator( "syncing" );
 
   try {
-    console.log( '🔄 Iniciando sync bidireccional ANTI-DUPLICADOS...' );
+    console.log( '🔄 Iniciando sync bidireccional ANTI-DUPLICADOS v2...' );
 
     const userTasksRef = db
       .collection( "users" )
@@ -3574,13 +3583,14 @@ async function syncFromFirebaseBidirectional() {
     const snapshot = await userTasksRef.get();
 
     const remoteTasks = {};
-    const remoteTaskKeys = new Set(); // ← NUEVO: Tracking por key única
+    const remoteTaskMap = new Map(); // ID -> task
+    const remoteTaskKeys = new Set(); // date:title:time
 
     if ( !snapshot.empty ) {
       snapshot.forEach( ( doc ) => {
         const task = doc.data();
         const dateStr = task.date;
-        const uniqueKey = `${dateStr}:${task.title}:${task.time}`; // ← NUEVO: Key por contenido
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
 
         if ( !remoteTasks[ dateStr ] ) {
           remoteTasks[ dateStr ] = [];
@@ -3592,59 +3602,54 @@ async function syncFromFirebaseBidirectional() {
           description: task.description || "",
           time: task.time || "",
           completed: task.completed || false,
-          state: task.state || task.completed ? "completed" : "pending",
+          state: task.state || ( task.completed ? "completed" : "pending" ),
           priority: task.priority || 3,
           lastModified: task.lastModified?.toMillis() || Date.now()
         };
 
         remoteTasks[ dateStr ].push( taskData );
+        remoteTaskMap.set( task.id, taskData );
         remoteTaskKeys.add( uniqueKey );
       } );
     }
-
-    // NUEVO: Crear índice de tareas locales por contenido
-    const localTaskKeys = new Map(); // key -> {dateStr, task}
-    Object.keys( tasks ).forEach( ( dateStr ) => {
-      const dayTasks = tasks[ dateStr ] || [];
-      dayTasks.forEach( ( task ) => {
-        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
-        localTaskKeys.set( uniqueKey, { dateStr, task } );
-      } );
-    } );
 
     let tasksAdded = 0;
     let tasksUpdated = 0;
     let tasksDeleted = 0;
 
-    // PASO 1: Subir tareas locales que NO están en remoto (por contenido)
+    // PASO 1: Subir tareas locales que NO están en remoto
     const uploadBatch = db.batch();
     let uploadCount = 0;
 
-    for ( const [ uniqueKey, { dateStr, task } ] of localTaskKeys ) {
-      // Solo subir si NO existe en remoto (comparación por contenido)
-      if ( !remoteTaskKeys.has( uniqueKey ) ) {
-        const taskDocId = `${dateStr}_${task.id}`;
-        const taskRef = userTasksRef.doc( taskDocId );
+    for ( const [ dateStr, dayTasks ] of Object.entries( tasks ) ) {
+      for ( const task of dayTasks ) {
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
 
-        uploadBatch.set( taskRef, {
-          ...task,
-          date: dateStr,
-          lastModified: new Date(),
-          syncVersion: Date.now()
-        }, { merge: false } ); // ← merge: false crítico
+        // Solo subir si NO existe en remoto (por contenido)
+        if ( !remoteTaskKeys.has( uniqueKey ) ) {
+          const taskDocId = `${dateStr}_${task.id}`;
+          const taskRef = userTasksRef.doc( taskDocId );
 
-        uploadCount++;
-        console.log( `📤 Subiendo: ${task.title}` );
+          uploadBatch.set( taskRef, {
+            ...task,
+            date: dateStr,
+            lastModified: new Date(),
+            syncVersion: Date.now()
+          }, { merge: false } );
+
+          uploadCount++;
+          console.log( `📤 Subiendo: ${task.title}` );
+        }
       }
     }
 
     if ( uploadCount > 0 ) {
       await uploadBatch.commit();
       tasksAdded = uploadCount;
-      console.log( `${uploadCount} tareas subidas a Firebase` );
+      console.log( `✅ ${uploadCount} tareas subidas` );
     }
 
-    // PASO 2: Descargar tareas remotas que NO están localmente (por contenido)
+    // PASO 2: Descargar tareas remotas que NO están localmente
     Object.keys( remoteTasks ).forEach( ( dateStr ) => {
       if ( !tasks[ dateStr ] ) {
         tasks[ dateStr ] = [];
@@ -3653,18 +3658,19 @@ async function syncFromFirebaseBidirectional() {
       remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
         const uniqueKey = `${dateStr}:${remoteTask.title}:${remoteTask.time}`;
 
-        // Solo agregar si NO existe localmente (por contenido)
-        if ( !localTaskKeys.has( uniqueKey ) ) {
-          // Verificación adicional por ID
-          const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
+        // Verificar si existe localmente (por contenido Y por ID)
+        const existsByContent = tasks[ dateStr ].some( t =>
+          t.title === remoteTask.title && t.time === remoteTask.time
+        );
 
-          if ( !existsById ) {
-            tasks[ dateStr ].push( remoteTask );
-            tasksUpdated++;
-            console.log( `📥 Descargada: ${remoteTask.title}` );
-          } else {
-            console.log( `⏭️ Tarea duplicada ignorada: ${remoteTask.title}` );
-          }
+        const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
+
+        if ( !existsByContent && !existsById ) {
+          tasks[ dateStr ].push( remoteTask );
+          tasksUpdated++;
+          console.log( `📥 Descargada: ${remoteTask.title}` );
+        } else {
+          console.log( `⏭️ Ya existe localmente: ${remoteTask.title}` );
         }
       } );
     } );
@@ -3678,36 +3684,34 @@ async function syncFromFirebaseBidirectional() {
 
       tasks[ dateStr ].forEach( ( task, index ) => {
         const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
-        const existsInRemote = remoteTaskKeys.has( uniqueKey );
+        const existsInRemote = remoteTaskKeys.has( uniqueKey ) || remoteTaskMap.has( task.id );
 
-        // También verificar por ID
-        const existsByIdInRemote = remoteTaskMap.has( task.id );
-
-        if ( !existsInRemote && !existsByIdInRemote ) {
-          console.log( `🗑️ Tarea eliminada (no existe en remoto): ${task.title}` );
+        if ( !existsInRemote && !wasTaskDeleted( dateStr, task ) ) {
+          console.log( `🔍 Eliminación detectada: ${task.title}` );
           tasksToRemove.push( index );
 
-          // Limpiar notificaciones
+          registerDeletedTask( dateStr, task );
           clearTaskNotifications( task.id );
-
-          // Registrar eliminación
           addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
-          tasksDeleted++;
         }
       } );
 
-      // Eliminar en orden inverso para no afectar índices
-      tasksToRemove.reverse().forEach( index => {
-        tasks[ dateStr ].splice( index, 1 );
-      } );
+      // Eliminar en orden inverso
+      if ( tasksToRemove.length > 0 ) {
+        tasksToRemove.reverse().forEach( index => {
+          const removedTask = tasks[ dateStr ][ index ];
+          console.log( `🗑️ Eliminando: ${removedTask.title}` );
+          tasks[ dateStr ].splice( index, 1 );
+          tasksDeleted++;
+        } );
 
-      if ( tasks[ dateStr ].length === 0 ) {
-        delete tasks[ dateStr ];
-        console.log( `🗑️ Día ${dateStr} eliminado completamente` );
+        if ( tasks[ dateStr ].length === 0 ) {
+          delete tasks[ dateStr ];
+        }
       }
     } );
 
-    // PASO 4: Guardar cambios
+    // PASO 4: Guardar y actualizar UI
     if ( tasksAdded > 0 || tasksUpdated > 0 || tasksDeleted > 0 ) {
       saveTasks();
       renderCalendar();
@@ -3725,7 +3729,7 @@ async function syncFromFirebaseBidirectional() {
 
       showNotification( `Sincronización: ${message.join( ', ' )}`, "success" );
     } else {
-      console.log( 'Todo sincronizado - sin cambios' );
+      console.log( '✅ Todo sincronizado - sin cambios' );
     }
 
     lastFullSyncTime = Date.now();
@@ -4661,197 +4665,101 @@ function setupRealtimeSync() {
   firestoreListener = userTasksRef.onSnapshot(
     { includeMetadataChanges: false },
     ( snapshot ) => {
-      // Ignorar durante sync
-      if ( syncInProgress || window.syncBidirectionalInProgress ) {
+      // CRÍTICO: Ignorar el primer snapshot (carga inicial)
+      if ( !window.initialSnapshotProcessed ) {
+        window.initialSnapshotProcessed = true;
+        console.log( '📸 Snapshot inicial ignorado' );
+        return;
+      }
+
+      // Ignorar durante sync bidireccional
+      if ( syncInProgress || window.syncBidirectionalInProgress || isSyncing ) {
         console.log( '⏳ Sync en progreso, ignorando snapshot' );
         return;
       }
 
-      const remoteTaskIds = new Set();
-      const remoteTaskHashes = new Set();
-
-      snapshot.docs.forEach( doc => {
-        const task = doc.data();
-        remoteTaskIds.add( task.id );
-        remoteTaskHashes.add( getTaskHash( task.date, task.title, task.time ) );
-      } );
-
-      console.log( '📡 Snapshot:', snapshot.docChanges().length, 'cambios directos' );
+      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length, 'cambios' );
 
       let hasChanges = false;
       let tasksDeleted = 0;
       let tasksAdded = 0;
       let tasksUpdated = 0;
-      const processedKeys = new Set();
-      const affectedDates = new Set(); // NUEVO: Tracking de fechas afectadas
+      const affectedDates = new Set();
 
-      // ========== PROCESAR CAMBIOS DIRECTOS ==========
+      // SOLO procesar cambios tipo "removed"
       snapshot.docChanges().forEach( ( change ) => {
+        if ( change.type !== "removed" ) {
+          return; // Ignorar added/modified - se manejan con sync bidireccional
+        }
+
         const task = change.doc.data();
         const dateStr = task.date;
         const taskId = task.id;
-        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
 
-        if ( processedKeys.has( uniqueKey ) ) return;
+        console.log( `🗑️ Eliminación detectada: ${task.title} (${taskId})` );
 
-        // AGREGAR/MODIFICAR
-        if ( change.type === "added" || change.type === "modified" ) {
-          if ( wasTaskDeleted( dateStr, task ) ) {
-            console.log( `⏭️ Tarea previamente eliminada, ignorando: ${task.title}` );
-            return;
-          }
-
-          const localTask = tasks[ dateStr ]?.find( t =>
-            t.id === taskId || ( t.title === task.title && t.time === task.time )
-          );
-
-          const taskData = {
-            id: task.id,
-            title: task.title,
-            description: task.description || "",
-            time: task.time || "",
-            completed: task.completed || false,
-            state: task.state || ( task.completed ? "completed" : "pending" ),
-            priority: task.priority || 3,
-            lastModified: task.lastModified?.toMillis() || Date.now()
-          };
-
-          if ( !localTask ) {
-            if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-
-            const isDuplicate = tasks[ dateStr ].some( t =>
-              t.title === task.title && t.time === task.time
-            );
-
-            if ( !isDuplicate ) {
-              tasks[ dateStr ].push( taskData );
-              hasChanges = true;
-              tasksAdded++;
-              processedKeys.add( uniqueKey );
-              affectedDates.add( dateStr ); // NUEVO
-              console.log( `📥 Tarea agregada: ${task.title}` );
-            }
-          } else {
-            const isDifferent =
-              localTask.title !== task.title ||
-              localTask.description !== taskData.description ||
-              localTask.time !== taskData.time ||
-              localTask.state !== taskData.state ||
-              localTask.priority !== taskData.priority ||
-              localTask.completed !== taskData.completed;
-
-            if ( isDifferent ) {
-              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
-              if ( index >= 0 ) {
-                tasks[ dateStr ][ index ] = taskData;
-                hasChanges = true;
-                tasksUpdated++;
-                processedKeys.add( uniqueKey );
-                affectedDates.add( dateStr ); // NUEVO
-                console.log( `🔄 Tarea actualizada: ${task.title}` );
-              }
-            }
-          }
+        if ( !tasks[ dateStr ] ) {
+          console.log( '⏭️ Fecha no existe localmente, ignorando' );
+          return;
         }
-        // ELIMINAR
-        else if ( change.type === "removed" ) {
-          console.log( `🗑️ Eliminación remota: ${task.title}` );
 
-          if ( tasks[ dateStr ] ) {
-            const initialLength = tasks[ dateStr ].length;
+        const initialLength = tasks[ dateStr ].length;
 
-            tasks[ dateStr ] = tasks[ dateStr ].filter( t =>
-              t.id !== taskId && !( t.title === task.title && t.time === task.time )
-            );
+        // Eliminar por ID o por contenido
+        tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
+          const shouldKeep = t.id !== taskId &&
+            !( t.title === task.title && t.time === task.time );
 
-            if ( tasks[ dateStr ].length < initialLength ) {
-              hasChanges = true;
-              tasksDeleted++;
-              processedKeys.add( uniqueKey );
-              affectedDates.add( dateStr ); // NUEVO
-
-              registerDeletedTask( dateStr, task );
-              clearTaskNotifications( taskId );
-              addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
-
-              // NUEVO: Animación de eliminación en tiempo real
-              animateTaskDeletion( dateStr, taskId, task.title );
-
-              console.log( `✅ Tarea eliminada localmente: ${task.title}` );
-            }
-
-            if ( tasks[ dateStr ].length === 0 ) {
-              delete tasks[ dateStr ];
-            }
+          if ( !shouldKeep ) {
+            console.log( `✂️ Eliminando tarea local: ${t.title}` );
           }
-        }
-      } );
 
-      // ========== DETECTAR ELIMINACIONES INDIRECTAS ==========
-      Object.keys( tasks ).forEach( dateStr => {
-        if ( !tasks[ dateStr ] ) return;
-
-        const tasksToRemove = [];
-
-        tasks[ dateStr ].forEach( ( task, index ) => {
-          const taskHash = getTaskHash( dateStr, task.title, task.time );
-          const existsInRemote = remoteTaskIds.has( task.id ) || remoteTaskHashes.has( taskHash );
-
-          if ( !existsInRemote && !wasTaskDeleted( dateStr, task ) ) {
-            console.log( `🔍 Detectada eliminación indirecta: ${task.title}` );
-            tasksToRemove.push( index );
-
-            registerDeletedTask( dateStr, task );
-            clearTaskNotifications( task.id );
-            addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
-            affectedDates.add( dateStr ); // NUEVO
-          }
+          return shouldKeep;
         } );
 
-        if ( tasksToRemove.length > 0 ) {
-          tasksToRemove.reverse().forEach( index => {
-            const removedTask = tasks[ dateStr ][ index ];
-            console.log( `🗑️ Eliminando: ${removedTask.title}` );
+        if ( tasks[ dateStr ].length < initialLength ) {
+          hasChanges = true;
+          tasksDeleted++;
+          affectedDates.add( dateStr );
 
-            // NUEVO: Animación antes de eliminar
-            animateTaskDeletion( dateStr, removedTask.id, removedTask.title );
+          // Registros y limpieza
+          registerDeletedTask( dateStr, task );
+          clearTaskNotifications( taskId );
+          addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
-            tasks[ dateStr ].splice( index, 1 );
-            tasksDeleted++;
-            hasChanges = true;
-          } );
+          // Animación visual
+          animateTaskDeletion( dateStr, taskId, task.title );
 
-          if ( tasks[ dateStr ].length === 0 ) {
-            delete tasks[ dateStr ];
-          }
+          console.log( `✅ Tarea eliminada localmente: ${task.title}` );
+        }
+
+        // Limpiar fecha vacía
+        if ( tasks[ dateStr ].length === 0 ) {
+          delete tasks[ dateStr ];
+          console.log( `🗑️ Fecha ${dateStr} eliminada completamente` );
         }
       } );
 
-      // ========== ACTUALIZAR UI ==========
+      // Actualizar UI solo si hubo cambios
       if ( hasChanges ) {
-        console.log( `💾 Cambios detectados - Agregadas: ${tasksAdded}, Actualizadas: ${tasksUpdated}, Eliminadas: ${tasksDeleted}` );
+        console.log( `💾 ${tasksDeleted} tarea(s) eliminada(s)` );
 
         saveTasks();
         renderCalendar();
         updateProgress();
 
-        // NUEVO: Actualizar panel SOLO si la fecha afectada es la que está abierta
+        // Actualizar panel si está afectado
         if ( selectedDateForPanel && affectedDates.has( selectedDateForPanel ) ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
-          console.log( `🔄 Actualizando panel para fecha afectada: ${selectedDateForPanel}` );
+          console.log( `🔄 Actualizando panel: ${selectedDateForPanel}` );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
         }
 
-        // NOTIFICACIÓN MEJORADA
+        // Notificación
         if ( tasksDeleted > 0 ) {
           showSyncNotification(
             `🗑️ ${tasksDeleted} tarea${tasksDeleted > 1 ? 's' : ''} eliminada${tasksDeleted > 1 ? 's' : ''} en otro dispositivo`,
             'warning'
-          );
-        } else if ( tasksAdded > 0 || tasksUpdated > 0 ) {
-          showSyncNotification(
-            `✅ ${tasksAdded + tasksUpdated} tarea${tasksAdded + tasksUpdated > 1 ? 's' : ''} sincronizada${tasksAdded + tasksUpdated > 1 ? 's' : ''}`,
-            'success'
           );
         }
       }
@@ -4866,7 +4774,7 @@ function setupRealtimeSync() {
     }
   );
 
-  console.log( '✅ Listener configurado con tracking de eliminaciones' );
+  console.log( '✅ Listener configurado (solo eliminaciones)' );
 }
 
 function showSyncNotification( message, type = 'info' ) {
@@ -6229,6 +6137,54 @@ function clearAll() {
   showNotification( `${totalTasks} tareas eliminadas del calendario`, "success" );
 }
 
+// Ejecutar limpieza inteligente al cargar
+async function smartCleanupDuplicates() {
+  console.log( '🧹 Verificando duplicados...' );
+
+  let cleaned = 0;
+
+  Object.keys( tasks ).forEach( dateStr => {
+    if ( !tasks[ dateStr ] ) return;
+
+    const seen = new Map(); // title:time -> task (el más reciente)
+    const uniqueTasks = [];
+
+    // Ordenar por ID (timestamp) para quedarnos con el más reciente
+    const sortedTasks = tasks[ dateStr ].sort( ( a, b ) => {
+      const aTime = parseInt( a.id.split( '-' ).pop() ) || 0;
+      const bTime = parseInt( b.id.split( '-' ).pop() ) || 0;
+      return bTime - aTime; // Más reciente primero
+    } );
+
+    sortedTasks.forEach( task => {
+      const key = `${task.title}:${task.time}`;
+
+      if ( !seen.has( key ) ) {
+        seen.set( key, task );
+        uniqueTasks.push( task );
+      } else {
+        console.log( `🗑️ Duplicado detectado: ${task.title}` );
+        cleaned++;
+      }
+    } );
+
+    tasks[ dateStr ] = uniqueTasks;
+
+    if ( tasks[ dateStr ].length === 0 ) {
+      delete tasks[ dateStr ];
+    }
+  } );
+
+  if ( cleaned > 0 ) {
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+    console.log( `✅ ${cleaned} duplicados eliminados` );
+  }
+
+  return cleaned;
+}
+
 //Auto-sincronización periódica más inteligente
 setInterval(
   () => {
@@ -6532,6 +6488,9 @@ document.addEventListener( "DOMContentLoaded", async function () {
   loadTasks();
   loadPermissions();
 
+  // NUEVO: Limpiar duplicados al iniciar
+  await smartCleanupDuplicates();
+
   renderCalendar();
   updateProgress();
   setupEventListeners();
@@ -6541,10 +6500,10 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   initNotifications();
 
-  //  Inicializar panel DESPUÉS de cargar todo
   setTimeout( () => {
+    console.log( '📅 Ejecutando initializeTodayPanel...' );
     initializeTodayPanel();
-  }, 1000 );
+  }, 1500 );
 
   // NUEVO: NO inicializar Firebase automáticamente
   console.log( '⏸️ Firebase en espera (se inicializará al hacer login)' );
