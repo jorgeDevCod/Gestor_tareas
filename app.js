@@ -18,6 +18,7 @@ let lastDeletedTask = null;
 let lastDeletedDate = null;
 let isOnline = navigator.onLine;
 let currentUser = null;
+let deletedTasksRegistry = JSON.parse( localStorage.getItem( 'deleted_tasks_registry' ) || '{}' );
 let db = null;
 let auth = null;
 let authReady = false;
@@ -29,6 +30,9 @@ let syncInProgress = false;
 let localTaskFingerprint = ''; // Hash de las tareas locales
 let notificationInterval = null;
 let sentNotifications = new Set();
+// install sw
+let deferredPrompt;
+let installButtonShown = false;
 let notificationStatus = {
   morning: false,
   midday: false,
@@ -90,12 +94,6 @@ const PRIORITY_LEVELS = {
     color: "#6B7280",
   },
 };
-
-
-// install sw
-let deferredPrompt;
-let installButtonShown = false;
-
 
 // REGISTRO DEL SERVICE WORKER - Evitar duplicados
 if ( 'serviceWorker' in navigator ) {
@@ -364,7 +362,6 @@ function goToTask( dateStr, taskId ) {
 
   // Scroll al panel
   setTimeout( () => {
-    scrollToPanelSmoothly();
 
     // Highlight de la tarea
     const taskElement = document.querySelector( `[data-task-id="${taskId}"]` );
@@ -377,6 +374,38 @@ function goToTask( dateStr, taskId ) {
       }, 2000 );
     }
   }, 300 );
+}
+
+// Función para generar hash único de tarea
+function getTaskHash( dateStr, title, time ) {
+  return `${dateStr}:${title}:${time}`;
+}
+
+// Registrar tarea eliminada
+function registerDeletedTask( dateStr, task ) {
+  const hash = getTaskHash( dateStr, task.title, task.time );
+  deletedTasksRegistry[ hash ] = {
+    taskId: task.id,
+    title: task.title,
+    dateStr: dateStr,
+    deletedAt: Date.now()
+  };
+
+  // Limpiar registros antiguos (más de 30 días)
+  const thirtyDaysAgo = Date.now() - ( 30 * 24 * 60 * 60 * 1000 );
+  Object.keys( deletedTasksRegistry ).forEach( key => {
+    if ( deletedTasksRegistry[ key ].deletedAt < thirtyDaysAgo ) {
+      delete deletedTasksRegistry[ key ];
+    }
+  } );
+
+  localStorage.setItem( 'deleted_tasks_registry', JSON.stringify( deletedTasksRegistry ) );
+}
+
+// Verificar si una tarea fue eliminada
+function wasTaskDeleted( dateStr, task ) {
+  const hash = getTaskHash( dateStr, task.title, task.time );
+  return deletedTasksRegistry.hasOwnProperty( hash );
 }
 
 function isPWAInstalled() {
@@ -2388,7 +2417,6 @@ function initializeTodayPanel() {
     window.navigator.standalone === true ||
     window.location.search.includes( 'pwa=true' );
 
-  // NUEVO: Mostrar panel SI hay tareas pendientes o es desktop
   const hasPendingTasks = todayTasks.some( task =>
     task.state !== 'completed'
   );
@@ -2398,13 +2426,6 @@ function initializeTodayPanel() {
   if ( shouldShowAuto || todayTasks.length > 0 ) {
     console.log( `📅 Abriendo panel automático - Tareas: ${todayTasks.length}, Pendientes: ${hasPendingTasks}` );
     showDailyTaskPanel( today, todayDate.getDate() );
-
-    // Scroll suave después de un delay
-    setTimeout( () => {
-      scrollToPanelSmoothly();
-    }, 500 );
-  } else {
-    console.log( `📅 Panel NO se abre - Sin tareas para hoy` );
   }
 }
 
@@ -2885,38 +2906,31 @@ function createDayElement( day, dateStr, dayTasks ) {
   dayElement.dataset.date = dateStr;
 
   dayElement.innerHTML = `
-        <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
-        <div class="space-y-1">
-            ${dayTasks
+    <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
+    <div class="space-y-1">
+      ${dayTasks
       .slice( 0, 2 )
       .map( ( task ) => createTaskElement( task, dateStr ) )
       .join( "" )}
-            ${dayTasks.length > 2
-      ? `
-                <div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors"
-                     onclick="showDailyTaskPanel('${dateStr}', ${day})">
-                    +${dayTasks.length - 2} más
-                </div>
-            `
-      : ""
-    }
-        </div>
-        ${!isPastDate
-      ? `
-            <button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
-                    class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
-                    title="Agregar tarea rápida">
-                <i class="fas fa-plus"></i>
-            </button>
-        `
-      : ""
-    }
-    `;
+      ${dayTasks.length > 2
+      ? `<div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors"
+             onclick="showDailyTaskPanel('${dateStr}', ${day})">
+            +${dayTasks.length - 2} más
+          </div>`
+      : ""}
+    </div>
+    ${!isPastDate
+      ? `<button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
+                class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
+                title="Agregar tarea rápida">
+            <i class="fas fa-plus"></i>
+        </button>`
+      : ""}
+  `;
 
   dayElement.addEventListener( "click", ( e ) => {
     if ( !e.target.closest( ".task-item" ) && !e.target.closest( "button" ) ) {
       showDailyTaskPanel( dateStr, day );
-      scrollToPanelSmoothly(); // ← AGREGAR ESTA LÍNEA
     }
   } );
 
@@ -3024,7 +3038,6 @@ function showDailyTaskPanel( dateStr, day ) {
     addQuickTaskBtn.style.display = isPastDate ? "none" : "flex";
   }
 
-  // ASEGURAR que se muestre el panel
   panel.classList.remove( "hidden" );
 }
 
@@ -3828,7 +3841,10 @@ function executeSingleDelete( dateStr, taskId, task ) {
     }, 100 );
   }
 
-  // Registrar eliminación
+  // REGISTRAR ELIMINACIÓN ANTES DE BORRAR
+  registerDeletedTask( dateStr, task );
+
+  // Registrar en log
   addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
   // Limpiar notificaciones
@@ -3844,7 +3860,6 @@ function executeSingleDelete( dateStr, taskId, task ) {
   renderCalendar();
   updateProgress();
 
-  // Actualizar panel si está abierto
   if ( selectedDateForPanel === dateStr ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
@@ -3852,12 +3867,10 @@ function executeSingleDelete( dateStr, taskId, task ) {
 
   showNotification( "Tarea eliminada exitosamente", "success" );
 
-  // Forzar sync inmediato de la eliminación
   if ( currentUser && isOnline ) {
-    console.log( '🔄 Forzando sync de eliminación...' );
     setTimeout( () => {
       processSyncQueue().then( () => {
-        console.log( 'Eliminación sincronizada con Firebase' );
+        console.log( '✅ Eliminación sincronizada' );
       } );
     }, 500 );
   }
@@ -4661,45 +4674,59 @@ function setupRealtimeSync() {
     console.log( '🔇 Listener anterior desconectado' );
   }
 
-  console.log( '👂 Configurando listener MEJORADO con eliminaciones...' );
+  console.log( '👂 Configurando listener con tracking de eliminaciones...' );
 
   const userTasksRef = db
     .collection( "users" )
     .doc( currentUser.uid )
     .collection( "tasks" );
 
-  // LISTENER CON MANEJO CORRECTO DE ELIMINACIONES
   firestoreListener = userTasksRef.onSnapshot(
-    { includeMetadataChanges: false }, // Solo cambios reales del servidor
+    { includeMetadataChanges: false },
     ( snapshot ) => {
-      // Ignorar snapshots durante sync
+      // Ignorar durante sync
       if ( syncInProgress || window.syncBidirectionalInProgress ) {
         console.log( '⏳ Sync en progreso, ignorando snapshot' );
         return;
       }
 
-      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length, 'cambios' );
+      // NUEVO: Crear snapshot de IDs remotos ACTUALES
+      const remoteTaskIds = new Set();
+      const remoteTaskHashes = new Set();
+
+      snapshot.docs.forEach( doc => {
+        const task = doc.data();
+        remoteTaskIds.add( task.id );
+        remoteTaskHashes.add( getTaskHash( task.date, task.title, task.time ) );
+      } );
+
+      console.log( '📡 Snapshot:', snapshot.docChanges().length, 'cambios directos' );
 
       let hasChanges = false;
+      let tasksDeleted = 0;
+      let tasksAdded = 0;
+      let tasksUpdated = 0;
       const processedKeys = new Set();
 
+      // ========== PROCESAR CAMBIOS DIRECTOS ==========
       snapshot.docChanges().forEach( ( change ) => {
         const task = change.doc.data();
         const dateStr = task.date;
         const taskId = task.id;
         const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
 
-        // Evitar procesar mismo cambio múltiples veces
-        if ( processedKeys.has( uniqueKey ) ) {
-          console.log( `⏭️ Cambio duplicado ignorado: ${task.title}` );
-          return;
-        }
+        if ( processedKeys.has( uniqueKey ) ) return;
 
-        // ========== AGREGAR O MODIFICAR TAREA ==========
+        // AGREGAR/MODIFICAR
         if ( change.type === "added" || change.type === "modified" ) {
+          // Verificar si fue eliminada antes
+          if ( wasTaskDeleted( dateStr, task ) ) {
+            console.log( `⏭️ Tarea previamente eliminada, ignorando: ${task.title}` );
+            return;
+          }
+
           const localTask = tasks[ dateStr ]?.find( t =>
-            t.id === taskId ||
-            ( t.title === task.title && t.time === task.time )
+            t.id === taskId || ( t.title === task.title && t.time === task.time )
           );
 
           const taskData = {
@@ -4723,10 +4750,9 @@ function setupRealtimeSync() {
             if ( !isDuplicate ) {
               tasks[ dateStr ].push( taskData );
               hasChanges = true;
+              tasksAdded++;
               processedKeys.add( uniqueKey );
-              console.log( `📥 Nueva tarea: ${task.title} - Estado: ${task.state}` );
-            } else {
-              console.log( `⏭️ Tarea duplicada IGNORADA: ${task.title}` );
+              console.log( `📥 Tarea agregada: ${task.title}` );
             }
           } else {
             const isDifferent =
@@ -4742,101 +4768,159 @@ function setupRealtimeSync() {
               if ( index >= 0 ) {
                 tasks[ dateStr ][ index ] = taskData;
                 hasChanges = true;
+                tasksUpdated++;
                 processedKeys.add( uniqueKey );
-                console.log( `🔄 Tarea actualizada: ${task.title} - Estado: ${taskData.state}` );
+                console.log( `🔄 Tarea actualizada: ${task.title}` );
               }
             }
           }
         }
-        // ========== ELIMINAR TAREA (CORREGIDO) ==========
+        // ELIMINAR
         else if ( change.type === "removed" ) {
-          console.log( `🗑️ Eliminación detectada: ${task.title} (ID: ${taskId})` );
+          console.log( `🗑️ Eliminación remota: ${task.title}` );
 
-          if ( tasks[ dateStr ] && tasks[ dateStr ].length > 0 ) {
+          if ( tasks[ dateStr ] ) {
             const initialLength = tasks[ dateStr ].length;
 
-            // MÉTODO 1: Eliminar por ID exacto
-            tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
-              const shouldRemove = t.id === taskId;
-              if ( shouldRemove ) {
-                console.log( `  ✓ Tarea eliminada por ID: ${t.title}` );
-              }
-              return !shouldRemove;
-            } );
+            tasks[ dateStr ] = tasks[ dateStr ].filter( t =>
+              t.id !== taskId && !( t.title === task.title && t.time === task.time )
+            );
 
-            // MÉTODO 2: Si no se eliminó por ID, intentar por contenido
-            if ( tasks[ dateStr ].length === initialLength ) {
-              console.log( `  ⚠️ No se encontró por ID, buscando por contenido...` );
-              tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
-                const shouldRemove = ( t.title === task.title && t.time === task.time );
-                if ( shouldRemove ) {
-                  console.log( `  ✓ Tarea eliminada por contenido: ${t.title}` );
-                }
-                return !shouldRemove;
-              } );
-            }
-
-            // Verificar si se eliminó algo
             if ( tasks[ dateStr ].length < initialLength ) {
               hasChanges = true;
+              tasksDeleted++;
               processedKeys.add( uniqueKey );
 
-              // Limpiar notificaciones
-              clearTaskNotifications( taskId );
+              // REGISTRAR ELIMINACIÓN
+              registerDeletedTask( dateStr, task );
 
-              // Registrar eliminación
+              clearTaskNotifications( taskId );
               addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
 
-              console.log( `✅ Tarea eliminada del local storage: ${task.title}` );
-            } else {
-              console.warn( `⚠️ NO se pudo eliminar la tarea: ${task.title} (ID: ${taskId})` );
+              console.log( `✅ Tarea eliminada localmente: ${task.title}` );
             }
 
-            // Limpiar día si quedó vacío
             if ( tasks[ dateStr ].length === 0 ) {
               delete tasks[ dateStr ];
-              console.log( `🗑️ Día ${dateStr} eliminado completamente (sin tareas)` );
             }
-          } else {
-            console.warn( `⚠️ No hay tareas para eliminar en ${dateStr}` );
           }
         }
       } );
 
-      // ========== ACTUALIZAR UI SI HUBO CAMBIOS ==========
+      // ========== DETECTAR ELIMINACIONES INDIRECTAS ==========
+      // Buscar tareas locales que YA NO existen en remoto
+      Object.keys( tasks ).forEach( dateStr => {
+        if ( !tasks[ dateStr ] ) return;
+
+        const tasksToRemove = [];
+
+        tasks[ dateStr ].forEach( ( task, index ) => {
+          const taskHash = getTaskHash( dateStr, task.title, task.time );
+          const existsInRemote = remoteTaskIds.has( task.id ) || remoteTaskHashes.has( taskHash );
+
+          // Si NO existe en remoto Y NO está en el registro de eliminadas
+          if ( !existsInRemote && !wasTaskDeleted( dateStr, task ) ) {
+            console.log( `🔍 Detectada eliminación indirecta: ${task.title}` );
+            tasksToRemove.push( index );
+
+            // Registrar como eliminada
+            registerDeletedTask( dateStr, task );
+            clearTaskNotifications( task.id );
+            addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
+          }
+        } );
+
+        // Eliminar en orden inverso
+        if ( tasksToRemove.length > 0 ) {
+          tasksToRemove.reverse().forEach( index => {
+            const removedTask = tasks[ dateStr ][ index ];
+            console.log( `🗑️ Eliminando: ${removedTask.title}` );
+            tasks[ dateStr ].splice( index, 1 );
+            tasksDeleted++;
+            hasChanges = true;
+          } );
+
+          if ( tasks[ dateStr ].length === 0 ) {
+            delete tasks[ dateStr ];
+          }
+        }
+      } );
+
+      // ========== ACTUALIZAR UI ==========
       if ( hasChanges ) {
-        console.log( '💾 Guardando cambios y actualizando UI...' );
+        console.log( `💾 Cambios detectados - Agregadas: ${tasksAdded}, Actualizadas: ${tasksUpdated}, Eliminadas: ${tasksDeleted}` );
 
         saveTasks();
         renderCalendar();
         updateProgress();
 
-        // Actualizar panel si está abierto
+        // Actualizar panel SI está abierto (SIN SCROLL)
         if ( selectedDateForPanel ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
+        
         }
 
-        showNotification( 'Tareas actualizadas desde otro dispositivo', 'info' );
-      } else {
-        console.log( 'ℹ️ Sin cambios para aplicar' );
+        // NOTIFICACIÓN MEJORADA
+        if ( tasksDeleted > 0 ) {
+          showSyncNotification(
+            `${tasksDeleted} tarea${tasksDeleted > 1 ? 's' : ''} eliminada${tasksDeleted > 1 ? 's' : ''} en otro dispositivo`,
+            'warning'
+          );
+        } else if ( tasksAdded > 0 || tasksUpdated > 0 ) {
+          showSyncNotification( 'Tareas sincronizadas', 'info' );
+        }
       }
     },
     ( error ) => {
-      console.error( '❌ Error en listener de sync:', error );
-
-      // Reintentar después de 5 segundos
+      console.error( '❌ Error en listener:', error );
       setTimeout( () => {
         if ( currentUser && isOnline ) {
-          console.log( '🔄 Reintentando configurar listener...' );
           setupRealtimeSync();
         }
       }, 5000 );
     }
   );
 
-  console.log( '✅ Listener anti-duplicados con eliminaciones configurado' );
+  console.log( '✅ Listener configurado con tracking de eliminaciones' );
 }
+
+function showSyncNotification( message, type = 'info' ) {
+  const notification = document.createElement( 'div' );
+
+  const typeConfig = {
+    info: { bg: 'bg-blue-500', icon: 'fa-sync-alt' },
+    warning: { bg: 'bg-orange-500', icon: 'fa-exclamation-triangle' },
+    success: { bg: 'bg-green-500', icon: 'fa-check-circle' }
+  };
+
+  const config = typeConfig[ type ] || typeConfig.info;
+
+  notification.className = `fixed top-20 right-4 ${config.bg} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
+
+  notification.innerHTML = `
+    <div class="flex items-center space-x-3">
+      <i class="fas ${config.icon} text-xl"></i>
+      <div class="flex-1">
+        <div class="font-semibold text-sm">Sincronización</div>
+        <div class="text-xs opacity-90">${message}</div>
+      </div>
+      <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild( notification );
+
+  setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
+
+  setTimeout( () => {
+    notification.classList.add( 'translate-x-full' );
+    setTimeout( () => notification.remove(), 300 );
+  }, 5000 );
+}
+
 
 //showQuickAddTask con sync automático
 function showQuickAddTask( dateStr ) {
