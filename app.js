@@ -2411,22 +2411,30 @@ function initializeTodayPanel() {
 
   selectedDateForPanel = today;
 
-  const todayTasks = tasks[ today ] || [];
-  const isDesktop = window.innerWidth >= 768;
-  const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
-    window.navigator.standalone === true ||
-    window.location.search.includes( 'pwa=true' );
+  // Esperar a que las tareas estén cargadas
+  setTimeout( () => {
+    const todayTasks = tasks[ today ] || [];
+    const isDesktop = window.innerWidth >= 768;
+    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
+      window.navigator.standalone === true ||
+      window.location.search.includes( 'pwa=true' );
 
-  const hasPendingTasks = todayTasks.some( task =>
-    task.state !== 'completed'
-  );
+    const hasPendingTasks = todayTasks.some( task =>
+      task.state !== 'completed'
+    );
 
-  const shouldShowAuto = hasPendingTasks || ( isDesktop && !isPWA );
+    console.log( `📅 Inicializando panel - Tareas hoy: ${todayTasks.length}, Pendientes: ${hasPendingTasks}` );
 
-  if ( shouldShowAuto || todayTasks.length > 0 ) {
-    console.log( `📅 Abriendo panel automático - Tareas: ${todayTasks.length}, Pendientes: ${hasPendingTasks}` );
-    showDailyTaskPanel( today, todayDate.getDate() );
-  }
+    // SIEMPRE abrir el panel si hay tareas hoy O si es desktop
+    const shouldShowPanel = todayTasks.length > 0 || ( isDesktop && !isPWA );
+
+    if ( shouldShowPanel ) {
+      console.log( `📱 Abriendo panel automático` );
+      showDailyTaskPanel( today, todayDate.getDate() );
+    } else {
+      console.log( `⏭️ Panel no abierto - No hay tareas y no es desktop` );
+    }
+  }, 500 ); // Esperar 500ms para asegurar que las tareas estén cargadas
 }
 
 function resetForm() {
@@ -3073,7 +3081,8 @@ function createPanelTaskElement( task, dateStr ) {
   return `
     <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}"
          style="border-left-color: ${priority.color}"
-         data-priority="${task.priority}">
+         data-priority="${task.priority}
+           data-task-id="${task.id}">
 
         <!--Advertencia de retraso -->
         ${showLateWarning ? `
@@ -4642,7 +4651,7 @@ function setupRealtimeSync() {
     console.log( '🔇 Listener anterior desconectado' );
   }
 
-  console.log( '👂 Configurando listener con tracking de eliminaciones...' );
+  console.log( '👂 Configurando listener en tiempo real...' );
 
   const userTasksRef = db
     .collection( "users" )
@@ -4658,7 +4667,6 @@ function setupRealtimeSync() {
         return;
       }
 
-      // NUEVO: Crear snapshot de IDs remotos ACTUALES
       const remoteTaskIds = new Set();
       const remoteTaskHashes = new Set();
 
@@ -4675,6 +4683,7 @@ function setupRealtimeSync() {
       let tasksAdded = 0;
       let tasksUpdated = 0;
       const processedKeys = new Set();
+      const affectedDates = new Set(); // NUEVO: Tracking de fechas afectadas
 
       // ========== PROCESAR CAMBIOS DIRECTOS ==========
       snapshot.docChanges().forEach( ( change ) => {
@@ -4687,7 +4696,6 @@ function setupRealtimeSync() {
 
         // AGREGAR/MODIFICAR
         if ( change.type === "added" || change.type === "modified" ) {
-          // Verificar si fue eliminada antes
           if ( wasTaskDeleted( dateStr, task ) ) {
             console.log( `⏭️ Tarea previamente eliminada, ignorando: ${task.title}` );
             return;
@@ -4720,6 +4728,7 @@ function setupRealtimeSync() {
               hasChanges = true;
               tasksAdded++;
               processedKeys.add( uniqueKey );
+              affectedDates.add( dateStr ); // NUEVO
               console.log( `📥 Tarea agregada: ${task.title}` );
             }
           } else {
@@ -4738,6 +4747,7 @@ function setupRealtimeSync() {
                 hasChanges = true;
                 tasksUpdated++;
                 processedKeys.add( uniqueKey );
+                affectedDates.add( dateStr ); // NUEVO
                 console.log( `🔄 Tarea actualizada: ${task.title}` );
               }
             }
@@ -4758,12 +4768,14 @@ function setupRealtimeSync() {
               hasChanges = true;
               tasksDeleted++;
               processedKeys.add( uniqueKey );
+              affectedDates.add( dateStr ); // NUEVO
 
-              // REGISTRAR ELIMINACIÓN
               registerDeletedTask( dateStr, task );
-
               clearTaskNotifications( taskId );
               addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+
+              // NUEVO: Animación de eliminación en tiempo real
+              animateTaskDeletion( dateStr, taskId, task.title );
 
               console.log( `✅ Tarea eliminada localmente: ${task.title}` );
             }
@@ -4776,7 +4788,6 @@ function setupRealtimeSync() {
       } );
 
       // ========== DETECTAR ELIMINACIONES INDIRECTAS ==========
-      // Buscar tareas locales que YA NO existen en remoto
       Object.keys( tasks ).forEach( dateStr => {
         if ( !tasks[ dateStr ] ) return;
 
@@ -4786,23 +4797,25 @@ function setupRealtimeSync() {
           const taskHash = getTaskHash( dateStr, task.title, task.time );
           const existsInRemote = remoteTaskIds.has( task.id ) || remoteTaskHashes.has( taskHash );
 
-          // Si NO existe en remoto Y NO está en el registro de eliminadas
           if ( !existsInRemote && !wasTaskDeleted( dateStr, task ) ) {
             console.log( `🔍 Detectada eliminación indirecta: ${task.title}` );
             tasksToRemove.push( index );
 
-            // Registrar como eliminada
             registerDeletedTask( dateStr, task );
             clearTaskNotifications( task.id );
             addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
+            affectedDates.add( dateStr ); // NUEVO
           }
         } );
 
-        // Eliminar en orden inverso
         if ( tasksToRemove.length > 0 ) {
           tasksToRemove.reverse().forEach( index => {
             const removedTask = tasks[ dateStr ][ index ];
             console.log( `🗑️ Eliminando: ${removedTask.title}` );
+
+            // NUEVO: Animación antes de eliminar
+            animateTaskDeletion( dateStr, removedTask.id, removedTask.title );
+
             tasks[ dateStr ].splice( index, 1 );
             tasksDeleted++;
             hasChanges = true;
@@ -4822,21 +4835,24 @@ function setupRealtimeSync() {
         renderCalendar();
         updateProgress();
 
-        // Actualizar panel SI está abierto (SIN SCROLL)
-        if ( selectedDateForPanel ) {
+        // NUEVO: Actualizar panel SOLO si la fecha afectada es la que está abierta
+        if ( selectedDateForPanel && affectedDates.has( selectedDateForPanel ) ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
+          console.log( `🔄 Actualizando panel para fecha afectada: ${selectedDateForPanel}` );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
-        
         }
 
         // NOTIFICACIÓN MEJORADA
         if ( tasksDeleted > 0 ) {
           showSyncNotification(
-            `${tasksDeleted} tarea${tasksDeleted > 1 ? 's' : ''} eliminada${tasksDeleted > 1 ? 's' : ''} en otro dispositivo`,
+            `🗑️ ${tasksDeleted} tarea${tasksDeleted > 1 ? 's' : ''} eliminada${tasksDeleted > 1 ? 's' : ''} en otro dispositivo`,
             'warning'
           );
         } else if ( tasksAdded > 0 || tasksUpdated > 0 ) {
-          showSyncNotification( 'Tareas sincronizadas', 'info' );
+          showSyncNotification(
+            `✅ ${tasksAdded + tasksUpdated} tarea${tasksAdded + tasksUpdated > 1 ? 's' : ''} sincronizada${tasksAdded + tasksUpdated > 1 ? 's' : ''}`,
+            'success'
+          );
         }
       }
     },
@@ -4889,6 +4905,71 @@ function showSyncNotification( message, type = 'info' ) {
   }, 5000 );
 }
 
+// NUEVA FUNCIÓN: Animación visual de eliminación en tiempo real
+function animateTaskDeletion( dateStr, taskId, taskTitle ) {
+  // Buscar el elemento en el calendario
+  const calendarTaskElement = document.querySelector(
+    `.task-item[data-task-id="${taskId}"][data-date="${dateStr}"]`
+  );
+
+  if ( calendarTaskElement ) {
+    // Animación de desaparición
+    calendarTaskElement.style.transition = 'all 0.5s ease-out';
+    calendarTaskElement.style.opacity = '0';
+    calendarTaskElement.style.transform = 'scale(0.8) translateX(-20px)';
+    calendarTaskElement.style.backgroundColor = '#fee';
+
+    setTimeout( () => {
+      calendarTaskElement.remove();
+    }, 500 );
+  }
+
+  // Buscar el elemento en el panel (si está abierto)
+  if ( selectedDateForPanel === dateStr ) {
+    const panelTaskElement = document.querySelector(
+      `.panel-task-item[data-task-id="${taskId}"]`
+    );
+
+    if ( panelTaskElement ) {
+      // Efecto visual antes de eliminar
+      panelTaskElement.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+      panelTaskElement.style.opacity = '0';
+      panelTaskElement.style.transform = 'translateX(-100%)';
+      panelTaskElement.style.backgroundColor = '#fee2e2';
+      panelTaskElement.style.borderLeftColor = '#ef4444';
+
+      // Agregar efecto de "flash" rojo
+      panelTaskElement.classList.add( 'animate-pulse' );
+
+      setTimeout( () => {
+        panelTaskElement.remove();
+
+        // Actualizar contador de progreso después de eliminar
+        const remainingTasks = tasks[ dateStr ] || [];
+        updatePanelProgress( remainingTasks );
+
+        // Si no quedan tareas, mostrar mensaje vacío
+        if ( remainingTasks.length === 0 ) {
+          const taskList = document.getElementById( 'panelTaskList' );
+          if ( taskList ) {
+            taskList.innerHTML = `
+              <div class="text-center py-8 text-gray-500 animate-fade-in">
+                <i class="fas fa-calendar-check text-4xl mb-3 opacity-50"></i>
+                <p>No quedan tareas para este día</p>
+                <p class="text-sm mt-2 text-gray-400">
+                  <i class="fas fa-sync-alt mr-1"></i>
+                  Sincronizado en tiempo real
+                </p>
+              </div>
+            `;
+          }
+        }
+      }, 600 );
+    }
+  }
+
+  console.log( `🎬 Animación de eliminación ejecutada: ${taskTitle}` );
+}
 
 //showQuickAddTask con sync automático
 function showQuickAddTask( dateStr ) {
