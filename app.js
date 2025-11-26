@@ -105,7 +105,7 @@ if ( 'serviceWorker' in navigator ) {
       const existingRegistration = await navigator.serviceWorker.getRegistration( '/firebase-messaging-sw.js' );
 
       if ( existingRegistration ) {
-        console.log( '✅ Service Worker ya registrado:', existingRegistration.scope );
+        console.log( 'Service Worker ya registrado:', existingRegistration.scope );
 
         // Actualizar si hay una nueva versión
         existingRegistration.update().then( () => {
@@ -121,7 +121,7 @@ if ( 'serviceWorker' in navigator ) {
         updateViaCache: 'none' // Forzar actualización sin caché
       } );
 
-      console.log( '✅ Service Worker registrado con éxito:', registration.scope );
+      console.log( 'Service Worker registrado con éxito:', registration.scope );
 
       // Esperar a que esté activo
       if ( registration.installing ) {
@@ -129,7 +129,7 @@ if ( 'serviceWorker' in navigator ) {
       } else if ( registration.waiting ) {
         console.log( '⏳ Service Worker esperando...' );
       } else if ( registration.active ) {
-        console.log( '✅ Service Worker activo' );
+        console.log( 'Service Worker activo' );
       }
 
     } catch ( error ) {
@@ -737,7 +737,7 @@ async function processSyncQueue() {
   }
 
   if ( syncQueue.size === 0 ) {
-    console.log( '✅ Cola vacía' );
+    console.log( 'Cola vacía' );
     updateSyncIndicator( "success" );
     return;
   }
@@ -751,7 +751,7 @@ async function processSyncQueue() {
       .doc( currentUser.uid )
       .collection( "tasks" );
 
-    // 🔥 NUEVO: Obtener tareas existentes en Firebase ANTES de hacer cambios
+    // NUEVO: Obtener tareas existentes en Firebase ANTES de hacer cambios
     const existingSnapshot = await userTasksRef.get();
     const existingTaskIds = new Set();
 
@@ -774,7 +774,7 @@ async function processSyncQueue() {
       for ( const op of batchOps ) {
         const taskDocId = `${op.dateStr}_${op.task?.id}`;
 
-        // 🔥 CRÍTICO: Evitar duplicados dentro del batch
+        // CRÍTICO: Evitar duplicados dentro del batch
         if ( processedTaskIds.has( taskDocId ) ) {
           console.warn( `⚠️ Operación duplicada ignorada: ${taskDocId}` );
           continue;
@@ -785,7 +785,7 @@ async function processSyncQueue() {
         switch ( op.operation ) {
           case "upsert":
             if ( op.task ) {
-              // 🔥 NUEVO: Solo hacer set si no existe o es diferente
+              // NUEVO: Solo hacer set si no existe o es diferente
               if ( !existingTaskIds.has( taskDocId ) ) {
                 batch.set( taskRef, {
                   ...op.task,
@@ -796,7 +796,7 @@ async function processSyncQueue() {
 
                 processedTaskIds.add( taskDocId );
                 processedCount++;
-                console.log( `✅ Upsert programado: ${op.task.title}` );
+                console.log( `Upsert programado: ${op.task.title}` );
               } else {
                 console.log( `⏭️ Tarea ya existe, saltando: ${op.task.title}` );
               }
@@ -814,17 +814,17 @@ async function processSyncQueue() {
 
       if ( processedTaskIds.size > 0 ) {
         await batch.commit();
-        console.log( `✅ Batch completado: ${batchOps.length} ops` );
+        console.log( `Batch completado: ${batchOps.length} ops` );
       }
     }
 
-    // 🔥 CRÍTICO: Solo limpiar cola si TODO fue exitoso
+    // CRÍTICO: Solo limpiar cola si TODO fue exitoso
     syncQueue.clear();
     lastSyncTime = Date.now();
 
     console.log( `🎉 Sync completado: ${processedCount} operaciones` );
 
-    // 🔥 NUEVO: Esperar 2 segundos antes de hacer sync bidireccional
+    // NUEVO: Esperar 2 segundos antes de hacer sync bidireccional
     setTimeout( () => {
       if ( !syncInProgress ) {
         syncFromFirebaseBidirectional();
@@ -1035,7 +1035,7 @@ async function initFirebase() {
   }
 
   try {
-    console.log( '🔥 Inicializando Firebase...' );
+    console.log( 'Inicializando Firebase...' );
 
     if ( !navigator.onLine ) {
       console.log( '📴 Sin conexión - modo offline' );
@@ -1045,7 +1045,7 @@ async function initFirebase() {
 
     if ( !firebase.apps.length ) {
       firebase.initializeApp( firebaseConfig );
-      console.log( '✅ Firebase App inicializada' );
+      console.log( 'Firebase App inicializada' );
     }
 
     db = firebase.firestore();
@@ -1053,14 +1053,14 @@ async function initFirebase() {
 
     try {
       await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-      console.log( '✅ Persistencia LOCAL configurada' );
+      console.log( 'Persistencia LOCAL configurada' );
     } catch ( persistError ) {
       console.warn( '⚠️ Error configurando persistencia:', persistError.code );
     }
 
     try {
       await db.enablePersistence( { synchronizeTabs: true } );
-      console.log( '✅ Cache de Firestore habilitado' );
+      console.log( 'Cache de Firestore habilitado' );
     } catch ( cacheError ) {
       if ( cacheError.code === 'failed-precondition' ) {
         console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
@@ -1070,7 +1070,7 @@ async function initFirebase() {
     if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
         messaging = firebase.messaging();
-        console.log( '✅ FCM inicializado' );
+        console.log( 'FCM inicializado' );
       } catch ( messagingError ) {
         console.warn( '⚠️ Error inicializando FCM:', messagingError );
         messaging = null;
@@ -1083,7 +1083,7 @@ async function initFirebase() {
     currentUser = auth.currentUser;
 
     if ( currentUser ) {
-      console.log( '✅ Sesión restaurada:', currentUser.email );
+      console.log( 'Sesión restaurada:', currentUser.email );
       updateUI();
       updateSyncIndicator( 'success' );
 
@@ -1114,7 +1114,7 @@ async function signInWithGoogle() {
   try {
     console.log( '🔑 Iniciando login con Google...' );
 
-    // 🔥 INICIALIZAR FIREBASE AQUÍ
+    // INICIALIZAR FIREBASE AQUÍ
     if ( !firebaseInitialized ) {
       await initFirebase();
     }
@@ -1134,7 +1134,7 @@ async function signInWithGoogle() {
       const result = await auth.signInWithPopup( provider );
 
       if ( result.user ) {
-        console.log( '✅ Login exitoso:', result.user.email );
+        console.log( 'Login exitoso:', result.user.email );
 
         currentUser = result.user;
 
@@ -1229,7 +1229,7 @@ async function waitForServiceWorker( timeout = 10000 ) {
 
     // Verificar que esté activo
     if ( registration.active ) {
-      console.log( '✅ Service Worker activo:', registration.active.state );
+      console.log( 'Service Worker activo:', registration.active.state );
       return registration;
     }
 
@@ -1243,7 +1243,7 @@ async function waitForServiceWorker( timeout = 10000 ) {
       const checkState = () => {
         if ( registration.active ) {
           clearTimeout( timeoutId );
-          console.log( '✅ SW ahora activo' );
+          console.log( 'SW ahora activo' );
           resolve( registration );
         } else if ( registration.installing ) {
           registration.installing.addEventListener( 'statechange', function () {
@@ -1277,7 +1277,7 @@ async function requestFCMToken() {
   }
 
   try {
-    // 🔥 CRÍTICO: Esperar a que el SW esté activo
+    // CRÍTICO: Esperar a que el SW esté activo
     console.log( '🔍 Verificando Service Worker antes de FCM...' );
     const registration = await waitForServiceWorker();
 
@@ -1297,7 +1297,7 @@ async function requestFCMToken() {
       }
     }
 
-    // 🔥 AHORA SÍ: Obtener token con SW activo
+    // AHORA SÍ: Obtener token con SW activo
     console.log( '🔑 Solicitando token FCM...' );
     const token = await messaging.getToken( {
       vapidKey: 'BCqZPBWf51RsALY4R4_O7teHw10TCL1fAlWlKoQB4fI8WvMCfnUePvo2Lk9VnzPR8NsNyjMdcSShGEXbi_2PWH0',
@@ -1305,7 +1305,7 @@ async function requestFCMToken() {
     } );
 
     if ( token ) {
-      console.log( '✅ Token FCM obtenido:', token.substring( 0, 20 ) + '...' );
+      console.log( 'Token FCM obtenido:', token.substring( 0, 20 ) + '...' );
       fcmToken = token;
 
       // Guardar token en Firestore
@@ -1449,7 +1449,7 @@ function setupFCMListeners() {
     return;
   }
 
-  // 🔥 LISTENER PRINCIPAL: Mensajes cuando la app está abierta
+  // LISTENER PRINCIPAL: Mensajes cuando la app está abierta
   messaging.onMessage( ( payload ) => {
     console.log( '📨 Mensaje FCM recibido (app abierta):', payload );
 
@@ -1491,20 +1491,20 @@ function setupFCMListeners() {
     }
   } );
 
-  // 🔥 LISTENER: Errores de token
+  // LISTENER: Errores de token
   messaging.onTokenRefresh( async () => {
     console.log( '🔄 Token FCM necesita renovación' );
     try {
       const newToken = await requestFCMToken();
       if ( newToken ) {
-        console.log( '✅ Token FCM renovado' );
+        console.log( 'Token FCM renovado' );
       }
     } catch ( error ) {
       console.error( '❌ Error renovando token FCM:', error );
     }
   } );
 
-  console.log( '✅ FCM listeners configurados (foreground)' );
+  console.log( 'FCM listeners configurados (foreground)' );
 }
 
 function updateTaskUIFromNotification( dateStr, taskId ) {
@@ -1769,12 +1769,12 @@ function initNotifications() {
 
     updateNotificationButton();
 
-    // 🔥 NUEVO: Forzar verificación inmediata en el SW
+    // NUEVO: Forzar verificación inmediata en el SW
     if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
       navigator.serviceWorker.controller.postMessage( {
         type: 'FORCE_CHECK'
       } );
-      console.log( '✅ Service Worker notificado para verificación' );
+      console.log( 'Service Worker notificado para verificación' );
     }
 
   } else if ( Notification.permission === "default" ) {
@@ -2020,7 +2020,7 @@ async function handleRedirectResult() {
     const result = await Promise.race( [ resultPromise, timeoutPromise ] );
 
     if ( result && result.user ) {
-      console.log( '✅ Login vía redirect exitoso:', result.user.email );
+      console.log( 'Login vía redirect exitoso:', result.user.email );
 
       // Limpiar flag
       localStorage.removeItem( 'pending_google_login' );
@@ -2062,7 +2062,7 @@ async function handleRedirectResult() {
 
       setTimeout( () => {
         if ( auth.currentUser ) {
-          console.log( '✅ Usuario detectado después de espera' );
+          console.log( 'Usuario detectado después de espera' );
           currentUser = auth.currentUser;
           localStorage.removeItem( 'pending_google_login' );
           updateUI();
@@ -2093,7 +2093,7 @@ async function initializeNotificationSystem() {
     // 2. Configurar listeners
     setupFCMListeners();
 
-    console.log( '✅ Sistema de notificaciones inicializado' );
+    console.log( 'Sistema de notificaciones inicializado' );
 
   } catch ( error ) {
     console.error( '❌ Error inicializando sistema de notificaciones:', error );
@@ -2102,7 +2102,7 @@ async function initializeNotificationSystem() {
 
 function signOut() {
   if ( confirm( "¿Estás seguro de que quieres cerrar sesión?" ) ) {
-    // 🔥 NUEVO: Limpiar listener de Firestore
+    // NUEVO: Limpiar listener de Firestore
     if ( firestoreListener ) {
       firestoreListener();
       firestoreListener = null;
@@ -2130,7 +2130,7 @@ function signOut() {
 
     auth.signOut()
       .then( () => {
-        console.log( '✅ Sesión cerrada correctamente' );
+        console.log( 'Sesión cerrada correctamente' );
         showNotification( "Sesión cerrada", "info" );
       } )
       .catch( ( error ) => {
@@ -2246,7 +2246,7 @@ async function syncFromFirebase() {
 }
 
 function forceSyncNow() {
-  console.log( '🔥 Forzando sincronización inmediata...' );
+  console.log( 'Forzando sincronización inmediata...' );
   if ( syncTimeout ) {
     clearTimeout( syncTimeout );
     syncTimeout = null;
@@ -2375,6 +2375,7 @@ function configurePWAFeatures() {
 }
 
 // Función para abrir automáticamente el panel del día actual al cargar
+// Función para abrir automáticamente el panel del día actual al cargar
 function initializeTodayPanel() {
   const today = getTodayString();
   const todayDate = new Date();
@@ -2383,19 +2384,28 @@ function initializeTodayPanel() {
 
   const todayTasks = tasks[ today ] || [];
   const isDesktop = window.innerWidth >= 768;
-  const isPWAInstalled = window.matchMedia( '(display-mode: standalone)' ).matches ||
+  const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
     window.navigator.standalone === true ||
     window.location.search.includes( 'pwa=true' );
 
-  const shouldShowAuto = ( isDesktop && !isPWAInstalled ) ||
-    todayTasks.some( task => task.state !== 'completed' );
+  // NUEVO: Mostrar panel SI hay tareas pendientes o es desktop
+  const hasPendingTasks = todayTasks.some( task =>
+    task.state !== 'completed'
+  );
 
-  if ( shouldShowAuto ) {
+  const shouldShowAuto = hasPendingTasks || ( isDesktop && !isPWA );
+
+  if ( shouldShowAuto || todayTasks.length > 0 ) {
+    console.log( `📅 Abriendo panel automático - Tareas: ${todayTasks.length}, Pendientes: ${hasPendingTasks}` );
     showDailyTaskPanel( today, todayDate.getDate() );
-    // NO llamar scrollToPanelSmoothly() aquí
-  }
 
-  console.log( `Panel auto-show: ${shouldShowAuto ? 'SI' : 'NO'} (Desktop: ${isDesktop}, PWA: ${isPWAInstalled}, Tareas: ${todayTasks.length})` );
+    // Scroll suave después de un delay
+    setTimeout( () => {
+      scrollToPanelSmoothly();
+    }, 500 );
+  } else {
+    console.log( `📅 Panel NO se abre - Sin tareas para hoy` );
+  }
 }
 
 function resetForm() {
@@ -2463,12 +2473,12 @@ function showLoginModal() {
     return;
   }
 
-  console.log( '✅ Modal encontrado, mostrando...' );
+  console.log( 'Modal encontrado, mostrando...' );
 
   // Mostrar modal
   loginModal.classList.remove( "hidden" );
 
-  // 🔥 NUEVO: Configurar event listener del botón de Google DESPUÉS de mostrar el modal
+  // NUEVO: Configurar event listener del botón de Google DESPUÉS de mostrar el modal
   setTimeout( () => {
     const googleSignInBtn = document.getElementById( 'googleSignInBtn' );
     if ( googleSignInBtn ) {
@@ -2478,7 +2488,7 @@ function showLoginModal() {
 
       // Agregar nuevo listener
       newBtn.addEventListener( 'click', signInWithGoogle );
-      console.log( '✅ Event listener de Google Sign-In configurado' );
+      console.log( 'Event listener de Google Sign-In configurado' );
     } else {
       console.error( '❌ Botón googleSignInBtn no encontrado' );
     }
@@ -2664,8 +2674,8 @@ function addTask( e ) {
     description: formData.description,
     time: formData.time,
     priority: formData.priority,
-    state: "pending", // ✅ Correcto
-    completed: false,  // ✅ Correcto
+    state: "pending", // Correcto
+    completed: false,  // Correcto
   };
 
   if ( formData.date && formData.repeat === "none" ) {
@@ -3553,7 +3563,7 @@ async function syncFromFirebaseBidirectional() {
     return;
   }
 
-  // 🔥 NUEVO: Evitar múltiples syncs simultáneos
+  // NUEVO: Evitar múltiples syncs simultáneos
   if ( window.syncBidirectionalInProgress ) {
     console.log( '⏳ Sync bidireccional ya en progreso' );
     return;
@@ -3602,7 +3612,7 @@ async function syncFromFirebaseBidirectional() {
       } );
     }
 
-    // 🔥 NUEVO: Crear índice de tareas locales por contenido
+    // NUEVO: Crear índice de tareas locales por contenido
     const localTaskKeys = new Map(); // key -> {dateStr, task}
     Object.keys( tasks ).forEach( ( dateStr ) => {
       const dayTasks = tasks[ dateStr ] || [];
@@ -3616,7 +3626,7 @@ async function syncFromFirebaseBidirectional() {
     let tasksUpdated = 0;
     let tasksDeleted = 0;
 
-    // 🔥 PASO 1: Subir tareas locales que NO están en remoto (por contenido)
+    // PASO 1: Subir tareas locales que NO están en remoto (por contenido)
     const uploadBatch = db.batch();
     let uploadCount = 0;
 
@@ -3641,10 +3651,10 @@ async function syncFromFirebaseBidirectional() {
     if ( uploadCount > 0 ) {
       await uploadBatch.commit();
       tasksAdded = uploadCount;
-      console.log( `✅ ${uploadCount} tareas subidas a Firebase` );
+      console.log( `${uploadCount} tareas subidas a Firebase` );
     }
 
-    // 🔥 PASO 2: Descargar tareas remotas que NO están localmente (por contenido)
+    // PASO 2: Descargar tareas remotas que NO están localmente (por contenido)
     Object.keys( remoteTasks ).forEach( ( dateStr ) => {
       if ( !tasks[ dateStr ] ) {
         tasks[ dateStr ] = [];
@@ -3653,9 +3663,9 @@ async function syncFromFirebaseBidirectional() {
       remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
         const uniqueKey = `${dateStr}:${remoteTask.title}:${remoteTask.time}`;
 
-        // ✅ Solo agregar si NO existe localmente (por contenido)
+        // Solo agregar si NO existe localmente (por contenido)
         if ( !localTaskKeys.has( uniqueKey ) ) {
-          // ✅ Verificación adicional por ID
+          // Verificación adicional por ID
           const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
 
           if ( !existsById ) {
@@ -3669,31 +3679,45 @@ async function syncFromFirebaseBidirectional() {
       } );
     } );
 
-    // 🔥 PASO 3: Eliminar tareas locales que NO existen en remoto
+    // PASO 3: Eliminar tareas locales que NO existen en remoto
     Object.keys( tasks ).forEach( ( dateStr ) => {
       if ( !tasks[ dateStr ] ) return;
 
       const initialLength = tasks[ dateStr ].length;
+      const tasksToRemove = [];
 
-      tasks[ dateStr ] = tasks[ dateStr ].filter( ( task ) => {
+      tasks[ dateStr ].forEach( ( task, index ) => {
         const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
         const existsInRemote = remoteTaskKeys.has( uniqueKey );
 
-        if ( !existsInRemote ) {
-          console.log( `🗑️ Eliminada localmente: ${task.title}` );
+        // También verificar por ID
+        const existsByIdInRemote = remoteTaskMap.has( task.id );
+
+        if ( !existsInRemote && !existsByIdInRemote ) {
+          console.log( `🗑️ Tarea eliminada (no existe en remoto): ${task.title}` );
+          tasksToRemove.push( index );
+
+          // Limpiar notificaciones
+          clearTaskNotifications( task.id );
+
+          // Registrar eliminación
           addToChangeLog( "deleted", task.title, dateStr, null, null, task.id );
           tasksDeleted++;
         }
+      } );
 
-        return existsInRemote;
+      // Eliminar en orden inverso para no afectar índices
+      tasksToRemove.reverse().forEach( index => {
+        tasks[ dateStr ].splice( index, 1 );
       } );
 
       if ( tasks[ dateStr ].length === 0 ) {
         delete tasks[ dateStr ];
+        console.log( `🗑️ Día ${dateStr} eliminado completamente` );
       }
     } );
 
-    // 🔥 PASO 4: Guardar cambios
+    // PASO 4: Guardar cambios
     if ( tasksAdded > 0 || tasksUpdated > 0 || tasksDeleted > 0 ) {
       saveTasks();
       renderCalendar();
@@ -3711,7 +3735,7 @@ async function syncFromFirebaseBidirectional() {
 
       showNotification( `Sincronización: ${message.join( ', ' )}`, "success" );
     } else {
-      console.log( '✅ Todo sincronizado - sin cambios' );
+      console.log( 'Todo sincronizado - sin cambios' );
     }
 
     lastFullSyncTime = Date.now();
@@ -3827,6 +3851,16 @@ function executeSingleDelete( dateStr, taskId, task ) {
   }
 
   showNotification( "Tarea eliminada exitosamente", "success" );
+
+  // Forzar sync inmediato de la eliminación
+  if ( currentUser && isOnline ) {
+    console.log( '🔄 Forzando sync de eliminación...' );
+    setTimeout( () => {
+      processSyncQueue().then( () => {
+        console.log( 'Eliminación sincronizada con Firebase' );
+      } );
+    }, 500 );
+  }
 }
 
 // MODAL DE ELIMINACIÓN MASIVA
@@ -4620,145 +4654,25 @@ function setupRealtimeSync() {
     return;
   }
 
+  // ✅ Limpiar listener anterior
   if ( firestoreListener ) {
     firestoreListener();
     firestoreListener = null;
+    console.log( '🔇 Listener anterior desconectado' );
   }
 
-  console.log( '👂 Configurando listener anti-duplicados...' );
+  console.log( '👂 Configurando listener MEJORADO con eliminaciones...' );
 
   const userTasksRef = db
     .collection( "users" )
     .doc( currentUser.uid )
     .collection( "tasks" );
 
+  //  Incluir metadatos para detectar cambios del servidor
   firestoreListener = userTasksRef.onSnapshot(
+    { includeMetadataChanges: false }, // Solo cambios reales del servidor
     ( snapshot ) => {
-      // 🔥 NUEVO: Ignorar snapshots durante sync
-      if ( syncInProgress || window.syncBidirectionalInProgress ) {
-        console.log( '⏳ Sync en progreso, ignorando snapshot' );
-        return;
-      }
-
-      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length );
-
-      let hasChanges = false;
-      const processedKeys = new Set(); // ← NUEVO: Evitar duplicados en mismo snapshot
-
-      snapshot.docChanges().forEach( ( change ) => {
-        const task = change.doc.data();
-        const dateStr = task.date;
-        const taskId = task.id;
-        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
-
-        // 🔥 CRÍTICO: Evitar procesar mismo cambio múltiples veces
-        if ( processedKeys.has( uniqueKey ) ) {
-          console.log( `⏭️ Cambio duplicado ignorado: ${task.title}` );
-          return;
-        }
-
-        if ( change.type === "added" || change.type === "modified" ) {
-          const localTask = tasks[ dateStr ]?.find( t =>
-            t.id === taskId ||
-            ( t.title === task.title && t.time === task.time )
-          );
-
-          const taskData = {
-            id: task.id,
-            title: task.title,
-            description: task.description || "",
-            time: task.time || "",
-            completed: task.completed || false,
-            state: task.state || ( task.completed ? "completed" : "pending" ), // ✅ PRESERVAR ESTADO
-            priority: task.priority || 3,
-            lastModified: task.lastModified?.toMillis() || Date.now()
-          };
-
-          // ✅ Solo actualizar si NO existe o es REALMENTE diferente
-          if ( !localTask ) {
-            if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-
-            // Verificar que no haya duplicado por contenido
-            const isDuplicate = tasks[ dateStr ].some( t =>
-              t.title === task.title &&
-              t.time === task.time
-            );
-
-            if ( !isDuplicate ) {
-              tasks[ dateStr ].push( taskData );
-              hasChanges = true;
-              processedKeys.add( uniqueKey );
-              console.log( `📥 Nueva tarea: ${task.title} - Estado: ${task.state}` );
-            } else {
-              console.log( `⏭️ Tarea duplicada IGNORADA: ${task.title}` );
-            }
-          } else {
-            // Verificar si es REALMENTE diferente
-            const isDifferent =
-              localTask.title !== task.title ||
-              localTask.description !== taskData.description ||
-              localTask.time !== taskData.time ||
-              localTask.state !== taskData.state ||
-              localTask.priority !== taskData.priority ||
-              localTask.completed !== taskData.completed;
-
-            if ( isDifferent ) {
-              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
-              if ( index >= 0 ) {
-                tasks[ dateStr ][ index ] = taskData;
-                hasChanges = true;
-                processedKeys.add( uniqueKey );
-                console.log( `🔄 Tarea actualizada: ${task.title} - Estado: ${taskData.state}` );
-              }
-            } else {
-              console.log( `⏭️ Tarea sin cambios: ${task.title}` );
-            }
-          }
-        }
-        else if ( change.type === "removed" ) {
-          if ( tasks[ dateStr ] ) {
-            const initialLength = tasks[ dateStr ].length;
-            tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
-
-            if ( tasks[ dateStr ].length < initialLength ) {
-              console.log( `🗑️ Tarea eliminada: ${task.title}` );
-              hasChanges = true;
-              processedKeys.add( uniqueKey );
-              addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
-            }
-
-            if ( tasks[ dateStr ].length === 0 ) {
-              delete tasks[ dateStr ];
-            }
-          }
-        }
-      } );
-
-      if ( hasChanges ) {
-        saveTasks();
-        renderCalendar();
-        updateProgress();
-
-        if ( selectedDateForPanel ) {
-          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
-          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
-        }
-
-        showNotification( 'Tareas actualizadas desde otro dispositivo', 'info' );
-      }
-    },
-    ( error ) => {
-      console.error( '❌ Error en listener:', error );
-      setTimeout( () => {
-        if ( currentUser && isOnline ) {
-          setupRealtimeSync();
-        }
-      }, 5000 );
-    }
-  );
-
-  console.log( '✅ Listener anti-duplicados configurado' );
-}
+  // ... resto del código existente
 
 //showQuickAddTask con sync automático
 function showQuickAddTask( dateStr ) {
@@ -6198,7 +6112,7 @@ function saveTasks() {
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
 
-    // 🔥 NUEVO: Enviar al Service Worker para IndexedDB
+    // NUEVO: Enviar al Service Worker para IndexedDB
     if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
       navigator.serviceWorker.controller.postMessage( {
         type: 'UPDATE_TASKS',
@@ -6276,7 +6190,7 @@ async function cleanupDuplicateTasks() {
     updateProgress();
     showNotification( `🧹 ${cleaned} tareas duplicadas eliminadas`, 'success' );
   } else {
-    console.log( '✅ No se encontraron duplicados' );
+    console.log( 'No se encontraron duplicados' );
   }
 
   return cleaned;
@@ -6287,12 +6201,12 @@ if ( !localStorage.getItem( 'duplicates_cleaned_v2' ) ) {
   cleanupDuplicateTasks().then( count => {
     if ( count > 0 ) {
       localStorage.setItem( 'duplicates_cleaned_v2', 'true' );
-      console.log( '✅ Limpieza de duplicados completada' );
+      console.log( 'Limpieza de duplicados completada' );
     }
   } );
 }
 
-console.log( '✅ Sistema anti-duplicados cargado' );
+console.log( 'Sistema anti-duplicados cargado' );
 
 // Notificar a otras pestañas cuando enviamos una notificación
 function broadcastNotificationSent( tag ) {
@@ -6331,7 +6245,12 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   initNotifications();
 
-  // 🔥 NUEVO: NO inicializar Firebase automáticamente
+  //  Inicializar panel DESPUÉS de cargar todo
+  setTimeout( () => {
+    initializeTodayPanel();
+  }, 1000 );
+
+  // NUEVO: NO inicializar Firebase automáticamente
   console.log( '⏸️ Firebase en espera (se inicializará al hacer login)' );
   hideLoadingScreen();
   updateUI();
@@ -6365,7 +6284,7 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  // 🔥 NUEVO: Verificar si hay sesión guardada
+  // NUEVO: Verificar si hay sesión guardada
   const hadSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
   if ( hadSession && isOnline ) {
     console.log( '🔄 Sesión previa detectada, restaurando...' );

@@ -1,6 +1,4 @@
 // 🔥 SERVICE WORKER CON FCM BACKGROUND v6.0
-// ==========================================
-
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
 
@@ -17,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v6.0';
+const CACHE_VERSION = 'v4.4';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
