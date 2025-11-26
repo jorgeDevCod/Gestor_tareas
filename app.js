@@ -1799,7 +1799,7 @@ function setupNetworkListeners() {
   document.addEventListener( 'visibilitychange', () => {
     if ( !document.hidden && notificationsEnabled && Notification.permission === 'granted' ) {
       console.log( '📱 PWA volvió del background - sincronizando notificaciones' );
-    
+
     }
   } );
 
@@ -2089,7 +2089,7 @@ async function initializeNotificationSystem() {
   if ( !currentUser || !messaging ) return;
 
   try {
-    
+
     // 2. Configurar listeners
     setupFCMListeners();
 
@@ -2664,8 +2664,8 @@ function addTask( e ) {
     description: formData.description,
     time: formData.time,
     priority: formData.priority,
-    state: "pending", //SIEMPRE pendiente al crear
-    completed: false, //SIEMPRE false al crear
+    state: "pending", // ✅ Correcto
+    completed: false,  // ✅ Correcto
   };
 
   if ( formData.date && formData.repeat === "none" ) {
@@ -3592,7 +3592,7 @@ async function syncFromFirebaseBidirectional() {
           description: task.description || "",
           time: task.time || "",
           completed: task.completed || false,
-          state: task.state || "pending",
+          state: task.state || task.completed ? "completed" : "pending",
           priority: task.priority || 3,
           lastModified: task.lastModified?.toMillis() || Date.now()
         };
@@ -4658,7 +4658,6 @@ function setupRealtimeSync() {
         }
 
         if ( change.type === "added" || change.type === "modified" ) {
-          // 🔥 NUEVO: Verificar si realmente es diferente
           const localTask = tasks[ dateStr ]?.find( t =>
             t.id === taskId ||
             ( t.title === task.title && t.time === task.time )
@@ -4670,27 +4669,53 @@ function setupRealtimeSync() {
             description: task.description || "",
             time: task.time || "",
             completed: task.completed || false,
-            state: task.state || "pending",
-            priority: task.priority || 3
+            state: task.state || ( task.completed ? "completed" : "pending" ), // ✅ PRESERVAR ESTADO
+            priority: task.priority || 3,
+            lastModified: task.lastModified?.toMillis() || Date.now()
           };
 
-          // Solo actualizar si no existe o es diferente
+          // ✅ Solo actualizar si NO existe o es REALMENTE diferente
           if ( !localTask ) {
             if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
-            tasks[ dateStr ].push( taskData );
-            hasChanges = true;
-            processedKeys.add( uniqueKey );
-            console.log( `📥 Nueva tarea: ${task.title}` );
-          } else if ( JSON.stringify( localTask ) !== JSON.stringify( taskData ) ) {
-            const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
-            if ( index >= 0 ) {
-              tasks[ dateStr ][ index ] = taskData;
+
+            // Verificar que no haya duplicado por contenido
+            const isDuplicate = tasks[ dateStr ].some( t =>
+              t.title === task.title &&
+              t.time === task.time
+            );
+
+            if ( !isDuplicate ) {
+              tasks[ dateStr ].push( taskData );
               hasChanges = true;
               processedKeys.add( uniqueKey );
-              console.log( `🔄 Tarea actualizada: ${task.title}` );
+              console.log( `📥 Nueva tarea: ${task.title} - Estado: ${task.state}` );
+            } else {
+              console.log( `⏭️ Tarea duplicada IGNORADA: ${task.title}` );
+            }
+          } else {
+            // Verificar si es REALMENTE diferente
+            const isDifferent =
+              localTask.title !== task.title ||
+              localTask.description !== taskData.description ||
+              localTask.time !== taskData.time ||
+              localTask.state !== taskData.state ||
+              localTask.priority !== taskData.priority ||
+              localTask.completed !== taskData.completed;
+
+            if ( isDifferent ) {
+              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
+              if ( index >= 0 ) {
+                tasks[ dateStr ][ index ] = taskData;
+                hasChanges = true;
+                processedKeys.add( uniqueKey );
+                console.log( `🔄 Tarea actualizada: ${task.title} - Estado: ${taskData.state}` );
+              }
+            } else {
+              console.log( `⏭️ Tarea sin cambios: ${task.title}` );
             }
           }
-        } else if ( change.type === "removed" ) {
+        }
+        else if ( change.type === "removed" ) {
           if ( tasks[ dateStr ] ) {
             const initialLength = tasks[ dateStr ].length;
             tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
@@ -6028,31 +6053,28 @@ window.addEventListener( "beforeunload", () => {
   }
 } );
 
+let storageUpdateTimeout = null;
+
 window.addEventListener( 'storage', ( e ) => {
   // Si otra pestaña guardó tareas, verificar si necesitamos actualizar
   if ( e.key === 'tasks' && e.newValue !== e.oldValue ) {
-    console.log( '📡 Cambios detectados en otra pestaña' );
+    console.log( '📡 Cambios detectados en otra pestaña - IGNORANDO para evitar duplicados' );
 
-    try {
-      const newTasks = JSON.parse( e.newValue || '{}' );
-      const currentFingerprint = generateTaskFingerprint( tasks );
-      const newFingerprint = generateTaskFingerprint( newTasks );
-
-      if ( currentFingerprint !== newFingerprint ) {
-        console.log( '🔄 Actualizando desde otra pestaña' );
-        tasks = newTasks;
-        renderCalendar();
-        updateProgress();
-
-        // Actualizar panel si está abierto
-        if ( selectedDateForPanel ) {
-          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
-          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
-        }
-      }
-    } catch ( error ) {
-      console.error( 'Error procesando cambio de otra pestaña:', error );
+    // Cancelar timeouts anteriores
+    if ( storageUpdateTimeout ) {
+      clearTimeout( storageUpdateTimeout );
     }
+
+    // NO actualizar inmediatamente para evitar ciclos
+    // Solo actualizar si Firebase lo indica
+    storageUpdateTimeout = setTimeout( () => {
+      console.log( '⏰ Timeout de storage - verificando si necesita actualización real' );
+
+      // NO hacer nada aquí - dejar que Firebase maneje la sincronización
+      // Esto previene ciclos infinitos de actualizaciones
+    }, 5000 );
+
+    return; // IGNORAR cambios de storage entre pestañas
   }
 } );
 
@@ -6148,7 +6170,7 @@ document.addEventListener( 'visibilitychange', () => {
       if ( isOnline && !isSyncing ) {
         setTimeout( () => {
           syncFromFirebase();
-          
+
         }, 1000 );
       }
     } else {
@@ -6428,7 +6450,7 @@ document.addEventListener( 'visibilitychange', () => {
       if ( isOnline && !isSyncing ) {
         setTimeout( () => {
           syncFromFirebase();
-      
+
         }, 1000 );
       }
     } else {
