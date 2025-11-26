@@ -1215,6 +1215,7 @@ async function signInWithGoogle() {
   }
 }
 
+
 async function waitForServiceWorker( timeout = 10000 ) {
   if ( !( 'serviceWorker' in navigator ) ) {
     console.warn( '⚠️ Service Workers no soportados' );
@@ -2374,7 +2375,6 @@ function configurePWAFeatures() {
   window.PWA_SYNC_DEBOUNCE_TIME = PWA_SYNC_DEBOUNCE_TIME;
 }
 
-// Función para abrir automáticamente el panel del día actual al cargar
 // Función para abrir automáticamente el panel del día actual al cargar
 function initializeTodayPanel() {
   const today = getTodayString();
@@ -4672,7 +4672,131 @@ function setupRealtimeSync() {
   firestoreListener = userTasksRef.onSnapshot(
     { includeMetadataChanges: false }, // Solo cambios reales del servidor
     ( snapshot ) => {
-  // ... resto del código existente
+      // 🔥 NUEVO: Ignorar snapshots durante sync
+      if ( syncInProgress || window.syncBidirectionalInProgress ) {
+        console.log( '⏳ Sync en progreso, ignorando snapshot' );
+        return;
+      }
+
+      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length );
+
+      let hasChanges = false;
+      const processedKeys = new Set(); // ← NUEVO: Evitar duplicados en mismo snapshot
+
+      snapshot.docChanges().forEach( ( change ) => {
+        const task = change.doc.data();
+        const dateStr = task.date;
+        const taskId = task.id;
+        const uniqueKey = `${dateStr}:${task.title}:${task.time}`;
+
+        // 🔥 CRÍTICO: Evitar procesar mismo cambio múltiples veces
+        if ( processedKeys.has( uniqueKey ) ) {
+          console.log( `⏭️ Cambio duplicado ignorado: ${task.title}` );
+          return;
+        }
+
+        if ( change.type === "added" || change.type === "modified" ) {
+          const localTask = tasks[ dateStr ]?.find( t =>
+            t.id === taskId ||
+            ( t.title === task.title && t.time === task.time )
+          );
+
+          const taskData = {
+            id: task.id,
+            title: task.title,
+            description: task.description || "",
+            time: task.time || "",
+            completed: task.completed || false,
+            state: task.state || ( task.completed ? "completed" : "pending" ), // ✅ PRESERVAR ESTADO
+            priority: task.priority || 3,
+            lastModified: task.lastModified?.toMillis() || Date.now()
+          };
+
+          // ✅ Solo actualizar si NO existe o es REALMENTE diferente
+          if ( !localTask ) {
+            if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
+
+            // Verificar que no haya duplicado por contenido
+            const isDuplicate = tasks[ dateStr ].some( t =>
+              t.title === task.title &&
+              t.time === task.time
+            );
+
+            if ( !isDuplicate ) {
+              tasks[ dateStr ].push( taskData );
+              hasChanges = true;
+              processedKeys.add( uniqueKey );
+              console.log( `📥 Nueva tarea: ${task.title} - Estado: ${task.state}` );
+            } else {
+              console.log( `⏭️ Tarea duplicada IGNORADA: ${task.title}` );
+            }
+          } else {
+            // Verificar si es REALMENTE diferente
+            const isDifferent =
+              localTask.title !== task.title ||
+              localTask.description !== taskData.description ||
+              localTask.time !== taskData.time ||
+              localTask.state !== taskData.state ||
+              localTask.priority !== taskData.priority ||
+              localTask.completed !== taskData.completed;
+
+            if ( isDifferent ) {
+              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
+              if ( index >= 0 ) {
+                tasks[ dateStr ][ index ] = taskData;
+                hasChanges = true;
+                processedKeys.add( uniqueKey );
+                console.log( `🔄 Tarea actualizada: ${task.title} - Estado: ${taskData.state}` );
+              }
+            } else {
+              console.log( `⏭️ Tarea sin cambios: ${task.title}` );
+            }
+          }
+        }
+        else if ( change.type === "removed" ) {
+          if ( tasks[ dateStr ] ) {
+            const initialLength = tasks[ dateStr ].length;
+            tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+
+            if ( tasks[ dateStr ].length < initialLength ) {
+              console.log( `🗑️ Tarea eliminada: ${task.title}` );
+              hasChanges = true;
+              processedKeys.add( uniqueKey );
+              addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+            }
+
+            if ( tasks[ dateStr ].length === 0 ) {
+              delete tasks[ dateStr ];
+            }
+          }
+        }
+      } );
+
+      if ( hasChanges ) {
+        saveTasks();
+        renderCalendar();
+        updateProgress();
+
+        if ( selectedDateForPanel ) {
+          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
+          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
+        }
+
+        showNotification( 'Tareas actualizadas desde otro dispositivo', 'info' );
+      }
+    },
+    ( error ) => {
+      console.error( '❌ Error en listener:', error );
+      setTimeout( () => {
+        if ( currentUser && isOnline ) {
+          setupRealtimeSync();
+        }
+      }, 5000 );
+    }
+  );
+
+  console.log( '✅ Listener anti-duplicados configurado' );
+}
 
 //showQuickAddTask con sync automático
 function showQuickAddTask( dateStr ) {
@@ -5401,7 +5525,6 @@ function onPageVisibilityChange() {
 
 // Escuchar cuando la PWA vuelve del background
 document.addEventListener( "visibilitychange", onPageVisibilityChange );
-
 
 function updateNotificationButton() {
   const btn = document.getElementById( "notificationsBtn" );
@@ -6151,7 +6274,7 @@ function isDuplicateTask( dateStr, task ) {
   );
 }
 
-// 6️⃣ NUEVO: Limpieza de duplicados existentes
+// Limpieza de duplicados existentes
 async function cleanupDuplicateTasks() {
   console.log( '🧹 Iniciando limpieza de duplicados...' );
 
