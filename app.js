@@ -3041,38 +3041,6 @@ function showDailyTaskPanel( dateStr, day ) {
   panel.classList.remove( "hidden" );
 }
 
-// Función para hacer scroll suave al panel de tareas
-function scrollToPanelSmoothly() {
-  const panel = document.getElementById( "dailyTaskPanel" );
-  if ( !panel ) return;
-
-  // Pequeño delay para asegurar que el panel esté visible
-  setTimeout( () => {
-    const panelRect = panel.getBoundingClientRect();
-    const windowHeight = window.innerHeight;
-
-    // Si el panel no está completamente visible
-    if ( panelRect.top < 0 || panelRect.bottom > windowHeight ) {
-      // Calcular posición ideal (centrado verticalmente o cerca del top)
-      const scrollOffset = window.innerWidth < 768 ? 80 : 100; // Más margen en móvil
-
-      panel.scrollIntoView( {
-        behavior: "smooth",
-        block: "start",
-        inline: "nearest"
-      } );
-
-      // Ajuste fino del scroll para dejar espacio arriba
-      setTimeout( () => {
-        window.scrollBy( {
-          top: -scrollOffset,
-          behavior: "smooth"
-        } );
-      }, 300 );
-    }
-  }, 100 );
-}
-
 function sortTasksByPriority( tasks ) {
   return tasks.sort( ( a, b ) => {
     // Primero por prioridad (1=más importante, 4=menos importante)
