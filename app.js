@@ -1037,7 +1037,7 @@ async function initFirebase() {
   }
 
   try {
-    console.log( 'Inicializando Firebase...' );
+    console.log( '🔥 Inicializando Firebase...' );
 
     if ( !navigator.onLine ) {
       console.log( '📴 Sin conexión - modo offline' );
@@ -1047,32 +1047,44 @@ async function initFirebase() {
 
     if ( !firebase.apps.length ) {
       firebase.initializeApp( firebaseConfig );
-      console.log( 'Firebase App inicializada' );
+      console.log( '✅ Firebase App inicializada' );
     }
 
     db = firebase.firestore();
     auth = firebase.auth();
 
+    // ✅ CRÍTICO: Usar LOCAL persistence para mantener sesión al cerrar
     try {
       await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-      console.log( 'Persistencia LOCAL configurada' );
+      console.log( '✅ Persistencia LOCAL configurada - sesión sobrevivirá al cerrar app' );
     } catch ( persistError ) {
-      console.warn( '⚠️ Error configurando persistencia:', persistError.code );
-    }
-
-    try {
-      await db.enablePersistence( { synchronizeTabs: true } );
-      console.log( 'Cache de Firestore habilitado' );
-    } catch ( cacheError ) {
-      if ( cacheError.code === 'failed-precondition' ) {
-        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
+      console.error( '❌ Error configurando persistencia:', persistError );
+      // Fallback: intentar con indexedDB
+      try {
+        await auth.setPersistence( firebase.auth.Auth.Persistence.INDEXED_DB_LOCAL );
+        console.log( '✅ Persistencia IndexedDB configurada' );
+      } catch ( fallbackError ) {
+        console.error( '❌ Falló persistencia IndexedDB:', fallbackError );
       }
     }
 
+    // Cache de Firestore
+    try {
+      await db.enablePersistence( { synchronizeTabs: true } );
+      console.log( '✅ Cache de Firestore habilitado' );
+    } catch ( cacheError ) {
+      if ( cacheError.code === 'failed-precondition' ) {
+        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
+      } else if ( cacheError.code === 'unimplemented' ) {
+        console.warn( '⚠️ Cache no soportado en este navegador' );
+      }
+    }
+
+    // Inicializar FCM
     if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
         messaging = firebase.messaging();
-        console.log( 'FCM inicializado' );
+        console.log( '✅ FCM inicializado' );
       } catch ( messagingError ) {
         console.warn( '⚠️ Error inicializando FCM:', messagingError );
         messaging = null;
@@ -1081,21 +1093,43 @@ async function initFirebase() {
 
     firebaseInitialized = true;
 
-    // Verificar si hay sesión activa
+    // ✅ CRÍTICO: Esperar a que Firebase restaure la sesión
+    await new Promise( resolve => {
+      const unsubscribe = auth.onAuthStateChanged( user => {
+        unsubscribe();
+        resolve();
+      } );
+    } );
+
     currentUser = auth.currentUser;
 
     if ( currentUser ) {
-      console.log( 'Sesión restaurada:', currentUser.email );
+      console.log( '✅ Sesión restaurada automáticamente:', currentUser.email );
+
+      // ✅ NUEVO: Notificar al Service Worker
+      if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: {
+            userId: currentUser.uid,
+            email: currentUser.email,
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL
+          }
+        } );
+      }
+
       updateUI();
       updateSyncIndicator( 'success' );
 
+      // Sync después de un delay
       setTimeout( () => {
         if ( isOnline && !isSyncing ) {
           syncFromFirebase();
         }
       }, 2000 );
     } else {
-      console.log( '❌ No hay sesión activa' );
+      console.log( '❌ No hay sesión guardada' );
       currentUser = null;
       updateUI();
     }
@@ -1116,7 +1150,6 @@ async function signInWithGoogle() {
   try {
     console.log( '🔑 Iniciando login con Google...' );
 
-    // INICIALIZAR FIREBASE AQUÍ
     if ( !firebaseInitialized ) {
       await initFirebase();
     }
@@ -1136,35 +1169,56 @@ async function signInWithGoogle() {
       const result = await auth.signInWithPopup( provider );
 
       if ( result.user ) {
-        console.log( 'Login exitoso:', result.user.email );
+        console.log( '✅ Login exitoso:', result.user.email );
 
         currentUser = result.user;
 
-        resetListenerState();
-
+        // ✅ CRÍTICO: Marcar sesión como persistente
         localStorage.setItem( 'firebase_auth_active', 'true' );
         localStorage.setItem( 'firebase_user_email', result.user.email );
         localStorage.setItem( 'firebase_user_uid', result.user.uid );
+        localStorage.setItem( 'firebase_session_timestamp', Date.now().toString() );
+
+        // ✅ NUEVO: Notificar al Service Worker INMEDIATAMENTE
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'SET_USER_ID',
+            data: {
+              userId: result.user.uid,
+              email: result.user.email,
+              displayName: result.user.displayName,
+              photoURL: result.user.photoURL
+            }
+          } );
+          console.log( '📤 Usuario enviado al Service Worker' );
+        }
+
+        // Enviar tareas actuales al SW
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'UPDATE_TASKS',
+            data: { tasks, timestamp: Date.now() }
+          } );
+          console.log( '📤 Tareas enviadas al Service Worker' );
+        }
 
         updateUI();
         closeLoginModal();
 
         showNotification( `¡Bienvenido ${result.user.displayName || 'Usuario'}!`, 'success' );
 
-        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-          navigator.serviceWorker.controller.postMessage( {
-            type: 'SET_USER_ID',
-            data: { userId: result.user.uid, email: result.user.email }
-          } );
-        }
+        // Sync después de login
+        setTimeout( () => {
+          if ( isOnline && !isSyncing ) {
+            syncFromFirebase();
+          }
+        }, 3000 );
 
-        // ⚠️ NO hacer sync aquí - lo maneja onAuthStateChanged
-        console.log( '✅ Login exitoso - sync manejado por authStateChanged' );
-
+        // Configurar FCM y notificaciones
         if ( messaging ) {
           setTimeout( async () => {
             try {
-              await requestFCMToken();
+              await promptForNotifications();
               setupFCMListeners();
             } catch ( error ) {
               console.warn( '⚠️ No se pudo configurar FCM:', error );
@@ -6277,16 +6331,16 @@ function saveTasks() {
     localStorage.setItem( "tasks", JSON.stringify( tasks ) );
     localStorage.setItem( "dailyTaskLogs", JSON.stringify( dailyTaskLogs ) );
 
-    // NUEVO: Enviar al Service Worker para IndexedDB
+    // ✅ CRÍTICO: Siempre enviar tareas actualizadas al Service Worker
     if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
       navigator.serviceWorker.controller.postMessage( {
         type: 'UPDATE_TASKS',
         data: { tasks, timestamp: Date.now() }
       } );
-      console.log( '📤 Tareas enviadas al SW' );
+      console.log( '📤 Tareas actualizadas en Service Worker' );
     }
   } catch ( error ) {
-    console.error( "Error saving tasks:", error );
+    console.error( "❌ Error saving tasks:", error );
     showNotification( "Error al guardar tareas", "error" );
   }
 }
@@ -6412,17 +6466,9 @@ document.addEventListener( "DOMContentLoaded", async function () {
     initializeTodayPanel();
   }, 1500 );
 
-  // NUEVO: NO inicializar Firebase automáticamente
-  console.log( '⏸️ Firebase en espera (se inicializará al hacer login)' );
-  hideLoadingScreen();
-  updateUI();
-
-  // Modo offline por defecto
-  if ( !isOnline ) {
-    console.log( '📴 Sin conexión - modo offline' );
-    currentUser = { isOffline: true };
-    updateUI();
-  }
+  // ✅ CRÍTICO: SIEMPRE inicializar Firebase (para restaurar sesión)
+  console.log( '🔥 Inicializando Firebase automáticamente...' );
+  await initFirebase();
 
   setTimeout( () => {
     handleServiceWorkerMessages();
@@ -6446,65 +6492,99 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  // NUEVO: Verificar si hay sesión guardada
-  const hadSession = localStorage.getItem( 'firebase_auth_active' ) === 'true';
-  if ( hadSession && isOnline ) {
-    console.log( '🔄 Sesión previa detectada, restaurando...' );
-    await initFirebase();
-  }
-
   setupAuthListeners();
 
-  // NUEVO: Limpieza preventiva de duplicados
+  // Limpieza preventiva
   await cleanupDuplicates();
 
+  console.log( '✅ Aplicación inicializada completamente' );
 } );
 
 //Configurar listeners después de DOMContentLoaded
 function setupAuthListeners() {
   console.log( '🔐 Configurando listeners de autenticación...' );
 
-  // Esperar a que auth esté disponible
   if ( !auth ) {
     console.warn( '⚠️ Auth no disponible aún, reintentando...' );
     setTimeout( setupAuthListeners, 500 );
     return;
   }
 
-  // LISTENER ÚNICO: Cambios de autenticación
-  auth.onAuthStateChanged( ( user ) => {
+  // ✅ LISTENER ÚNICO Y MEJORADO
+  auth.onAuthStateChanged( async ( user ) => {
     console.log( '🔄 onAuthStateChanged:', user ? user.email : 'no user' );
 
     if ( user ) {
+      // Usuario logueado
       if ( !currentUser || currentUser.uid !== user.uid ) {
         console.log( '✅ Nueva sesión detectada:', user.email );
         currentUser = user;
 
-        // ✅ CRÍTICO: Limpiar listener anterior
+        // ✅ CRÍTICO: Notificar al Service Worker
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'SET_USER_ID',
+            data: {
+              userId: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              photoURL: user.photoURL
+            }
+          } );
+          console.log( '📤 Sesión actualizada en Service Worker' );
+        }
+
+        // ✅ Enviar tareas actuales al SW
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'UPDATE_TASKS',
+            data: { tasks, timestamp: Date.now() }
+          } );
+        }
+
+        // Limpiar listener anterior
         if ( firestoreListener ) {
           firestoreListener();
           firestoreListener = null;
-          console.log( '🔇 Listener anterior desconectado' );
         }
 
         localStorage.setItem( 'firebase_auth_active', 'true' );
         localStorage.setItem( 'firebase_user_email', user.email );
         localStorage.setItem( 'firebase_user_uid', user.uid );
+        localStorage.setItem( 'firebase_session_timestamp', Date.now().toString() );
 
         updateUI();
         closeLoginModal();
 
-        // ✅ ORDEN CORRECTO CRÍTICO:
-        // 1. Configurar listener PRIMERO (para capturar cambios en tiempo real)
+        // Configurar listener en tiempo real
         setupRealtimeSync();
 
-        // 2. ESPERAR 3 segundos antes de sync inicial
-        // 3. Sync bidireccional (descarga Y sube)
+        // Sync bidireccional después de 3 segundos
         if ( isOnline && !isSyncing ) {
           setTimeout( () => {
             console.log( '🔄 Sync inicial después de login' );
             syncFromFirebaseBidirectional();
-          }, 3000 ); // ⚠️ AUMENTADO a 3 segundos
+          }, 3000 );
+        }
+
+        // Configurar FCM si está disponible
+        if ( messaging && Notification.permission === 'granted' ) {
+          setTimeout( async () => {
+            try {
+              const token = await requestFCMToken();
+              if ( token ) {
+                // Actualizar token en SW
+                if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+                  navigator.serviceWorker.controller.postMessage( {
+                    type: 'FCM_TOKEN',
+                    data: { token }
+                  } );
+                }
+              }
+            } catch ( error ) {
+              console.warn( '⚠️ Error configurando FCM:', error );
+            }
+          }, 2000 );
         }
       }
     } else {
@@ -6518,14 +6598,25 @@ function setupAuthListeners() {
           firestoreListener = null;
         }
 
+        // ✅ CRÍTICO: Notificar logout al Service Worker
+        if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+          navigator.serviceWorker.controller.postMessage( {
+            type: 'LOGOUT'
+          } );
+          console.log( '📤 Logout notificado al Service Worker' );
+        }
+
         currentUser = null;
         localStorage.removeItem( 'firebase_auth_active' );
+        localStorage.removeItem( 'firebase_user_email' );
+        localStorage.removeItem( 'firebase_user_uid' );
+        localStorage.removeItem( 'firebase_session_timestamp' );
         updateUI();
       }
     }
   } );
 
-  console.log( 'Listeners de autenticación configurados' );
+  console.log( '✅ Listeners de autenticación configurados' );
 }
 
 // Limpiar duplicados al volver de background
@@ -6542,5 +6633,26 @@ document.addEventListener( 'visibilitychange', async () => {
     }, 1000 );
   }
 } );
+
+function checkSessionHealth() {
+  if ( !currentUser || currentUser.isOffline ) return;
+
+  const sessionTimestamp = localStorage.getItem( 'firebase_session_timestamp' );
+  if ( !sessionTimestamp ) {
+    console.warn( '⚠️ No hay timestamp de sesión' );
+    return;
+  }
+
+  const sessionAge = Date.now() - parseInt( sessionTimestamp );
+  const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+  if ( sessionAge > maxAge ) {
+    console.warn( '⚠️ Sesión muy antigua, requiere reautenticación' );
+    signOut();
+  }
+}
+
+// Verificar salud de sesión cada hora
+setInterval( checkSessionHealth, 60 * 60 * 1000 );
 
 console.log( 'Sistema de autenticación configurado' );

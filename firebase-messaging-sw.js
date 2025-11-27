@@ -1,4 +1,4 @@
-// 🔥 SERVICE WORKER CON FCM BACKGROUND v6.0
+// 🔥 SERVICE WORKER CON FCM BACKGROUND v7.0 - NOTIFICACIONES PERSISTENTES
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
 importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
 
@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v4.8';
+const CACHE_VERSION = 'v5.0';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -29,31 +29,111 @@ const STATIC_FILES = [
     '/favicon.png',
 ];
 
-// IndexedDB
+// ==========================================
+// 📦 IndexedDB MEJORADO
+// ==========================================
 const DB_NAME = 'TasksDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const TASKS_STORE = 'tasks';
+const USER_STORE = 'userSession'; // NUEVO: Store para sesión persistente
+const NOTIFICATIONS_STORE = 'notifications'; // NUEVO: Store para tracking de notificaciones
 let db = null;
 
 async function initDB() {
     return new Promise( ( resolve, reject ) => {
         const request = indexedDB.open( DB_NAME, DB_VERSION );
+
         request.onerror = () => reject( request.error );
+
         request.onsuccess = () => {
             db = request.result;
+            console.log( '✅ IndexedDB inicializado' );
             resolve( db );
         };
+
         request.onupgradeneeded = ( event ) => {
             const database = event.target.result;
+
+            // Store de tareas
             if ( !database.objectStoreNames.contains( TASKS_STORE ) ) {
                 database.createObjectStore( TASKS_STORE, { keyPath: 'id' } );
             }
+
+            // NUEVO: Store de sesión de usuario
+            if ( !database.objectStoreNames.contains( USER_STORE ) ) {
+                database.createObjectStore( USER_STORE, { keyPath: 'id' } );
+            }
+
+            // NUEVO: Store de notificaciones enviadas
+            if ( !database.objectStoreNames.contains( NOTIFICATIONS_STORE ) ) {
+                const notifStore = database.createObjectStore( NOTIFICATIONS_STORE, { keyPath: 'key' } );
+                notifStore.createIndex( 'date', 'date', { unique: false } );
+                notifStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
+            }
+
+            console.log( '🔧 IndexedDB estructuras creadas/actualizadas' );
         };
     } );
 }
 
+// ==========================================
+// 👤 GESTIÓN DE SESIÓN PERSISTENTE
+// ==========================================
+async function saveUserSession( userData ) {
+    if ( !db ) await initDB();
+
+    const transaction = db.transaction( [ USER_STORE ], 'readwrite' );
+    const store = transaction.objectStore( USER_STORE );
+
+    await store.put( {
+        id: 'currentUser',
+        uid: userData.uid,
+        email: userData.email,
+        displayName: userData.displayName,
+        photoURL: userData.photoURL,
+        fcmToken: userData.fcmToken,
+        timestamp: Date.now(),
+        lastActive: Date.now()
+    } );
+
+    console.log( '💾 Sesión de usuario guardada:', userData.email );
+}
+
+async function getUserSession() {
+    if ( !db ) await initDB();
+
+    return new Promise( ( resolve, reject ) => {
+        const transaction = db.transaction( [ USER_STORE ], 'readonly' );
+        const store = transaction.objectStore( USER_STORE );
+        const request = store.get( 'currentUser' );
+
+        request.onsuccess = () => {
+            const session = request.result;
+            if ( session ) {
+                console.log( '✅ Sesión recuperada:', session.email );
+            }
+            resolve( session );
+        };
+        request.onerror = () => reject( request.error );
+    } );
+}
+
+async function clearUserSession() {
+    if ( !db ) await initDB();
+
+    const transaction = db.transaction( [ USER_STORE ], 'readwrite' );
+    const store = transaction.objectStore( USER_STORE );
+    await store.clear();
+
+    console.log( '🗑️ Sesión de usuario borrada' );
+}
+
+// ==========================================
+// 📝 GESTIÓN DE TAREAS
+// ==========================================
 async function saveTasksToDB( tasks ) {
     if ( !db ) await initDB();
+
     const transaction = db.transaction( [ TASKS_STORE ], 'readwrite' );
     const store = transaction.objectStore( TASKS_STORE );
     await store.clear();
@@ -67,11 +147,13 @@ async function saveTasksToDB( tasks ) {
             } );
         }
     }
-    console.log( '✅ Tareas guardadas en IndexedDB' );
+
+    console.log( `📝 ${Object.keys( tasks ).length} días de tareas guardados en IndexedDB` );
 }
 
 async function getTasksFromDB() {
     if ( !db ) await initDB();
+
     return new Promise( ( resolve, reject ) => {
         const transaction = db.transaction( [ TASKS_STORE ], 'readonly' );
         const store = transaction.objectStore( TASKS_STORE );
@@ -80,23 +162,103 @@ async function getTasksFromDB() {
         request.onsuccess = () => {
             const allTasks = request.result;
             const tasksByDate = {};
+
             allTasks.forEach( task => {
                 if ( !tasksByDate[ task.date ] ) {
                     tasksByDate[ task.date ] = [];
                 }
                 tasksByDate[ task.date ].push( task );
             } );
+
+            console.log( `📖 ${allTasks.length} tareas recuperadas de IndexedDB` );
             resolve( tasksByDate );
+        };
+
+        request.onerror = () => reject( request.error );
+    } );
+}
+
+// ==========================================
+// 🔔 TRACKING DE NOTIFICACIONES PERSISTENTE
+// ==========================================
+async function markNotificationSent( key, taskId, dateStr ) {
+    if ( !db ) await initDB();
+
+    const transaction = db.transaction( [ NOTIFICATIONS_STORE ], 'readwrite' );
+    const store = transaction.objectStore( NOTIFICATIONS_STORE );
+
+    await store.put( {
+        key: key,
+        taskId: taskId,
+        date: dateStr,
+        timestamp: Date.now()
+    } );
+
+    console.log( `✅ Notificación marcada como enviada: ${key}` );
+}
+
+async function wasNotificationSent( key ) {
+    if ( !db ) await initDB();
+
+    return new Promise( ( resolve, reject ) => {
+        const transaction = db.transaction( [ NOTIFICATIONS_STORE ], 'readonly' );
+        const store = transaction.objectStore( NOTIFICATIONS_STORE );
+        const request = store.get( key );
+
+        request.onsuccess = () => {
+            const exists = !!request.result;
+            resolve( exists );
         };
         request.onerror = () => reject( request.error );
     } );
+}
+
+async function clearOldNotifications() {
+    if ( !db ) await initDB();
+
+    const twoDaysAgo = Date.now() - ( 2 * 24 * 60 * 60 * 1000 );
+
+    const transaction = db.transaction( [ NOTIFICATIONS_STORE ], 'readwrite' );
+    const store = transaction.objectStore( NOTIFICATIONS_STORE );
+    const index = store.index( 'timestamp' );
+
+    const request = index.openCursor( IDBKeyRange.upperBound( twoDaysAgo ) );
+
+    request.onsuccess = ( event ) => {
+        const cursor = event.target.result;
+        if ( cursor ) {
+            cursor.delete();
+            cursor.continue();
+        }
+    };
+
+    console.log( '🧹 Notificaciones antiguas limpiadas' );
+}
+
+async function clearTaskNotifications( taskId ) {
+    if ( !db ) await initDB();
+
+    const transaction = db.transaction( [ NOTIFICATIONS_STORE ], 'readwrite' );
+    const store = transaction.objectStore( NOTIFICATIONS_STORE );
+
+    const keysToRemove = [
+        `${taskId}-15min`,
+        `${taskId}-start`,
+        `${taskId}-late`
+    ];
+
+    for ( const key of keysToRemove ) {
+        await store.delete( key );
+    }
+
+    console.log( `🗑️ Notificaciones de tarea ${taskId} limpiadas` );
 }
 
 // ==========================================
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v6.0 instalando...' );
+    console.log( '🔧 SW v7.0 instalando...' );
     event.waitUntil(
         Promise.all( [
             caches.open( CACHE_STATIC ).then( cache => cache.addAll( STATIC_FILES ) ),
@@ -106,7 +268,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v6.0 activándose...' );
+    console.log( '🚀 SW v7.0 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -119,6 +281,7 @@ self.addEventListener( 'activate', ( event ) => {
                 )
             ),
             initDB(),
+            clearOldNotifications(),
             self.clients.claim()
         ] ).then( () => {
             console.log( '✅ SW activado y listo' );
@@ -131,7 +294,7 @@ self.addEventListener( 'activate', ( event ) => {
 // 🔥 FCM BACKGROUND MESSAGING
 // ==========================================
 messaging.onBackgroundMessage( ( payload ) => {
-    console.log( '📨 Mensaje FCM recibido en background:', payload );
+    console.log( '📨 Mensaje FCM en background:', payload );
 
     const { notification, data } = payload;
 
@@ -159,7 +322,7 @@ messaging.onBackgroundMessage( ( payload ) => {
 } );
 
 // ==========================================
-// FETCH (sin cambios)
+// FETCH
 // ==========================================
 self.addEventListener( 'fetch', ( event ) => {
     const { request } = event;
@@ -217,42 +380,53 @@ async function networkFirst( request ) {
 }
 
 // ==========================================
-// NOTIFICATION SCHEDULER (Local)
+// ⏰ NOTIFICATION SCHEDULER (MEJORADO)
 // ==========================================
 let notificationTimer = null;
-const sentNotifications = new Set();
 
 function startNotificationScheduler() {
-    console.log( '⏰ Iniciando scheduler de notificaciones...' );
+    console.log( '⏰ Iniciando scheduler de notificaciones persistentes...' );
+
     if ( notificationTimer ) clearInterval( notificationTimer );
 
+    // Verificar inmediatamente
+    checkTaskNotifications();
+
+    // Luego cada 30 segundos
     notificationTimer = setInterval( async () => {
         await checkTaskNotifications();
-    }, 30000 ); // Cada 30 segundos
-
-    checkTaskNotifications();
+    }, 30000 );
 }
 
 async function checkTaskNotifications() {
     try {
+        // Verificar si hay sesión activa
+        const userSession = await getUserSession();
+        if ( !userSession ) {
+            console.log( '⏭️ No hay sesión activa, saltando verificación' );
+            return;
+        }
+
         const tasks = await getTasksFromDB();
         const now = new Date();
         const today = formatDate( now );
         const todayTasks = tasks[ today ] || [];
 
-        if ( todayTasks.length === 0 ) return;
+        if ( todayTasks.length === 0 ) {
+            console.log( '📭 No hay tareas para hoy' );
+            return;
+        }
 
         const currentHour = now.getHours();
         const currentMinute = now.getMinutes();
         const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today}` );
+        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today} - ${currentHour}:${String( currentMinute ).padStart( 2, '0' )}` );
 
-        const resetKey = `reset-${today}`;
-        if ( !sentNotifications.has( resetKey ) && currentHour === 0 && currentMinute === 0 ) {
-            sentNotifications.clear();
-            sentNotifications.add( resetKey );
-            console.log( '🔄 Reset diario de notificaciones' );
+        // Reset diario
+        if ( currentHour === 0 && currentMinute < 1 ) {
+            await clearOldNotifications();
+            console.log( '🔄 Reset diario de notificaciones completado' );
         }
 
         for ( const task of todayTasks ) {
@@ -261,25 +435,31 @@ async function checkTaskNotifications() {
             const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
             const taskTimeInMinutes = taskHours * 60 + taskMinutes;
 
-            // 15 minutos antes
+            // 🔔 15 minutos antes
             const reminderKey = `${task.id}-15min`;
-            if ( !sentNotifications.has( reminderKey ) &&
+            const alreadySentReminder = await wasNotificationSent( reminderKey );
+
+            if ( !alreadySentReminder &&
                 currentTimeInMinutes >= taskTimeInMinutes - 15 &&
                 currentTimeInMinutes < taskTimeInMinutes - 13 ) {
 
                 await showNotification( {
-                    title: `⏰ Recordatorio: ${task.title}`,
-                    body: `Inicia en 15 minutos (${task.time})`,
+                    title: `⏰ Próximamente: ${task.title}`,
+                    body: `Comienza en 15 minutos (${task.time})`,
                     tag: reminderKey,
                     requireInteraction: false,
-                    vibrate: [ 300, 100, 300 ]
+                    vibrate: [ 300, 100, 300 ],
+                    data: { taskId: task.id, dateStr: today, type: 'reminder' }
                 } );
-                sentNotifications.add( reminderKey );
+
+                await markNotificationSent( reminderKey, task.id, today );
             }
 
-            // Hora exacta
+            // 🔔 Hora exacta
             const startKey = `${task.id}-start`;
-            if ( !sentNotifications.has( startKey ) &&
+            const alreadySentStart = await wasNotificationSent( startKey );
+
+            if ( !alreadySentStart &&
                 currentTimeInMinutes >= taskTimeInMinutes &&
                 currentTimeInMinutes < taskTimeInMinutes + 2 ) {
 
@@ -288,28 +468,34 @@ async function checkTaskNotifications() {
                     body: `Programada para ${task.time}`,
                     tag: startKey,
                     requireInteraction: true,
-                    vibrate: [ 200, 50, 200, 50, 400 ]
+                    vibrate: [ 200, 50, 200, 50, 400 ],
+                    data: { taskId: task.id, dateStr: today, type: 'start' }
                 } );
-                sentNotifications.add( startKey );
+
+                await markNotificationSent( startKey, task.id, today );
             }
 
-            // 30 minutos tarde
+            // ⚠️ 30 minutos tarde
             const lateKey = `${task.id}-late`;
-            if ( !sentNotifications.has( lateKey ) &&
+            const alreadySentLate = await wasNotificationSent( lateKey );
+
+            if ( !alreadySentLate &&
                 currentTimeInMinutes >= taskTimeInMinutes + 30 ) {
 
                 await showNotification( {
                     title: `⚠️ Tarea Retrasada: ${task.title}`,
-                    body: 'Han pasado 30 minutos desde la hora programada',
+                    body: 'Han pasado 30+ minutos desde la hora programada',
                     tag: lateKey,
                     requireInteraction: false,
-                    vibrate: [ 100, 100, 100, 100, 100 ]
+                    vibrate: [ 100, 100, 100, 100, 100 ],
+                    data: { taskId: task.id, dateStr: today, type: 'late' }
                 } );
-                sentNotifications.add( lateKey );
+
+                await markNotificationSent( lateKey, task.id, today );
             }
         }
     } catch ( error ) {
-        console.error( '❌ Error verificando notificaciones:', error );
+        console.error( '❌ Error en checkTaskNotifications:', error );
     }
 }
 
@@ -323,11 +509,17 @@ async function showNotification( options ) {
             requireInteraction: options.requireInteraction || false,
             vibrate: options.vibrate || [ 200, 100, 200 ],
             data: { timestamp: Date.now(), ...options.data },
-            actions: options.actions || []
+            actions: [
+                { action: 'open', title: 'Ver tarea' },
+                { action: 'close', title: 'Cerrar' }
+            ]
         } );
-        console.log( `✅ Notificación mostrada: ${options.title}` );
+
+        console.log( `✅ Notificación enviada: ${options.title}` );
+        return true;
     } catch ( error ) {
         console.error( '❌ Error mostrando notificación:', error );
+        return false;
     }
 }
 
@@ -339,49 +531,96 @@ function formatDate( date ) {
 }
 
 // ==========================================
-// MENSAJES DESDE LA APP
+// 📨 MENSAJES DESDE LA APP
 // ==========================================
 self.addEventListener( 'message', async ( event ) => {
     const { type, data } = event.data || {};
+
+    console.log( `📬 Mensaje recibido en SW: ${type}` );
 
     switch ( type ) {
         case 'UPDATE_TASKS':
             await saveTasksToDB( data.tasks );
             console.log( '📝 Tareas actualizadas en SW' );
+
+            // Re-verificar notificaciones después de actualizar tareas
+            setTimeout( () => checkTaskNotifications(), 1000 );
+            break;
+
+        case 'SET_USER_ID':
+            await saveUserSession( {
+                uid: data.userId,
+                email: data.email,
+                displayName: data.displayName || data.email,
+                photoURL: data.photoURL || null,
+                fcmToken: data.fcmToken || null
+            } );
+            console.log( '👤 Usuario guardado en SW:', data.email );
+
+            // Iniciar scheduler si no está activo
+            if ( !notificationTimer ) {
+                startNotificationScheduler();
+            }
+            break;
+
+        case 'LOGOUT':
+            await clearUserSession();
+            await clearOldNotifications();
+            if ( notificationTimer ) {
+                clearInterval( notificationTimer );
+                notificationTimer = null;
+            }
+            console.log( '👋 Sesión cerrada en SW' );
             break;
 
         case 'CLEAR_TASK_NOTIFICATION':
-            const taskId = data.taskId;
-            sentNotifications.delete( `${taskId}-15min` );
-            sentNotifications.delete( `${taskId}-start` );
-            sentNotifications.delete( `${taskId}-late` );
-            console.log( `🧹 Notificaciones limpiadas: ${taskId}` );
+            await clearTaskNotifications( data.taskId );
             break;
 
         case 'FORCE_CHECK':
             await checkTaskNotifications();
             break;
+
+        case 'FCM_TOKEN':
+            const session = await getUserSession();
+            if ( session ) {
+                session.fcmToken = data.token;
+                await saveUserSession( session );
+                console.log( '🔑 FCM Token actualizado en SW' );
+            }
+            break;
     }
 } );
 
 // ==========================================
-// CLICK EN NOTIFICACIÓN
+// 🖱️ CLICK EN NOTIFICACIÓN
 // ==========================================
 self.addEventListener( 'notificationclick', ( event ) => {
     console.log( '🖱️ Click en notificación:', event.notification.tag );
 
     event.notification.close();
 
-    const urlToOpen = event.notification.data?.url || '/';
+    const notifData = event.notification.data || {};
+    const urlToOpen = notifData.url || '/';
 
     event.waitUntil(
         clients.matchAll( { type: 'window', includeUncontrolled: true } )
             .then( clientList => {
+                // Intentar enfocar una ventana existente
                 for ( const client of clientList ) {
-                    if ( client.url === urlToOpen && 'focus' in client ) {
-                        return client.focus();
+                    if ( client.url.includes( urlToOpen.split( '?' )[ 0 ] ) && 'focus' in client ) {
+                        return client.focus().then( client => {
+                            // Enviar mensaje a la app con los datos de la notificación
+                            client.postMessage( {
+                                type: 'NOTIFICATION_CLICKED',
+                                data: notifData
+                            } );
+                            return client;
+                        } );
                     }
                 }
+
+                // Si no hay ventana abierta, abrir una nueva
                 if ( clients.openWindow ) {
                     return clients.openWindow( urlToOpen );
                 }
@@ -390,9 +629,34 @@ self.addEventListener( 'notificationclick', ( event ) => {
 } );
 
 // ==========================================
-// INICIALIZACIÓN
+// 🔄 PERIODIC BACKGROUND SYNC
 // ==========================================
-initDB().then( () => {
-    console.log( '✅ Service Worker v6.0 con FCM iniciado' );
-    startNotificationScheduler();
+self.addEventListener( 'periodicsync', ( event ) => {
+    if ( event.tag === 'check-tasks' ) {
+        console.log( '⏰ Periodic sync: verificando tareas' );
+        event.waitUntil( checkTaskNotifications() );
+    }
 } );
+
+// ==========================================
+// 🚀 INICIALIZACIÓN
+// ==========================================
+initDB().then( async () => {
+    console.log( '✅ Service Worker v7.0 iniciado' );
+
+    // Verificar si hay sesión guardada
+    const session = await getUserSession();
+    if ( session ) {
+        console.log( '👤 Sesión encontrada:', session.email );
+        startNotificationScheduler();
+    } else {
+        console.log( '❌ No hay sesión guardada' );
+    }
+} );
+
+// ==========================================
+// 🧹 LIMPIEZA PERIÓDICA
+// ==========================================
+setInterval( () => {
+    clearOldNotifications();
+}, 24 * 60 * 60 * 1000 ); // Cada 24 horas
