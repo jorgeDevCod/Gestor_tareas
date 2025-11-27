@@ -295,59 +295,43 @@ function getVibrationPattern( type ) {
 }
 
 // Función auxiliar para notificaciones web fallback
-function showInAppNotification( title, message, type = 'info', options = {} ) {
+function showInAppNotification( title, message, type = 'info' ) {
   const notification = document.createElement( 'div' );
 
   const typeIcons = {
-    task: 'fa-tasks',
     success: 'fa-check-circle',
     warning: 'fa-exclamation-triangle',
     info: 'fa-info-circle',
-    reminder: 'fa-bell',
-    late: 'fa-clock'
   };
 
   const typeColors = {
-    task: 'bg-blue-500',
     success: 'bg-green-500',
-    warning: 'fa-exclamation-triangle',
-    info: 'bg-gray-600',
-    reminder: 'bg-purple-500',
-    late: 'bg-orange-500'
+    warning: 'bg-orange-500',
+    info: 'bg-blue-500',
   };
 
   notification.className = `fixed top-20 right-4 ${typeColors[ type ]} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
 
   notification.innerHTML = `
     <div class="flex items-start space-x-3">
-      ${options.icon ? `<img src="${options.icon}" class="w-8 h-8 rounded" alt="icon">` : `<i class="fas ${typeIcons[ type ]} text-xl mt-1 flex-shrink-0"></i>`}
+      <i class="fas ${typeIcons[ type ]} text-xl mt-1"></i>
       <div class="flex-1">
         <div class="font-semibold text-sm">${title}</div>
         <div class="text-xs opacity-90 mt-1">${message}</div>
-        ${options.taskId ? `
-          <button onclick="goToTask('${options.dateStr}', '${options.taskId}')" 
-                  class="mt-2 text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-2 py-1 rounded transition">
-            Ver tarea →
-          </button>
-        ` : ''}
       </div>
-      <button onclick="this.parentElement.parentElement.remove()" 
-              class="text-white hover:text-gray-200 ml-2 flex-shrink-0">
+      <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
         <i class="fas fa-times"></i>
       </button>
     </div>
   `;
 
   document.body.appendChild( notification );
-
-  // Animación de entrada
   setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
 
-  // Auto-remove después de 8 segundos
   setTimeout( () => {
     notification.classList.add( 'translate-x-full' );
     setTimeout( () => notification.remove(), 300 );
-  }, 8000 );
+  }, 5000 );
 }
 
 function goToTask( dateStr, taskId ) {
@@ -758,15 +742,12 @@ function enqueueSync( operation, dateStr, task ) {
 
 //Procesar cola de sincronización
 async function processSyncQueue() {
-  console.log( '🔄 Iniciando processSyncQueue SIN DUPLICADOS...' );
-
   if ( !currentUser || !isOnline || isSyncing ) {
-    console.log( '⚠️ Sync cancelado:', { currentUser: !!currentUser, isOnline, isSyncing } );
+    console.log( '⚠️ Sync cancelado' );
     return;
   }
 
   if ( syncQueue.size === 0 ) {
-    console.log( 'Cola vacía' );
     updateSyncIndicator( "success" );
     return;
   }
@@ -775,26 +756,25 @@ async function processSyncQueue() {
   updateSyncIndicator( "syncing" );
 
   try {
-    const userTasksRef = db
-      .collection( "users" )
-      .doc( currentUser.uid )
-      .collection( "tasks" );
+    const userTasksRef = db.collection( "users" ).doc( currentUser.uid ).collection( "tasks" );
 
-    // NUEVO: Obtener tareas existentes en Firebase ANTES de hacer cambios
-    const existingSnapshot = await userTasksRef.get();
+    // NUEVO: Obtener snapshot actual de Firebase
+    const currentSnapshot = await userTasksRef.get();
     const existingTaskIds = new Set();
 
-    existingSnapshot.forEach( doc => {
+    currentSnapshot.forEach( doc => {
       const task = doc.data();
       existingTaskIds.add( `${task.date}_${task.id}` );
     } );
+
+    console.log( `📊 Firebase tiene ${existingTaskIds.size} tareas actualmente` );
 
     const operations = Array.from( syncQueue.values() );
     console.log( `📤 Procesando ${operations.length} operaciones` );
 
     const BATCH_SIZE = 150;
     let processedCount = 0;
-    const processedTaskIds = new Set(); // ← NUEVO: Evitar duplicados dentro del mismo batch
+    const processedInThisBatch = new Set();
 
     for ( let i = 0; i < operations.length; i += BATCH_SIZE ) {
       const batch = db.batch();
@@ -803,9 +783,9 @@ async function processSyncQueue() {
       for ( const op of batchOps ) {
         const taskDocId = `${op.dateStr}_${op.task?.id}`;
 
-        // CRÍTICO: Evitar duplicados dentro del batch
-        if ( processedTaskIds.has( taskDocId ) ) {
-          console.warn( `⚠️ Operación duplicada ignorada: ${taskDocId}` );
+        // Evitar duplicados en el mismo batch
+        if ( processedInThisBatch.has( taskDocId ) ) {
+          console.warn( `⚠️ Operación duplicada en batch: ${taskDocId}` );
           continue;
         }
 
@@ -814,10 +794,8 @@ async function processSyncQueue() {
         switch ( op.operation ) {
           case "upsert":
             if ( op.task ) {
-              // NUEVO: Verificar duplicados antes de insertar
-              const taskDocId = `${op.dateStr}_${op.task?.id}`;
-
-              if ( !existingTaskIds.has( taskDocId ) && !processedTaskIds.has( taskDocId ) ) {
+              // Solo insertar si NO existe en Firebase
+              if ( !existingTaskIds.has( taskDocId ) ) {
                 batch.set( taskRef, {
                   ...op.task,
                   date: op.dateStr,
@@ -825,47 +803,40 @@ async function processSyncQueue() {
                   syncVersion: Date.now()
                 }, { merge: false } );
 
-                processedTaskIds.add( taskDocId );
+                processedInThisBatch.add( taskDocId );
                 processedCount++;
-                console.log( `✅ Upsert programado: ${op.task.title}` );
+                console.log( `✅ Upsert: ${op.task.title}` );
               } else {
-                console.log( `⏭️ Tarea ya existe o procesada: ${op.task.title}` );
+                console.log( `⏭️ Ya existe: ${op.task.title}` );
               }
             }
             break;
 
           case "delete":
             batch.delete( taskRef );
-            processedTaskIds.add( taskDocId );
+            processedInThisBatch.add( taskDocId );
             processedCount++;
-            console.log( `🗑️ Delete programado: ${taskDocId}` );
+            console.log( `🗑️ Delete: ${taskDocId}` );
             break;
         }
       }
 
-      if ( processedTaskIds.size > 0 ) {
+      if ( processedInThisBatch.size > 0 ) {
         await batch.commit();
-        console.log( `Batch completado: ${batchOps.length} ops` );
+        console.log( `✅ Batch completado: ${batchOps.length} operaciones` );
       }
     }
 
-    // CRÍTICO: Solo limpiar cola si TODO fue exitoso
+    // Limpiar cola solo si TODO fue exitoso
     syncQueue.clear();
     lastSyncTime = Date.now();
 
     console.log( `🎉 Sync completado: ${processedCount} operaciones` );
 
-    // NUEVO: Esperar 2 segundos antes de hacer sync bidireccional
-    setTimeout( () => {
-      if ( !syncInProgress ) {
-        syncFromFirebaseBidirectional();
-      }
-    }, 2000 );
-
     updateSyncIndicator( "success" );
 
-    if ( processedCount >= 3 ) {
-      showNotification( `${processedCount} cambios sincronizados`, "success" );
+    if ( processedCount > 0 ) {
+      showNotification( `✅ ${processedCount} cambios sincronizados`, "success" );
     }
 
   } catch ( error ) {
@@ -3417,53 +3388,62 @@ function clearDayTasks( dateStr ) {
     month: "long",
   } );
 
-  if ( !confirm( `¿Seguro que quieres eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
+  if ( !confirm( `¿Eliminar todas las ${dayTasks.length} tareas del ${formattedDate}?` ) ) {
     return;
   }
 
-  // CRÍTICO: Enviar eliminaciones a Firebase ANTES de eliminar localmente (sin cambios)
+  console.log( `🗑️ Limpiando día ${dateStr} con ${dayTasks.length} tareas` );
+
+  // CRÍTICO: Encolar TODAS las eliminaciones para Firebase PRIMERO
   if ( currentUser && isOnline ) {
     dayTasks.forEach( ( task ) => {
+      // Registrar eliminación
+      registerDeletedTask( dateStr, task );
+
+      // Encolar para Firebase
       enqueueSync( "delete", dateStr, { id: task.id } );
-      clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones pendientes para cada tarea
+
+      console.log( `📤 Eliminación encolada: ${task.title}` );
     } );
 
-    // Procesar inmediatamente las eliminaciones (sin cambios)
+    // Procesar cola inmediatamente
     setTimeout( () => {
       if ( syncQueue.size > 0 ) {
+        console.log( '⚡ Procesando eliminaciones inmediatamente' );
         processSyncQueue();
       }
     }, 100 );
   }
 
-  // Eliminar datos locales (sin cambios)
+  // Eliminar localmente
   delete tasks[ dateStr ];
   delete dailyTaskLogs[ dateStr ];
 
   saveTasks();
-  saveTaskLogs(); // Asegurar que se guarden los logs también
-
-  // Refrescar interfaz (sin cambios)
   renderCalendar();
   updateProgress();
 
-  // ACTUALIZADO: Siempre cerrar panel si es el día del panel (ya que se limpió todo)
-  updatePanelDateHeader( dateStr, date.getDate(), [] );
-  updatePanelProgress( [] );
+  // Actualizar panel
+  if ( selectedDateForPanel === dateStr ) {
+    updatePanelDateHeader( dateStr, date.getDate(), [] );
+    updatePanelProgress( [] );
 
-  const taskList = document.getElementById( "panelTaskList" );
-  if ( taskList ) {
-    taskList.innerHTML = `
-      <div class="text-center py-8 text-gray-500">
-        <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
-        <p>No hay tareas para este día</p>
-        <p class="text-sm mt-2">¡Todas las tareas del día fueron eliminadas!</p>
-      </div>
-    `;
+    const taskList = document.getElementById( "panelTaskList" );
+    if ( taskList ) {
+      taskList.innerHTML = `
+        <div class="text-center py-8 text-gray-500">
+          <i class="fas fa-calendar-check text-4xl mb-3 opacity-50"></i>
+          <p>No hay tareas para este día</p>
+          <p class="text-sm mt-2 text-green-600">✅ Día limpiado correctamente</p>
+        </div>
+      `;
+    }
   }
-  closeDailyTaskPanel(); // NUEVO: Cerrar panel después de limpiar el día
 
-  showNotification( `${dayTasks.length} tareas eliminadas del ${formattedDate}`, "success" );
+  showNotification(
+    `✅ ${dayTasks.length} tareas eliminadas del ${formattedDate}`,
+    "success"
+  );
 }
 
 function createTaskElement( task, dateStr ) {
@@ -3656,28 +3636,38 @@ async function syncFromFirebaseBidirectional() {
       }
 
       remoteTasks[ dateStr ].forEach( ( remoteTask ) => {
-        // VERIFICACIÓN TRIPLE ANTI-DUPLICADOS
+        // VERIFICACIÓN CUÁDRUPLE ANTI-DUPLICADOS
 
         // 1. Verificar si fue eliminada previamente
         if ( wasTaskDeleted( dateStr, remoteTask ) ) {
-          console.log( `🚫 Tarea previamente eliminada, ignorando: ${remoteTask.title}` );
+          console.log( `🚫 Tarea eliminada previamente: ${remoteTask.title}` );
           return;
         }
 
-        // 2. Verificar por contenido (título + hora)
+        // 2. Verificar por ID exacto
+        const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
+
+        // 3. Verificar por contenido (título + hora)
         const existsByContent = tasks[ dateStr ].some( t =>
           t.title === remoteTask.title && t.time === remoteTask.time
         );
 
-        // 3. Verificar por ID
-        const existsById = tasks[ dateStr ].some( t => t.id === remoteTask.id );
+        // 4. Verificar por similitud temporal (mismo título y hora cercana - 5 segundos)
+        const existsBySimilarity = tasks[ dateStr ].some( t => {
+          if ( t.title !== remoteTask.title ) return false;
 
-        if ( !existsByContent && !existsById ) {
+          const localTimestamp = parseInt( t.id.split( '-' ).pop() ) || 0;
+          const remoteTimestamp = parseInt( remoteTask.id.split( '-' ).pop() ) || 0;
+
+          return Math.abs( localTimestamp - remoteTimestamp ) < 5000;
+        } );
+
+        if ( !existsById && !existsByContent && !existsBySimilarity ) {
           tasks[ dateStr ].push( remoteTask );
           tasksUpdated++;
-          console.log( `📥 Tarea descargada: ${remoteTask.title}` );
+          console.log( `📥 Nueva tarea descargada: ${remoteTask.title}` );
         } else {
-          console.log( `⏭️ Tarea ya existe: ${remoteTask.title}` );
+          console.log( `⏭️ Tarea duplicada ignorada: ${remoteTask.title}` );
         }
       } );
     } );
@@ -4664,85 +4654,127 @@ function setupRealtimeSync() {
     .doc( currentUser.uid )
     .collection( "tasks" );
 
+  // Flag para ignorar snapshot inicial
+  let isFirstSnapshot = true;
+
   firestoreListener = userTasksRef.onSnapshot(
     { includeMetadataChanges: false },
-    ( snapshot ) => {
-      // CRÍTICO: Ignorar el primer snapshot (carga inicial)
-      if ( !window.firestoreListenerReady ) {
-        window.firestoreListenerReady = true;
+    async ( snapshot ) => {
+      // CRÍTICO 1: Ignorar primer snapshot (carga inicial)
+      if ( isFirstSnapshot ) {
+        isFirstSnapshot = false;
         console.log( '📸 Snapshot inicial ignorado' );
         return;
       }
 
-      // Ignorar durante sync bidireccional
-      if ( syncInProgress || window.syncBidirectionalInProgress || isSyncing ) {
+      // CRÍTICO 2: Ignorar durante sync manual
+      if ( syncInProgress || isSyncing ) {
         console.log( '⏳ Sync en progreso, ignorando snapshot' );
         return;
       }
 
-      console.log( '📡 Snapshot recibido:', snapshot.docChanges().length, 'cambios' );
+      console.log( `📡 Cambios detectados: ${snapshot.docChanges().length}` );
 
       let hasChanges = false;
-      let tasksDeleted = 0;
-      let tasksAdded = 0;
-      let tasksUpdated = 0;
       const affectedDates = new Set();
 
-      // CÓDIGO CORREGIDO - Solo procesa eliminaciones reales
-      snapshot.docChanges().forEach( ( change ) => {
-        // CRÍTICO: Solo procesar eliminaciones
-        if ( change.type !== "removed" ) {
-          console.log( `⏭️ Ignorando cambio tipo: ${change.type}` );
-          return;
-        }
-
+      for ( const change of snapshot.docChanges() ) {
         const task = change.doc.data();
         const dateStr = task.date;
         const taskId = task.id;
 
-        console.log( `🗑️ Eliminación detectada en Firestore: ${task.title}` );
+        // PROCESAR SEGÚN TIPO DE CAMBIO
+        switch ( change.type ) {
+          case "added":
+            // Verificar si NO existe localmente
+            if ( !tasks[ dateStr ] ) {
+              tasks[ dateStr ] = [];
+            }
 
-        if ( !tasks[ dateStr ] ) {
-          console.log( '⏭️ Fecha no existe localmente' );
-          return;
+            const existsByContent = tasks[ dateStr ].some( t =>
+              t.title === task.title && t.time === task.time
+            );
+            const existsById = tasks[ dateStr ].some( t => t.id === taskId );
+            const wasDeleted = wasTaskDeleted( dateStr, task );
+
+            if ( !existsByContent && !existsById && !wasDeleted ) {
+              const newTask = {
+                id: taskId,
+                title: task.title,
+                description: task.description || "",
+                time: task.time || "",
+                completed: task.completed || false,
+                state: task.state || "pending",
+                priority: task.priority || 3,
+              };
+
+              tasks[ dateStr ].push( newTask );
+              hasChanges = true;
+              affectedDates.add( dateStr );
+              console.log( `➕ Tarea añadida: ${task.title}` );
+
+              // Animación visual
+              animateTaskAddition( dateStr, taskId, task.title );
+            } else {
+              console.log( `⏭️ Tarea ya existe o fue eliminada: ${task.title}` );
+            }
+            break;
+
+          case "modified":
+            // Actualizar tarea existente
+            if ( tasks[ dateStr ] ) {
+              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
+              if ( index !== -1 ) {
+                tasks[ dateStr ][ index ] = {
+                  ...tasks[ dateStr ][ index ],
+                  title: task.title,
+                  description: task.description || "",
+                  time: task.time || "",
+                  completed: task.completed || false,
+                  state: task.state || "pending",
+                  priority: task.priority || 3,
+                };
+                hasChanges = true;
+                affectedDates.add( dateStr );
+                console.log( `✏️ Tarea actualizada: ${task.title}` );
+              }
+            }
+            break;
+
+          case "removed":
+            // Eliminar tarea
+            if ( tasks[ dateStr ] ) {
+              const initialLength = tasks[ dateStr ].length;
+
+              tasks[ dateStr ] = tasks[ dateStr ].filter( t =>
+                t.id !== taskId && !( t.title === task.title && t.time === task.time )
+              );
+
+              if ( tasks[ dateStr ].length < initialLength ) {
+                hasChanges = true;
+                affectedDates.add( dateStr );
+
+                // Registrar eliminación
+                registerDeletedTask( dateStr, task );
+                addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
+
+                console.log( `🗑️ Tarea eliminada: ${task.title}` );
+
+                // Animación visual
+                animateTaskDeletion( dateStr, taskId, task.title );
+
+                // Limpiar fecha vacía
+                if ( tasks[ dateStr ].length === 0 ) {
+                  delete tasks[ dateStr ];
+                }
+              }
+            }
+            break;
         }
+      }
 
-        const initialLength = tasks[ dateStr ].length;
-
-        // Eliminar por ID Y por contenido (doble verificación)
-        tasks[ dateStr ] = tasks[ dateStr ].filter( t => {
-          const shouldKeep = t.id !== taskId &&
-            !( t.title === task.title && t.time === task.time );
-          return shouldKeep;
-        } );
-
-        if ( tasks[ dateStr ].length < initialLength ) {
-          console.log( `✅ Tarea eliminada localmente: ${task.title}` );
-
-          // Registrar eliminación para evitar re-sincronización
-          registerDeletedTask( dateStr, task );
-
-          // Limpiar fecha vacía
-          if ( tasks[ dateStr ].length === 0 ) {
-            delete tasks[ dateStr ];
-          }
-
-          saveTasks();
-          renderCalendar();
-          updateProgress();
-
-          // Actualizar panel si está abierto
-          if ( selectedDateForPanel === dateStr ) {
-            const day = new Date( dateStr + 'T12:00:00' ).getDate();
-            showDailyTaskPanel( dateStr, day );
-          }
-        }
-      } );
-
-      // Actualizar UI solo si hubo cambios
+      // Actualizar UI si hubo cambios
       if ( hasChanges ) {
-        console.log( `💾 ${tasksDeleted} tarea(s) eliminada(s)` );
-
         saveTasks();
         renderCalendar();
         updateProgress();
@@ -4750,15 +4782,15 @@ function setupRealtimeSync() {
         // Actualizar panel si está afectado
         if ( selectedDateForPanel && affectedDates.has( selectedDateForPanel ) ) {
           const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
-          console.log( `🔄 Actualizando panel: ${selectedDateForPanel}` );
           showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
         }
 
-        // Notificación
-        if ( tasksDeleted > 0 ) {
+        // Notificación de cambios
+        const totalChanges = snapshot.docChanges().length;
+        if ( totalChanges > 0 ) {
           showSyncNotification(
-            `🗑️ ${tasksDeleted} tarea${tasksDeleted > 1 ? 's' : ''} eliminada${tasksDeleted > 1 ? 's' : ''} en otro dispositivo`,
-            'warning'
+            `🔄 ${totalChanges} cambio${totalChanges > 1 ? 's' : ''} sincronizado${totalChanges > 1 ? 's' : ''}`,
+            'info'
           );
         }
       }
@@ -4773,7 +4805,76 @@ function setupRealtimeSync() {
     }
   );
 
-  console.log( '✅ Listener configurado (solo eliminaciones)' );
+  console.log( '✅ Listener configurado correctamente' );
+}
+
+// Animación visual de tarea añadida
+function animateTaskAddition( dateStr, taskId, taskTitle ) {
+  // Notificación visual
+  showInAppNotification(
+    'Nueva tarea',
+    `"${taskTitle}" añadida en otro dispositivo`,
+    'success'
+  );
+
+  // Animar en calendario si está visible
+  setTimeout( () => {
+    const dayElement = document.querySelector( `[data-date="${dateStr}"]` );
+    if ( dayElement ) {
+      dayElement.classList.add( 'animate-pulse', 'bg-green-50' );
+      setTimeout( () => {
+        dayElement.classList.remove( 'animate-pulse', 'bg-green-50' );
+      }, 2000 );
+    }
+  }, 100 );
+}
+
+// Animación visual de tarea eliminada
+function animateTaskDeletion( dateStr, taskId, taskTitle ) {
+  // Buscar elemento en calendario
+  const calendarTaskElement = document.querySelector(
+    `.task-item[data-task-id="${taskId}"][data-date="${dateStr}"]`
+  );
+
+  if ( calendarTaskElement ) {
+    calendarTaskElement.style.transition = 'all 0.5s ease-out';
+    calendarTaskElement.style.opacity = '0';
+    calendarTaskElement.style.transform = 'scale(0.8) translateX(-20px)';
+
+    setTimeout( () => calendarTaskElement.remove(), 500 );
+  }
+
+  // Buscar elemento en panel
+  if ( selectedDateForPanel === dateStr ) {
+    const panelTaskElement = document.querySelector(
+      `.panel-task-item[data-task-id="${taskId}"]`
+    );
+
+    if ( panelTaskElement ) {
+      panelTaskElement.style.transition = 'all 0.6s ease-out';
+      panelTaskElement.style.opacity = '0';
+      panelTaskElement.style.transform = 'translateX(-100%)';
+
+      setTimeout( () => {
+        panelTaskElement.remove();
+
+        const remainingTasks = tasks[ dateStr ] || [];
+        updatePanelProgress( remainingTasks );
+
+        if ( remainingTasks.length === 0 ) {
+          const taskList = document.getElementById( 'panelTaskList' );
+          if ( taskList ) {
+            taskList.innerHTML = `
+              <div class="text-center py-8 text-gray-500 animate-fade-in">
+                <i class="fas fa-calendar-check text-4xl mb-3 opacity-50"></i>
+                <p>No quedan tareas para este día</p>
+              </div>
+            `;
+          }
+        }
+      }, 600 );
+    }
+  }
 }
 
 function showSyncNotification( message, type = 'info' ) {
@@ -4792,24 +4893,20 @@ function showSyncNotification( message, type = 'info' ) {
   notification.innerHTML = `
     <div class="flex items-center space-x-3">
       <i class="fas ${config.icon} text-xl"></i>
-      <div class="flex-1">
-        <div class="font-semibold text-sm">Sincronización</div>
-        <div class="text-xs opacity-90">${message}</div>
-      </div>
-      <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
+      <span class="text-sm">${message}</span>
+      <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200 ml-2">
         <i class="fas fa-times"></i>
       </button>
     </div>
   `;
 
   document.body.appendChild( notification );
-
   setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
 
   setTimeout( () => {
     notification.classList.add( 'translate-x-full' );
     setTimeout( () => notification.remove(), 300 );
-  }, 5000 );
+  }, 4000 );
 }
 
 // NUEVA FUNCIÓN: Animación visual de eliminación en tiempo real
@@ -6490,13 +6587,10 @@ function setupAuthListeners() {
 
     if ( user ) {
       if ( !currentUser || currentUser.uid !== user.uid ) {
-        console.log( '✅ Nueva sesión detectada' );
+        console.log( '✅ Nueva sesión detectada:', user.email );
         currentUser = user;
 
-        // CRÍTICO: Resetear flag del listener
-        window.firestoreListenerReady = false;
-
-        // CRÍTICO: Limpiar listener anterior si existe
+        // CRÍTICO: Limpiar listener anterior
         if ( firestoreListener ) {
           firestoreListener();
           firestoreListener = null;
@@ -6504,15 +6598,23 @@ function setupAuthListeners() {
         }
 
         localStorage.setItem( 'firebase_auth_active', 'true' );
+        localStorage.setItem( 'firebase_user_email', user.email );
+        localStorage.setItem( 'firebase_user_uid', user.uid );
+
         updateUI();
         closeLoginModal();
 
-        // Setup del listener ANTES de sincronizar
+        // ORDEN CRÍTICO:
+        // 1. Configurar listener
         setupRealtimeSync();
 
-        // Sync después de 2 segundos
+        // 2. Esperar 2 segundos
+        // 3. Hacer sync inicial
         if ( isOnline && !isSyncing ) {
-          setTimeout( () => syncFromFirebaseBidirectional(), 2000 );
+          setTimeout( () => {
+            console.log( '🔄 Iniciando sync inicial...' );
+            syncFromFirebaseBidirectional();
+          }, 2000 );
         }
       }
     } else {
