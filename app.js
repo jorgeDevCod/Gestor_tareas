@@ -4669,176 +4669,83 @@ function quickDeleteTask( dateStr, taskId ) {
   deleteTaskWithOptions( dateStr, taskId );
 }
 
-function setupRealtimeSync() {
-  if ( !currentUser || !db ) {
-    console.warn( '⚠️ No se puede configurar sync en tiempo real' );
-    return;
-  }
+function setupRealTimeSync() {
+  if ( !auth.currentUser || firestoreListener ) return;
 
-  // Limpiar listener anterior
-  if ( firestoreListener ) {
-    firestoreListener();
-    firestoreListener = null;
-    console.log( '🔇 Listener anterior desconectado' );
-  }
+  const userId = auth.currentUser.uid;
+  const userTasksRef = db.collection( 'users' ).doc( userId ).collection( 'tasks' );
 
-  console.log( '👂 Configurando listener en tiempo real...' );
-
-  const userTasksRef = db
-    .collection( "users" )
-    .doc( currentUser.uid )
-    .collection( "tasks" );
-
-  // CRÍTICO: Flag para ignorar snapshot inicial
-  let isFirstSnapshot = true;
+  console.log( '🔄 Iniciando sincronización en tiempo real...' );
 
   firestoreListener = userTasksRef.onSnapshot(
-    { includeMetadataChanges: false },
-    async ( snapshot ) => {
-      // ✅ PASO 1: Ignorar snapshot inicial SIEMPRE
-      if ( isFirstSnapshot ) {
-        isFirstSnapshot = false;
-        console.log( '📸 Snapshot inicial ignorado - evitando duplicados' );
-        return;
-      }
+    ( snapshot ) => {
+      console.log( '📡 Cambios detectados en Firestore' );
 
-      // ✅ PASO 2: Ignorar durante sync manual
-      if ( syncInProgress || isSyncing || window.syncBidirectionalInProgress ) {
-        console.log( '⏳ Sync en progreso, ignorando snapshot' );
-        return;
-      }
+      // 🔥 CLAVE: Procesar cada tipo de cambio
+      snapshot.docChanges().forEach( ( change ) => {
+        const taskData = change.doc.data();
+        const date = change.doc.id;
 
-      const changes = snapshot.docChanges();
-      if ( changes.length === 0 ) {
-        console.log( '📭 Sin cambios en Firestore' );
-        return;
-      }
+        if ( change.type === 'added' || change.type === 'modified' ) {
+          // Actualizar tareas locales
+          tasks[ date ] = taskData.tasks || [];
+          console.log( `✅ Actualizada: ${date}`, taskData.tasks?.length || 0, 'tareas' );
+        }
 
-      console.log( `📡 Cambios detectados: ${changes.length}` );
+        // 🗑️ ELIMINACIÓN EN TIEMPO REAL
+        if ( change.type === 'removed' ) {
+          console.log( `🗑️ Eliminando fecha: ${date}` );
 
-      let hasChanges = false;
-      const affectedDates = new Set();
+          // Eliminar del objeto local
+          delete tasks[ date ];
 
-      for ( const change of changes ) {
-        const task = change.doc.data();
-        const dateStr = task.date;
-        const taskId = task.id;
-
-        switch ( change.type ) {
-          case "added":
-            // ✅ VERIFICACIÓN TRIPLE antes de añadir
-            if ( !tasks[ dateStr ] ) {
-              tasks[ dateStr ] = [];
+          // 🎬 Animar eliminación en el calendario
+          const dayElement = document.querySelector( `[data-date="${date}"]` );
+          if ( dayElement ) {
+            const taskBadge = dayElement.querySelector( '.task-indicator' );
+            if ( taskBadge ) {
+              taskBadge.classList.add( 'deleting-task' );
+              setTimeout( () => {
+                taskBadge.remove();
+              }, 500 );
             }
+          }
 
-            const existsById = tasks[ dateStr ].some( t => t.id === taskId );
-            const existsByContent = tasks[ dateStr ].some( t =>
-              t.title === task.title && t.time === task.time
-            );
-            const wasDeleted = wasTaskDeleted( dateStr, task );
+          // 🎬 Animar eliminación en el panel si está abierto
+          const panelDate = dailyTaskPanel.querySelector( '#panelDate' )?.dataset?.date;
+          if ( panelDate === date && !dailyTaskPanel.classList.contains( 'hidden' ) ) {
+            // Si el panel muestra este día, cerrarlo con animación
+            dailyTaskPanel.style.opacity = '0';
+            setTimeout( () => {
+              dailyTaskPanel.classList.add( 'hidden' );
+              dailyTaskPanel.style.opacity = '1';
+            }, 300 );
+          }
+        }
+      } );
 
-            // SOLO añadir si NO existe de ninguna forma
-            if ( !existsById && !existsByContent && !wasDeleted ) {
-              const newTask = {
-                id: taskId,
-                title: task.title,
-                description: task.description || "",
-                time: task.time || "",
-                completed: task.completed || false,
-                state: task.state || "pending",
-                priority: task.priority || 3,
-              };
+      // Guardar y actualizar UI
+      saveTasks();
+      renderCalendar();
+      updateProgress();
 
-              tasks[ dateStr ].push( newTask );
-              hasChanges = true;
-              affectedDates.add( dateStr );
-              console.log( `➕ Tarea añadida desde otro dispositivo: ${task.title}` );
-
-              animateTaskAddition( dateStr, taskId, task.title );
-            } else {
-              console.log( `⏭️ Tarea ya existe localmente: ${task.title}` );
-            }
-            break;
-
-          case "modified":
-            // Actualizar tarea existente
-            if ( tasks[ dateStr ] ) {
-              const index = tasks[ dateStr ].findIndex( t => t.id === taskId );
-              if ( index !== -1 ) {
-                tasks[ dateStr ][ index ] = {
-                  ...tasks[ dateStr ][ index ],
-                  title: task.title,
-                  description: task.description || "",
-                  time: task.time || "",
-                  completed: task.completed || false,
-                  state: task.state || "pending",
-                  priority: task.priority || 3,
-                };
-                hasChanges = true;
-                affectedDates.add( dateStr );
-                console.log( `✏️ Tarea actualizada: ${task.title}` );
-              }
-            }
-            break;
-
-          case "removed":
-            // ✅ ELIMINAR INMEDIATAMENTE
-            if ( tasks[ dateStr ] ) {
-              const initialLength = tasks[ dateStr ].length;
-
-              tasks[ dateStr ] = tasks[ dateStr ].filter( t =>
-                t.id !== taskId && !( t.title === task.title && t.time === task.time )
-              );
-
-              if ( tasks[ dateStr ].length < initialLength ) {
-                hasChanges = true;
-                affectedDates.add( dateStr );
-
-                registerDeletedTask( dateStr, task );
-                addToChangeLog( "deleted", task.title, dateStr, null, null, taskId );
-
-                console.log( `🗑️ Tarea eliminada desde otro dispositivo: ${task.title}` );
-
-                animateTaskDeletion( dateStr, taskId, task.title );
-
-                if ( tasks[ dateStr ].length === 0 ) {
-                  delete tasks[ dateStr ];
-                }
-              }
-            }
-            break;
+      // Actualizar panel si está visible
+      const currentPanelDate = dailyTaskPanel.querySelector( '#panelDate' )?.dataset?.date;
+      if ( currentPanelDate && !dailyTaskPanel.classList.contains( 'hidden' ) ) {
+        // Solo actualizar si la fecha aún existe
+        if ( tasks[ currentPanelDate ] ) {
+          showDailyTasks( currentPanelDate );
         }
       }
 
-      // Actualizar UI si hubo cambios
-      if ( hasChanges ) {
-        saveTasks();
-        renderCalendar();
-        updateProgress();
-
-        if ( selectedDateForPanel && affectedDates.has( selectedDateForPanel ) ) {
-          const panelDate = new Date( selectedDateForPanel + 'T12:00:00' );
-          showDailyTaskPanel( selectedDateForPanel, panelDate.getDate() );
-        }
-
-        const totalChanges = changes.length;
-        showSyncNotification(
-          `🔄 ${totalChanges} cambio${totalChanges > 1 ? 's' : ''} sincronizado${totalChanges > 1 ? 's' : ''}`,
-          'info'
-        );
-      }
+      // Mostrar notificación sutil
+      showMessage( '📡 Sincronizado', 'success' );
     },
     ( error ) => {
-      console.error( '❌ Error en listener:', error );
-      setTimeout( () => {
-        if ( currentUser && isOnline ) {
-          setupRealtimeSync();
-        }
-      }, 5000 );
+      console.error( '❌ Error en sincronización:', error );
+      showMessage( 'Error en sincronización', 'error' );
     }
   );
-
-  console.log( '✅ Listener configurado (solo procesa cambios reales)' );
 }
 
 // Animación de tarea añadida
