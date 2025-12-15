@@ -2,34 +2,62 @@
 <html lang="es">
 
 <head>
+    <!-- Básico -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="./favicon.png">
-    <title>Gestor de Tareas con Calendario Dinámico</title>
-    <!-- Meta Description -->
-    <meta name="description" content="Gestor de tareas con calendario visual, drag & drop y recordatorios. Organiza tu tiempo y aumenta tu productividad. ¡Gratis!">
+    <meta name="robots" content="index, follow">
+    <meta name="language" content="es">
+    <meta name="author" content="Jorge P. Mesta">
 
+    <!-- Canonical -->
+    <link rel="canonical" href="https://gestor-de-tareas-online.netlify.app">
+
+    <!-- Title (≤ 60 caracteres) -->
+    <title>Gestor de Tareas Online | Organiza y Mejora tu Productividad</title>
+
+    <!-- Meta Description (≤ 152 caracteres) -->
+    <meta name="description" content="Gestor de tareas online con calendario dinámico, drag & drop y seguimiento visual. Organiza tu tiempo y aumenta tu productividad fácilmente.">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="./favicon.png">
+
+    <!-- Open Graph (Facebook, LinkedIn, WhatsApp) -->
+    <meta property="og:title" content="Gestor de Tareas Online | Organización y Productividad">
+    <meta property="og:description" content="Organiza tareas fácilmente con calendario visual, seguimiento y una interfaz dinámica enfocada en productividad.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://gestor-de-tareas.netlify.app/">
+    <meta property="og:image" content="https://gestor-de-tareas.netlify.app/og-image.png">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Gestor de Tareas Online | Productividad Fácil">
+    <meta name="twitter:description" content="Planifica, organiza y da seguimiento a tus tareas con un calendario dinámico y simple.">
+    <meta name="twitter:image" content="https://gestor-de-tareas.netlify.app/og-image.png">
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-
-    <link rel="manifest" href="./manifest.json">
-    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio"></script>
-    <link rel="stylesheet" href="\dist\output.css">
+    <!-- Estilos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dist/output.css">
     <link rel="stylesheet" href="aditional.css">
 
+    <!-- PWA -->
+    <link rel="manifest" href="./manifest.json">
+
+    <!-- Scripts -->
+    <script defer src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <!-- Firebase SDK -->
+    <!-- Firebase -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-firestore-compat.min.js"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-auth-compat.min.js"></script>
-
-    <!-- Firebase Messaging -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-messaging-compat.min.js"></script>
 </head>
+
 
 <body class="bg-gray-100 font-sans antialiased">
     <!-- Loading Screen -->
@@ -501,6 +529,7 @@
     </main>
 
 </body>
+
 <script>
     // Mostrar ayuda visual para el campo de duración
     document.addEventListener( 'DOMContentLoaded', function () {
