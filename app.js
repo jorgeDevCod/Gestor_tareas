@@ -16,6 +16,7 @@ let draggedTask = null;
 let draggedFromDate = null;
 let lastDeletedTask = null;
 let lastDeletedDate = null;
+let taskTimers = {};
 let isOnline = navigator.onLine;
 let currentUser = null;
 let deletedTasksRegistry = JSON.parse( localStorage.getItem( 'deleted_tasks_registry' ) || '{}' );
@@ -2736,6 +2737,56 @@ function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
   return count;
 }
 
+// Función para formatear duración
+function formatDuration( hours ) {
+  if ( !hours || hours === 0 ) return '';
+
+  const h = Math.floor( hours );
+  const m = Math.round( ( hours - h ) * 60 );
+
+  if ( h === 0 ) return `${m}min`;
+  if ( m === 0 ) return `${h}h`;
+  return `${h}h ${m}min`;
+}
+
+// Función para calcular tiempo transcurrido
+function calculateElapsedTime( task, dateStr ) {
+  if ( !task.duration || task.state === 'completed' ) return null;
+
+  // Buscar en logs cuándo se puso en "inProgress"
+  const dayLogs = dailyTaskLogs[ dateStr ] || [];
+  const startLog = dayLogs
+    .slice()
+    .reverse()
+    .find( log =>
+      log.taskId === task.id &&
+      log.action === 'stateChanged' &&
+      log.newState === 'inProgress'
+    );
+
+  if ( !startLog ) return null;
+
+  const startTime = new Date( startLog.timestamp );
+  const now = new Date();
+  const elapsedMs = now - startTime;
+  const elapsedHours = elapsedMs / ( 1000 * 60 * 60 );
+
+  return {
+    elapsed: elapsedHours,
+    total: task.duration,
+    percentage: Math.min( ( elapsedHours / task.duration ) * 100, 100 ),
+    remaining: Math.max( task.duration - elapsedHours, 0 )
+  };
+}
+
+// Función para obtener color según progreso
+function getDurationColor( percentage ) {
+  if ( percentage < 50 ) return 'bg-green-500';
+  if ( percentage < 80 ) return 'bg-yellow-500';
+  if ( percentage < 100 ) return 'bg-orange-500';
+  return 'bg-red-500';
+}
+
 //addTask con sync automático
 function addTask( e ) {
   e.preventDefault();
@@ -2745,10 +2796,10 @@ function addTask( e ) {
     description: document.getElementById( "taskDescription" ).value.trim(),
     date: document.getElementById( "taskDate" ).value,
     time: document.getElementById( "taskTime" ).value,
+    duration: parseFloat( document.getElementById( "taskDuration" ).value ) || null, // ✅ NUEVO
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
-    //CORREGIDO: SIEMPRE crear tareas en estado "pending"
-    initialState: "pending", // Forzar siempre pendiente
+    initialState: "pending",
   };
 
   if ( !formData.title ) return;
@@ -2766,16 +2817,16 @@ function addTask( e ) {
     title: formData.title,
     description: formData.description,
     time: formData.time,
+    duration: formData.duration, // ✅ NUEVO
     priority: formData.priority,
-    state: "pending", // Correcto
-    completed: false,  // Correcto
+    state: "pending",
+    completed: false,
+    lastModified: Date.now() // ✅ IMPORTANTE para sync
   };
 
   if ( formData.date && formData.repeat === "none" ) {
     addTaskToDate( formData.date, task );
     enqueueSync( "upsert", formData.date, task );
-
-    // Registrar creación de tarea
     addToChangeLog( "created", task.title, formData.date );
   } else if ( formData.repeat !== "none" ) {
     const startDate = formData.date
@@ -2791,21 +2842,17 @@ function addTask( e ) {
   setupDateInput();
   showNotification( "Tarea agregada exitosamente" );
 
+  // Resetear configuración avanzada
   const advancedConfig = document.getElementById( "advancedRepeatConfig" );
   const customDays = document.getElementById( "customDays" );
   const repeatDuration = document.getElementById( "repeatDuration" );
 
   advancedConfig?.classList.add( "hidden" );
   customDays?.classList.add( "hidden" );
+  if ( repeatDuration ) repeatDuration.value = "2";
 
-  if ( repeatDuration ) {
-    repeatDuration.value = "2";
-  }
-
-  //CORREGIDO: Reset priority to default, NO incluir estado inicial
   const prioritySelect = document.getElementById( "taskPriority" );
   if ( prioritySelect ) prioritySelect.value = "3";
-
 }
 
 function addTaskToDate( dateStr, task ) {
@@ -3138,17 +3185,64 @@ function createPanelTaskElement( task, dateStr ) {
   const canPause = task.state === "inProgress";
   const canResume = task.state === "paused";
 
-  //NUEVO: Detectar si está retrasada
   const isLate = checkIfTaskIsLate( dateStr, task.time );
   const showLateWarning = isPastDate && task.state !== 'completed';
+
+  // Calcular progreso de duración
+  const durationInfo = task.duration ? calculateElapsedTime( task, dateStr ) : null;
+
+  let durationDisplay = '';
+  if ( task.duration ) {
+    if ( durationInfo && task.state === 'inProgress' ) {
+      const color = getDurationColor( durationInfo.percentage );
+      const progressBarColor = color.replace( 'bg-', '' );
+
+      durationDisplay = `
+        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium">
+          <i class="fas fa-hourglass-half mr-1"></i>
+          Duración: ${formatDuration( task.duration )}
+        </div>
+        <div class="mt-2 bg-gray-200 rounded-full h-2.5 overflow-hidden">
+          <div class="${color} h-2.5 rounded-full transition-all duration-500 relative" 
+               style="width: ${durationInfo.percentage}%">
+            <span class="absolute right-1 top-0 text-xs text-white font-medium">
+              ${formatDuration( durationInfo.elapsed )} / ${formatDuration( task.duration )}
+            </span>
+          </div>
+        </div>
+        ${durationInfo.percentage > 80 ? `
+          <div class="text-xs ${durationInfo.percentage >= 100 ? 'text-red-600' : 'text-orange-600'} mt-1 font-medium">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            ${durationInfo.percentage >= 100
+            ? `Tiempo excedido por ${formatDuration( durationInfo.elapsed - task.duration )}`
+            : `Quedan ${formatDuration( durationInfo.remaining )}`}
+          </div>
+        ` : ''}
+      `;
+    } else if ( task.state === 'completed' ) {
+      // Mostrar duración total para tareas completadas
+      durationDisplay = `
+        <div class="text-green-600 bg-green-50 px-2 py-1 rounded-full font-medium text-xs">
+          <i class="fas fa-check-circle mr-1"></i>
+          Duración programada: ${formatDuration( task.duration )}
+        </div>
+      `;
+    } else {
+      durationDisplay = `
+        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium">
+          <i class="fas fa-clock mr-1"></i>
+          Duración: ${formatDuration( task.duration )}
+        </div>
+      `;
+    }
+  }
 
   return `
     <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}"
          style="border-left-color: ${priority.color}"
-         data-priority="${task.priority}
-           data-task-id="${task.id}">
+         data-priority="${task.priority}"
+         data-task-id="${task.id}">
 
-        <!--Advertencia de retraso -->
         ${showLateWarning ? `
             <div class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-2 mb-3 rounded text-xs">
                 <i class="fas fa-exclamation-triangle mr-1"></i>
@@ -3158,7 +3252,6 @@ function createPanelTaskElement( task, dateStr ) {
 
         <div class="flex sm:items-center sm:justify-between">
             <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
-                <!-- Select de estado - AHORA SIEMPRE EDITABLE -->
                 <div class="flex flex-col space-y-2 mb-3 sm:mb-0 w-28">
                     <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)"
                             class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium pr-6 cursor-pointer transition-colors duration-200"
@@ -3176,19 +3269,18 @@ function createPanelTaskElement( task, dateStr ) {
                     </div>
                 </div>
 
-                <!-- Información de la tarea -->
                 <div class="flex-1">
                     <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
                     ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
                     <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
                         ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ""}
+                        ${durationDisplay}
                         <div class="text-gray-500">${state.label}</div>
                         ${task.completedLate ? `<div class="text-orange-600"><i class="fas fa-clock mr-1"></i>Completada con retraso</div>` : ''}
                     </div>
                 </div>
             </div>
 
-            <!-- Botones de acción - SIEMPRE DISPONIBLES -->
             <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
                 ${canPause ? `
                     <button onclick="pauseTask('${dateStr}', '${task.id}')"
@@ -3208,7 +3300,7 @@ function createPanelTaskElement( task, dateStr ) {
                 ` : ""}
                 <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
                         class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
-                        title="Editar título, descripción, hora y prioridad">
+                        title="Editar título, descripción, hora, duración y prioridad">
                     <i class="fas fa-edit text-sm"></i>
                 </button>
                 <button onclick="showDayChangeLog('${dateStr}')"
@@ -3227,7 +3319,7 @@ function createPanelTaskElement( task, dateStr ) {
   `;
 }
 
-// FUNCIÓN: Cambio de estado con tracking de retraso
+// Cambio de estado con tracking de retraso
 function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
@@ -3238,7 +3330,7 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
   const isPastDate = isDatePast( dateStr );
   const isLate = checkIfTaskIsLate( dateStr, task.time );
 
-  // Confirmación especial para tareas completadas con retraso
+  // Confirmación para tareas retrasadas
   if ( isPastDate && newState === 'completed' && oldState !== 'completed' ) {
     const confirmMsg = "⚠️ Esta tarea está retrasada.\n\n¿Marcar como completada con retraso?\n(Se registrará en el historial)";
     if ( !confirm( confirmMsg ) ) {
@@ -3247,7 +3339,6 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
       return;
     }
 
-    // Marcar como completada con retraso
     task.completedLate = true;
     task.completedAt = new Date().toISOString();
   }
@@ -3260,21 +3351,21 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
       return;
     }
 
-    // Remover marca de retraso si se revierte
     delete task.completedLate;
     delete task.completedAt;
   }
 
+  // ✅ CRÍTICO: Actualizar con timestamp
   task.state = newState;
   task.completed = ( task.state === "completed" );
+  task.lastModified = Date.now(); // ✅ Para sincronización
 
-  // Registrar cambio con contexto de retraso
+  // Registrar cambio
   let actionType = "stateChanged";
   let logMessage = task.title;
 
   if ( task.completedLate && newState === 'completed' ) {
     logMessage = `⚠️ COMPLETADA CON RETRASO - ${task.title}`;
-    console.warn( `⚠️ Tarea completada con retraso: ${task.title}` );
   } else if ( isLate && newState !== "pending" && oldState === "pending" ) {
     logMessage = `⚠️ RETRASADA - ${task.title}`;
   }
@@ -3295,8 +3386,16 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
   saveTasks();
   renderCalendar();
   updateProgress();
-  enqueueSync( "upsert", dateStr, task );
 
+  // ✅ CRÍTICO: Sync inmediato
+  enqueueSync( "upsert", dateStr, task );
+  setTimeout( () => {
+    if ( syncQueue.size > 0 ) {
+      processSyncQueue();
+    }
+  }, 100 );
+
+  // Actualizar panel
   if ( selectedDateForPanel === dateStr ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
@@ -3539,32 +3638,46 @@ function createTaskElement( task, dateStr ) {
   const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
   const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
 
+  // Calcular duración si aplica
+  const durationInfo = task.duration ? calculateElapsedTime( task, dateStr ) : null;
+
+  let durationBadge = '';
+  if ( task.duration ) {
+    if ( durationInfo && task.state === 'inProgress' ) {
+      const color = getDurationColor( durationInfo.percentage );
+      durationBadge = `<span class="text-xs ml-1 ${color} text-white px-1 rounded">⏱️${formatDuration( durationInfo.elapsed )}/${formatDuration( task.duration )}</span>`;
+    } else {
+      durationBadge = `<span class="text-xs ml-1 bg-gray-300 text-gray-700 px-1 rounded">⏱️${formatDuration( task.duration )}</span>`;
+    }
+  }
+
   return `
-        <div class="task-item-wrapper relative group/task">
-            <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4"
-                 data-task-id="${task.id}"
-                 data-date="${dateStr}"
-                 draggable="true"
-                 style="border-left-color: ${priority.color}"
-                 title="${task.title}${task.time ? " - " + task.time : ""} | ${state.label} | ${priority.label}">
-                <i class="fas ${state.icon} mr-1 opacity-75"></i>
-                ${task.title}
-                ${task.time ? `<span class="text-xs opacity-75 ml-1">${task.time}</span>` : ""}
-            </div>
-            <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
-                <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
-                        class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
-                        title="Editar tarea completa">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
-                        class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
-                        title="Eliminar tarea permanentemente">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `;
+    <div class="task-item-wrapper relative group/task">
+      <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4"
+           data-task-id="${task.id}"
+           data-date="${dateStr}"
+           draggable="true"
+           style="border-left-color: ${priority.color}"
+           title="${task.title}${task.time ? " - " + task.time : ""} | ${state.label} | ${priority.label}${task.duration ? ' | Duración: ' + formatDuration( task.duration ) : ''}">
+        <i class="fas ${state.icon} mr-1 opacity-75"></i>
+        ${task.title}
+        ${task.time ? `<span class="text-xs opacity-75 ml-1">${task.time}</span>` : ""}
+        ${durationBadge}
+      </div>
+      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
+        <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
+                class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
+                title="Editar tarea completa">
+          <i class="fas fa-edit"></i>
+        </button>
+        <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
+                class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
+                title="Eliminar tarea permanentemente">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function updatePanelProgress( dayTasks ) {
@@ -4723,57 +4836,65 @@ function quickDeleteTask( dateStr, taskId ) {
   deleteTaskWithOptions( dateStr, taskId );
 }
 
-function setupRealTimeSync() {
+function setupRealtimeSync() {
   if ( !auth.currentUser || firestoreListener ) return;
 
   const userId = auth.currentUser.uid;
   const userTasksRef = db.collection( 'users' ).doc( userId ).collection( 'tasks' );
 
-  console.log( '🔄 Iniciando sincronización en tiempo real...' );
+  console.log( '🔄 Iniciando sincronización en tiempo real (completa)...' );
 
   firestoreListener = userTasksRef.onSnapshot(
     ( snapshot ) => {
       console.log( '📡 Cambios detectados en Firestore' );
 
-      // 🔥 CLAVE: Procesar cada tipo de cambio
       snapshot.docChanges().forEach( ( change ) => {
         const taskData = change.doc.data();
-        const date = change.doc.id;
+        const docId = change.doc.id;
+        const [ dateStr, taskId ] = docId.split( '_' );
 
         if ( change.type === 'added' || change.type === 'modified' ) {
-          // Actualizar tareas locales
-          tasks[ date ] = taskData.tasks || [];
-          console.log( `✅ Actualizada: ${date}`, taskData.tasks?.length || 0, 'tareas' );
-        }
-
-        // 🗑️ ELIMINACIÓN EN TIEMPO REAL
-        if ( change.type === 'removed' ) {
-          console.log( `🗑️ Eliminando fecha: ${date}` );
-
-          // Eliminar del objeto local
-          delete tasks[ date ];
-
-          // 🎬 Animar eliminación en el calendario
-          const dayElement = document.querySelector( `[data-date="${date}"]` );
-          if ( dayElement ) {
-            const taskBadge = dayElement.querySelector( '.task-indicator' );
-            if ( taskBadge ) {
-              taskBadge.classList.add( 'deleting-task' );
-              setTimeout( () => {
-                taskBadge.remove();
-              }, 500 );
-            }
+          // Actualizar tarea local
+          if ( !tasks[ dateStr ] ) {
+            tasks[ dateStr ] = [];
           }
 
-          // 🎬 Animar eliminación en el panel si está abierto
-          const panelDate = dailyTaskPanel.querySelector( '#panelDate' )?.dataset?.date;
-          if ( panelDate === date && !dailyTaskPanel.classList.contains( 'hidden' ) ) {
-            // Si el panel muestra este día, cerrarlo con animación
-            dailyTaskPanel.style.opacity = '0';
-            setTimeout( () => {
-              dailyTaskPanel.classList.add( 'hidden' );
-              dailyTaskPanel.style.opacity = '1';
-            }, 300 );
+          const existingIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
+
+          if ( existingIndex !== -1 ) {
+            // Actualizar tarea existente
+            const oldTask = tasks[ dateStr ][ existingIndex ];
+
+            tasks[ dateStr ][ existingIndex ] = {
+              ...taskData,
+              date: dateStr,
+              lastModified: taskData.lastModified?.toMillis() || Date.now()
+            };
+
+            // Registrar cambio si el estado cambió
+            if ( oldTask.state !== taskData.state ) {
+              console.log( `🔄 Estado actualizado en tiempo real: ${taskData.title} (${oldTask.state} → ${taskData.state})` );
+            }
+          } else {
+            // Agregar nueva tarea
+            tasks[ dateStr ].push( {
+              ...taskData,
+              date: dateStr,
+              lastModified: taskData.lastModified?.toMillis() || Date.now()
+            } );
+            console.log( `➕ Nueva tarea detectada: ${taskData.title}` );
+          }
+        }
+
+        if ( change.type === 'removed' ) {
+          console.log( `🗑️ Eliminación detectada: ${dateStr}` );
+
+          if ( tasks[ dateStr ] ) {
+            tasks[ dateStr ] = tasks[ dateStr ].filter( t => t.id !== taskId );
+
+            if ( tasks[ dateStr ].length === 0 ) {
+              delete tasks[ dateStr ];
+            }
           }
         }
       } );
@@ -4784,22 +4905,131 @@ function setupRealTimeSync() {
       updateProgress();
 
       // Actualizar panel si está visible
-      const currentPanelDate = dailyTaskPanel.querySelector( '#panelDate' )?.dataset?.date;
-      if ( currentPanelDate && !dailyTaskPanel.classList.contains( 'hidden' ) ) {
-        // Solo actualizar si la fecha aún existe
-        if ( tasks[ currentPanelDate ] ) {
-          showDailyTasks( currentPanelDate );
-        }
+      if ( selectedDateForPanel && tasks[ selectedDateForPanel ] ) {
+        const day = new Date( selectedDateForPanel + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( selectedDateForPanel, day );
       }
-
-      // Mostrar notificación sutil
-      showMessage( '📡 Sincronizado', 'success' );
     },
     ( error ) => {
-      console.error( '❌ Error en sincronización:', error );
-      showMessage( 'Error en sincronización', 'error' );
+      console.error( '❌ Error en sincronización en tiempo real:', error );
     }
   );
+
+  // También escuchar cambios en logs
+  const userLogsRef = db.collection( 'users' ).doc( userId ).collection( 'taskLogs' );
+
+  userLogsRef.onSnapshot( ( snapshot ) => {
+    snapshot.docChanges().forEach( ( change ) => {
+      if ( change.type === 'added' || change.type === 'modified' ) {
+        const data = change.doc.data();
+        const dateStr = data.date;
+        const remoteLogs = data.logs || [];
+
+        if ( remoteLogs.length > 0 ) {
+          const localLogs = dailyTaskLogs[ dateStr ] || [];
+          const localTimestamps = new Set( localLogs.map( l => l.timestamp ) );
+
+          const newLogs = remoteLogs.filter( log => !localTimestamps.has( log.timestamp ) );
+
+          if ( newLogs.length > 0 ) {
+            dailyTaskLogs[ dateStr ] = [ ...localLogs, ...newLogs ]
+              .sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) )
+              .slice( 0, 50 );
+
+            saveTaskLogs();
+            console.log( `📥 Logs actualizados en tiempo real para ${dateStr}` );
+          }
+        }
+      }
+    } );
+  } );
+}
+
+//Sincronizar estados de tareas en tiempo real
+async function syncTaskStatesRealTime() {
+  if ( !currentUser || !db || !isOnline ) {
+    console.log( '⚠️ No se puede sincronizar estados - no hay conexión o usuario' );
+    return;
+  }
+
+  try {
+    const userTasksRef = db
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "tasks" );
+
+    const snapshot = await userTasksRef.get();
+
+    if ( snapshot.empty ) {
+      console.log( '📭 No hay tareas remotas para sincronizar estados' );
+      return;
+    }
+
+    let statesUpdated = 0;
+
+    snapshot.forEach( ( doc ) => {
+      const remoteTask = doc.data();
+      const dateStr = remoteTask.date;
+      const taskId = remoteTask.id;
+
+      // Buscar tarea local
+      if ( tasks[ dateStr ] ) {
+        const localTaskIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
+
+        if ( localTaskIndex !== -1 ) {
+          const localTask = tasks[ dateStr ][ localTaskIndex ];
+
+          // Comparar timestamps de última modificación
+          const remoteModified = remoteTask.lastModified?.toMillis() || 0;
+          const localModified = localTask.lastModified || 0;
+
+          // Si el remoto es más reciente, actualizar local
+          if ( remoteModified > localModified ) {
+            const oldState = localTask.state;
+
+            tasks[ dateStr ][ localTaskIndex ] = {
+              ...localTask,
+              state: remoteTask.state || 'pending',
+              completed: remoteTask.completed || false,
+              lastModified: remoteModified
+            };
+
+            // Registrar cambio si el estado cambió
+            if ( oldState !== remoteTask.state ) {
+              addToChangeLog(
+                "stateChanged",
+                localTask.title,
+                dateStr,
+                oldState,
+                remoteTask.state,
+                taskId
+              );
+              statesUpdated++;
+
+              console.log( `✅ Estado actualizado: ${localTask.title} (${oldState} → ${remoteTask.state})` );
+            }
+          }
+        }
+      }
+    } );
+
+    if ( statesUpdated > 0 ) {
+      saveTasks();
+      renderCalendar();
+      updateProgress();
+
+      // Actualizar panel si está abierto
+      if ( selectedDateForPanel ) {
+        const day = new Date( selectedDateForPanel + 'T12:00:00' ).getDate();
+        showDailyTaskPanel( selectedDateForPanel, day );
+      }
+
+      showNotification( `✅ ${statesUpdated} estado${statesUpdated > 1 ? 's' : ''} sincronizado${statesUpdated > 1 ? 's' : ''}`, 'success' );
+    }
+
+  } catch ( error ) {
+    console.error( '❌ Error sincronizando estados:', error );
+  }
 }
 
 // Animación de tarea añadida
@@ -4853,7 +5083,7 @@ function showSyncNotification( message, type = 'info' ) {
   }, 4000 );
 }
 
-// NUEVA FUNCIÓN: Animación visual de eliminación en tiempo real
+// Animación visual de eliminación en tiempo real
 function animateTaskDeletion( dateStr, taskId, taskTitle ) {
   // Buscar el elemento en el calendario
   const calendarTaskElement = document.querySelector(
@@ -5309,6 +5539,78 @@ function saveTaskLogs() {
     console.log( '📝 Logs guardados localmente (NO sincronizados)' );
   } catch ( error ) {
     console.error( "Error saving task logs:", error );
+  }
+}
+
+// Sincronizar logs de cambios
+async function syncTaskLogs() {
+  if ( !currentUser || !db || !isOnline ) {
+    console.log( '⚠️ No se puede sincronizar logs' );
+    return;
+  }
+
+  try {
+    const userLogsRef = db
+      .collection( "users" )
+      .doc( currentUser.uid )
+      .collection( "taskLogs" );
+
+    // 1. SUBIR logs locales que no están en remoto
+    const localLogPromises = [];
+
+    Object.entries( dailyTaskLogs ).forEach( ( [ dateStr, logs ] ) => {
+      if ( logs && logs.length > 0 ) {
+        // Usar el dateStr como ID del documento
+        localLogPromises.push(
+          userLogsRef.doc( dateStr ).set( {
+            date: dateStr,
+            logs: logs,
+            lastUpdated: new Date()
+          }, { merge: true } )
+        );
+      }
+    } );
+
+    if ( localLogPromises.length > 0 ) {
+      await Promise.all( localLogPromises );
+      console.log( `📤 ${localLogPromises.length} días de logs subidos` );
+    }
+
+    // 2. DESCARGAR logs remotos
+    const logsSnapshot = await userLogsRef.get();
+    let logsDownloaded = 0;
+
+    if ( !logsSnapshot.empty ) {
+      logsSnapshot.forEach( ( doc ) => {
+        const data = doc.data();
+        const dateStr = data.date;
+        const remoteLogs = data.logs || [];
+
+        if ( remoteLogs.length > 0 ) {
+          // Mergear logs (evitar duplicados por timestamp)
+          const localLogs = dailyTaskLogs[ dateStr ] || [];
+          const localTimestamps = new Set( localLogs.map( l => l.timestamp ) );
+
+          const newLogs = remoteLogs.filter( log => !localTimestamps.has( log.timestamp ) );
+
+          if ( newLogs.length > 0 ) {
+            dailyTaskLogs[ dateStr ] = [ ...localLogs, ...newLogs ]
+              .sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) )
+              .slice( 0, 50 ); // Mantener solo los últimos 50
+
+            logsDownloaded += newLogs.length;
+          }
+        }
+      } );
+
+      if ( logsDownloaded > 0 ) {
+        saveTaskLogs();
+        console.log( `📥 ${logsDownloaded} logs descargados` );
+      }
+    }
+
+  } catch ( error ) {
+    console.error( '❌ Error sincronizando logs:', error );
   }
 }
 
@@ -6177,24 +6479,31 @@ function clearAll() {
   showNotification( `${totalTasks} tareas eliminadas del calendario`, "success" );
 }
 
-//Auto-sincronización periódica más inteligente
-setInterval(
-  () => {
-    if ( currentUser && isOnline && !isSyncing ) {
-      // Solo hacer sync completo cada 10 minutos si no hay cambios pendientes
-      if ( syncQueue.size === 0 ) {
-        console.log( "🔄 Sync periódico: verificando cambios remotos" );
-        syncFromFirebase();
-      } else {
-        console.log(
-          "⏳ Sync periódico: hay cambios pendientes, procesando cola"
-        );
-        processSyncQueue();
+// Actualizar duraciones cada 30 segundos para tareas en proceso
+setInterval( () => {
+  const today = getTodayString();
+  const todayTasks = tasks[ today ] || [];
+
+  const inProgressTasks = todayTasks.filter(
+    t => t.state === 'inProgress' && t.duration
+  );
+
+  if ( inProgressTasks.length > 0 && selectedDateForPanel === today ) {
+    // Actualizar panel sin hacer scroll
+    const currentScrollPosition = document.getElementById( 'panelTaskList' )?.scrollTop || 0;
+
+    const day = new Date( today + 'T12:00:00' ).getDate();
+    showDailyTaskPanel( today, day );
+
+    // Restaurar scroll
+    setTimeout( () => {
+      const taskList = document.getElementById( 'panelTaskList' );
+      if ( taskList ) {
+        taskList.scrollTop = currentScrollPosition;
       }
-    }
-  },
-  10 * 60 * 1000
-); // Cada 10 minutos
+    }, 100 );
+  }
+}, 30000 ); // Cada 30 segundos
 
 // Procesar cola al cerrar/recargar página
 window.addEventListener( "beforeunload", () => {
@@ -6654,5 +6963,13 @@ function checkSessionHealth() {
 
 // Verificar salud de sesión cada hora
 setInterval( checkSessionHealth, 60 * 60 * 1000 );
+
+// AGREGAR al final del archivo: Sincronización periódica de estados
+setInterval( () => {
+  if ( currentUser && isOnline && !isSyncing ) {
+    syncTaskStatesRealTime();
+    syncTaskLogs();
+  }
+}, 30000 ); // Cada 30 segundos
 
 console.log( 'Sistema de autenticación configurado' );
