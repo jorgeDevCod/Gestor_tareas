@@ -1046,68 +1046,67 @@ async function initFirebase() {
       return;
     }
 
-    if ( !firebase.apps.length ) {
-      firebase.initializeApp( firebaseConfig );
-      console.log( '✅ Firebase App inicializada' );
-    }
+    // ✅ TIMEOUT: Si Firebase no responde en 5 segundos, continuar offline
+    const timeoutPromise = new Promise( ( _, reject ) =>
+      setTimeout( () => reject( new Error( 'Firebase timeout' ) ), 5000 )
+    );
 
-    db = firebase.firestore();
-    auth = firebase.auth();
+    const initPromise = ( async () => {
+      if ( !firebase.apps.length ) {
+        firebase.initializeApp( firebaseConfig );
+        console.log( '✅ Firebase App inicializada' );
+      }
 
-    // ✅ CRÍTICO: Usar LOCAL persistence para mantener sesión al cerrar
-    try {
-      await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
-      console.log( '✅ Persistencia LOCAL configurada - sesión sobrevivirá al cerrar app' );
-    } catch ( persistError ) {
-      console.error( '❌ Error configurando persistencia:', persistError );
-      // Fallback: intentar con indexedDB
+      db = firebase.firestore();
+      auth = firebase.auth();
+
       try {
-        await auth.setPersistence( firebase.auth.Auth.Persistence.INDEXED_DB_LOCAL );
-        console.log( '✅ Persistencia IndexedDB configurada' );
-      } catch ( fallbackError ) {
-        console.error( '❌ Falló persistencia IndexedDB:', fallbackError );
+        await auth.setPersistence( firebase.auth.Auth.Persistence.LOCAL );
+        console.log( '✅ Persistencia LOCAL configurada' );
+      } catch ( e ) {
+        console.warn( '⚠️ Persistencia falló:', e );
       }
-    }
 
-    // Cache de Firestore
-    try {
-      await db.enablePersistence( { synchronizeTabs: true } );
-      console.log( '✅ Cache de Firestore habilitado' );
-    } catch ( cacheError ) {
-      if ( cacheError.code === 'failed-precondition' ) {
-        console.warn( '⚠️ Cache ya habilitado en otra pestaña' );
-      } else if ( cacheError.code === 'unimplemented' ) {
-        console.warn( '⚠️ Cache no soportado en este navegador' );
-      }
-    }
-
-    // Inicializar FCM
-    if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
       try {
-        messaging = firebase.messaging();
-        console.log( '✅ FCM inicializado' );
-      } catch ( messagingError ) {
-        console.warn( '⚠️ Error inicializando FCM:', messagingError );
-        messaging = null;
+        await db.enablePersistence( { synchronizeTabs: true } );
+        console.log( '✅ Cache de Firestore habilitado' );
+      } catch ( e ) {
+        console.warn( '⚠️ Cache Firestore falló:', e );
       }
-    }
+
+      if ( typeof firebase.messaging !== 'undefined' && firebase.messaging.isSupported() ) {
+        try {
+          messaging = firebase.messaging();
+          console.log( '✅ FCM inicializado' );
+        } catch ( e ) {
+          console.warn( '⚠️ FCM falló:', e );
+          messaging = null;
+        }
+      }
+    } )();
+
+    // Esperar Firebase PERO con timeout
+    await Promise.race( [ initPromise, timeoutPromise ] );
 
     firebaseInitialized = true;
 
-    // ✅ CRÍTICO: Esperar a que Firebase restaure la sesión
-    await new Promise( resolve => {
+    // ✅ Esperar restauración de sesión CON timeout
+    const authPromise = new Promise( resolve => {
       const unsubscribe = auth.onAuthStateChanged( user => {
         unsubscribe();
-        resolve();
+        resolve( user );
       } );
     } );
 
-    currentUser = auth.currentUser;
+    const authTimeout = new Promise( resolve =>
+      setTimeout( () => resolve( null ), 3000 )
+    );
+
+    currentUser = await Promise.race( [ authPromise, authTimeout ] );
 
     if ( currentUser ) {
-      console.log( '✅ Sesión restaurada automáticamente:', currentUser.email );
+      console.log( '✅ Sesión restaurada:', currentUser.email );
 
-      // ✅ NUEVO: Notificar al Service Worker
       if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
         navigator.serviceWorker.controller.postMessage( {
           type: 'SET_USER_ID',
@@ -1123,7 +1122,7 @@ async function initFirebase() {
       updateUI();
       updateSyncIndicator( 'success' );
 
-      // Sync después de un delay
+      // Sync con delay
       setTimeout( () => {
         if ( isOnline && !isSyncing ) {
           syncFromFirebase();
@@ -1135,14 +1134,14 @@ async function initFirebase() {
       updateUI();
     }
 
-    hideLoadingScreen();
-
   } catch ( error ) {
-    console.error( '❌ Error crítico en initFirebase:', error );
+    console.error( '❌ Error/Timeout en Firebase:', error.message );
+
+    // ✅ CRÍTICO: No bloquear la app, continuar offline
+    firebaseInitialized = false;
+    initOfflineMode();
+  } finally {
     hideLoadingScreen();
-    showNotification( 'Error conectando con Firebase', 'error' );
-    currentUser = null;
-    updateUI();
   }
 }
 
@@ -1607,12 +1606,12 @@ const NOTIFICATION_SYNC_INTERVAL = 30000; // 30 segundos
 
 
 function initOfflineMode() {
-  console.log( "🔧 Iniciando aplicación en modo offline" );
+  console.log( "🔧 Iniciando modo offline" );
 
   isOnline = false;
-  currentUser = getOfflineUser(); // Usuario offline persistente
+  currentUser = null; // Sin usuario offline ficticio
 
-  // NO mostrar indicadores de Firebase en modo offline puro
+  // Ocultar indicadores de Firebase
   const statusEl = document.getElementById( "firebaseStatus" );
   if ( statusEl ) {
     statusEl.classList.add( "force-hidden" );
@@ -1621,66 +1620,13 @@ function initOfflineMode() {
   updateUI();
   hideLoadingScreen();
 
-  // Mensaje más discreto para modo offline
-  showOfflineModeMessage();
+  // Mensaje discreto (opcional)
+  const offlineMsg = document.createElement( 'div' );
+  offlineMsg.className = 'fixed bottom-4 left-4 bg-gray-700 text-white text-xs px-3 py-2 rounded shadow-lg z-30';
+  offlineMsg.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>Modo offline activo';
+  document.body.appendChild( offlineMsg );
 
-  // Configurar funcionalidades offline
-  setupOfflineFeatures();
-}
-
-function showOfflineModeMessage() {
-  // Crear un mensaje menos intrusivo
-  const offlineMessage = document.createElement( 'div' );
-  offlineMessage.id = 'offlineModeMessage';
-  offlineMessage.className = 'fixed bottom-4 right-4 bg-gray-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-30 transition-all duration-300';
-  offlineMessage.innerHTML = `
-    <div class="flex items-center space-x-2">
-      <i class="fas fa-hard-drive text-yellow-400"></i>
-      <span>Modo local activo</span>
-      <button onclick="this.parentElement.parentElement.remove()" class="ml-2 text-gray-300 hover:text-white">
-        <i class="fas fa-times"></i>
-      </button>
-    </div>
-  `;
-
-  document.body.appendChild( offlineMessage );
-
-  // Auto-ocultar después de 5 segundos
-  setTimeout( () => {
-    if ( document.getElementById( 'offlineModeMessage' ) ) {
-      offlineMessage.remove();
-    }
-  }, 5000 );
-}
-
-function getOfflineUser() {
-  let offlineUser = localStorage.getItem( 'offlineUser' );
-
-  if ( !offlineUser ) {
-    // Crear usuario offline por defecto
-    offlineUser = {
-      uid: 'offline-' + Date.now(),
-      displayName: 'Usuario Offline',
-      email: 'usuario@offline.local',
-      photoURL: null,
-      isOffline: true
-    };
-    localStorage.setItem( 'offlineUser', JSON.stringify( offlineUser ) );
-  } else {
-    offlineUser = JSON.parse( offlineUser );
-  }
-
-  return offlineUser;
-}
-
-function setupOfflineFeatures() {
-  // Deshabilitar funciones que requieren internet
-  if ( notificationInterval ) {
-    clearInterval( notificationInterval );
-  }
-
-  // El resto de la funcionalidad offline permanece igual
-  updateOfflineUI();
+  setTimeout( () => offlineMsg.remove(), 3000 );
 }
 
 function shouldShowSyncIndicators() {
@@ -1688,23 +1634,99 @@ function shouldShowSyncIndicators() {
 }
 
 function updateOfflineUI() {
-  const offlineElements = [
-    { id: 'loginBtn', text: 'Sin conexión para login' },
-    { id: 'logoutBtn', text: 'Logout offline' },
-  ];
+  const isOffline = !navigator.onLine;
+  const loginBtn = document.getElementById( 'loginBtn' );
+  const installBtn = document.getElementById( 'install-button' );
+  const syncBtn = document.getElementById( 'syncBtn' );
 
-  offlineElements.forEach( ( { id, text } ) => {
-    const element = document.getElementById( id );
-    if ( element ) {
-      element.title = text;
-      if ( !isOnline ) {
-        element.classList.add( 'opacity-50' );
-      } else {
-        element.classList.remove( 'opacity-50' );
-      }
+  console.log( '📡 Estado de conexión:', isOffline ? 'OFFLINE' : 'ONLINE' );
+
+  if ( isOffline ) {
+    // Ocultar botones que requieren conexión
+    loginBtn?.classList.add( 'hidden' );
+    installBtn?.classList.add( 'hidden' );
+    syncBtn?.classList.add( 'hidden' );
+
+    // Mostrar indicador offline
+    const statusEl = document.getElementById( 'firebaseStatus' );
+    if ( statusEl && !currentUser ) {
+      statusEl.classList.remove( 'hidden', 'force-hidden' );
+      statusEl.className = 'fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 bg-orange-500 text-white';
+      document.getElementById( 'statusIcon' ).className = 'fas fa-wifi-slash mr-2';
+      document.getElementById( 'statusText' ).textContent = 'Sin conexión';
     }
-  } );
+  } else {
+    // Restaurar visibilidad de botones
+    if ( !currentUser || currentUser.isOffline ) {
+      loginBtn?.classList.remove( 'hidden' );
+    }
+
+    if ( deferredPrompt && !isPWAInstalled() ) {
+      installBtn?.classList.remove( 'hidden' );
+    }
+
+    if ( currentUser && !currentUser.isOffline ) {
+      syncBtn?.classList.remove( 'hidden' );
+    }
+
+    // Ocultar indicador offline
+    const statusEl = document.getElementById( 'firebaseStatus' );
+    if ( statusEl && !currentUser ) {
+      statusEl.classList.add( 'hidden' );
+    }
+  }
 }
+
+// Escuchar cambios de conexión
+window.addEventListener( 'online', () => {
+  const loginModal = document.getElementById( 'loginModal' );
+  const isModalOpen = loginModal && !loginModal.classList.contains( 'hidden' );
+
+  if ( isModalOpen ) {
+    console.log( '🟢 Conexión restaurada - Actualizando modal de login' );
+
+    const googleSignInBtn = document.getElementById( 'googleSignInBtn' );
+    if ( googleSignInBtn ) {
+      // Rehabilitar botón
+      googleSignInBtn.disabled = false;
+      googleSignInBtn.classList.remove( 'opacity-50', 'cursor-not-allowed' );
+      googleSignInBtn.classList.add( 'hover:bg-blue-700' );
+      googleSignInBtn.title = 'Iniciar sesión con Google';
+      googleSignInBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar sesión con Google';
+
+      // Agregar evento
+      const newBtn = googleSignInBtn.cloneNode( true );
+      googleSignInBtn.parentNode.replaceChild( newBtn, googleSignInBtn );
+      newBtn.addEventListener( 'click', signInWithGoogle );
+
+      showNotification( '🌐 Conexión restaurada - Puedes iniciar sesión', 'success' );
+    }
+  }
+} );
+
+window.addEventListener( 'offline', () => {
+  const loginModal = document.getElementById( 'loginModal' );
+  const isModalOpen = loginModal && !loginModal.classList.contains( 'hidden' );
+
+  if ( isModalOpen ) {
+    console.log( '🔴 Conexión perdida - Deshabilitando login' );
+
+    const googleSignInBtn = document.getElementById( 'googleSignInBtn' );
+    if ( googleSignInBtn ) {
+      // Deshabilitar botón
+      googleSignInBtn.disabled = true;
+      googleSignInBtn.classList.add( 'opacity-50', 'cursor-not-allowed' );
+      googleSignInBtn.classList.remove( 'hover:bg-blue-700' );
+      googleSignInBtn.title = '🔌 Solo se puede ingresar con conexión a internet';
+      googleSignInBtn.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>🔴 Sin conexión - Login deshabilitado';
+
+      showNotification( '🔴 Sin conexión - Login deshabilitado', 'error' );
+    }
+  }
+} );
+
+// Ejecutar al cargar
+updateOfflineUI();
 
 function showOfflineMessage() {
   const offlineMessage = document.createElement( 'div' );
@@ -1878,19 +1900,27 @@ function handleOnline() {
   isOnline = true;
   hideOfflineMessage();
 
+  // ✅ Inicializar Firebase si no está listo
+  if ( !firebaseInitialized ) {
+    console.log( '🔥 Iniciando Firebase tras reconexión...' );
+    initFirebase().then( () => {
+      if ( firebaseInitialized ) {
+        setupAuthListeners();
+      }
+    } );
+    return;
+  }
+
   if ( currentUser && currentUser.isOffline ) {
     initFirebase();
   } else if ( currentUser ) {
     updateSyncIndicator( "success" );
     updateOfflineUI();
 
-    // CRÍTICO: Procesar eliminaciones primero, luego sincronizar
     const syncDelay = isPWAInstalled() ? 500 : 1000;
     setTimeout( () => {
-      // Primero procesar la cola (incluye eliminaciones)
       if ( syncQueue.size > 0 ) {
         processSyncQueue().then( () => {
-          // Después sincronizar desde Firebase
           setTimeout( syncFromFirebase, 1000 );
         } );
       } else {
@@ -2572,17 +2602,44 @@ function showLoginModal() {
   // Mostrar modal
   loginModal.classList.remove( "hidden" );
 
-  // NUEVO: Configurar event listener del botón de Google DESPUÉS de mostrar el modal
+  // ✅ NUEVO: Verificar estado de conexión y actualizar botón
   setTimeout( () => {
     const googleSignInBtn = document.getElementById( 'googleSignInBtn' );
+    const isOffline = !navigator.onLine;
+
     if ( googleSignInBtn ) {
-      // Remover listeners anteriores si existen
+      // Remover listeners anteriores
       const newBtn = googleSignInBtn.cloneNode( true );
       googleSignInBtn.parentNode.replaceChild( newBtn, googleSignInBtn );
 
-      // Agregar nuevo listener
-      newBtn.addEventListener( 'click', signInWithGoogle );
-      console.log( 'Event listener de Google Sign-In configurado' );
+      if ( isOffline ) {
+        // ❌ OFFLINE: Deshabilitar botón
+        newBtn.disabled = true;
+        newBtn.classList.add( 'opacity-50', 'cursor-not-allowed' );
+        newBtn.classList.remove( 'hover:bg-blue-700' );
+        newBtn.title = '🔌 Solo se puede ingresar con conexión a internet';
+        newBtn.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>Sin conexión - Login deshabilitado';
+
+        // Prevenir clicks
+        newBtn.addEventListener( 'click', ( e ) => {
+          e.preventDefault();
+          showNotification( '🔌 Necesitas conexión a internet para iniciar sesión', 'error' );
+        } );
+
+        console.log( '🔴 Botón de login DESHABILITADO (offline)' );
+      } else {
+        // ✅ ONLINE: Habilitar botón
+        newBtn.disabled = false;
+        newBtn.classList.remove( 'opacity-50', 'cursor-not-allowed' );
+        newBtn.classList.add( 'hover:bg-blue-700' );
+        newBtn.title = 'Iniciar sesión con Google';
+        newBtn.innerHTML = '<i class="fab fa-google mr-2"></i>Iniciar sesión con Google';
+
+        // Agregar evento de login
+        newBtn.addEventListener( 'click', signInWithGoogle );
+
+        console.log( '🟢 Botón de login HABILITADO (online)' );
+      }
     } else {
       console.error( '❌ Botón googleSignInBtn no encontrado' );
     }
@@ -2796,13 +2853,16 @@ function addTask( e ) {
     description: document.getElementById( "taskDescription" ).value.trim(),
     date: document.getElementById( "taskDate" ).value,
     time: document.getElementById( "taskTime" ).value,
-    duration: parseFloat( document.getElementById( "taskDuration" ).value ) || null, // ✅ NUEVO
+    duration: parseFloat( document.getElementById( "taskDuration" ).value ) || null,
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
     initialState: "pending",
   };
 
-  if ( !formData.title ) return;
+  if ( !formData.title ) {
+    showNotification( "Por favor ingresa un título", "error" );
+    return;
+  }
 
   if ( formData.date && isDatePast( formData.date ) ) {
     showNotification(
@@ -2817,30 +2877,52 @@ function addTask( e ) {
     title: formData.title,
     description: formData.description,
     time: formData.time,
-    duration: formData.duration, // ✅ NUEVO
+    duration: formData.duration,
     priority: formData.priority,
     state: "pending",
     completed: false,
-    lastModified: Date.now() // ✅ IMPORTANTE para sync
+    lastModified: Date.now()
   };
+
+  // ✅ Variable para rastrear si se creó en el día actual
+  let createdToday = false;
+  const today = getTodayString();
 
   if ( formData.date && formData.repeat === "none" ) {
     addTaskToDate( formData.date, task );
-    enqueueSync( "upsert", formData.date, task );
+
+    // ✅ Verificar si se creó hoy
+    if ( formData.date === today ) {
+      createdToday = true;
+    }
+
+    // Sync solo si hay conexión
+    if ( currentUser && isOnline ) {
+      enqueueSync( "upsert", formData.date, task );
+    }
+
     addToChangeLog( "created", task.title, formData.date );
   } else if ( formData.repeat !== "none" ) {
     const startDate = formData.date
       ? new Date( formData.date + "T00:00:00" )
       : new Date();
-    addRecurringTasks( task, formData.repeat, startDate );
+
+    const createdDates = addRecurringTasks( task, formData.repeat, startDate );
+
+    // ✅ Verificar si alguna tarea recurrente es de hoy
+    if ( createdDates.includes( today ) ) {
+      createdToday = true;
+    }
   }
 
   saveTasks();
   renderCalendar();
   updateProgress();
+
+  // ✅ Resetear formulario
   document.getElementById( "taskForm" ).reset();
   setupDateInput();
-  showNotification( "Tarea agregada exitosamente" );
+  showNotification( "Tarea agregada exitosamente", "success" );
 
   // Resetear configuración avanzada
   const advancedConfig = document.getElementById( "advancedRepeatConfig" );
@@ -2853,6 +2935,22 @@ function addTask( e ) {
 
   const prioritySelect = document.getElementById( "taskPriority" );
   if ( prioritySelect ) prioritySelect.value = "3";
+
+  // ✅ CRÍTICO: Actualizar panel si está abierto Y se creó tarea para hoy
+  if ( createdToday ) {
+    console.log( '📅 Tarea creada para hoy - actualizando panel' );
+
+    // Si el panel no está abierto, abrirlo
+    const panel = document.getElementById( "dailyTaskPanel" );
+    if ( panel && panel.classList.contains( 'hidden' ) ) {
+      const todayDate = new Date();
+      showDailyTaskPanel( today, todayDate.getDate() );
+    } else if ( selectedDateForPanel === today ) {
+      // Si ya está abierto para hoy, solo actualizarlo
+      const todayDate = new Date();
+      showDailyTaskPanel( today, todayDate.getDate() );
+    }
+  }
 }
 
 function addTaskToDate( dateStr, task ) {
@@ -2861,16 +2959,23 @@ function addTaskToDate( dateStr, task ) {
   const newTask = {
     ...task,
     id: `${dateStr}-${Date.now()}`,
-    state: "pending", //FORZAR estado pendiente
-    completed: false  //FORZAR no completada
+    state: "pending",
+    completed: false
   };
 
   tasks[ dateStr ].push( newTask );
 
-  // Actualizar panel si está abierto para este día
+  console.log( `✅ Tarea agregada a ${dateStr}:`, newTask.title );
+
+  // ✅ CRÍTICO: Actualizar panel si está abierto para esta fecha
   if ( selectedDateForPanel === dateStr ) {
+    console.log( '🔄 Panel abierto para esta fecha - actualizando...' );
     const day = new Date( dateStr + "T12:00:00" ).getDate();
-    showDailyTaskPanel( dateStr, day );
+
+    // Pequeño delay para que se renderice correctamente
+    setTimeout( () => {
+      showDailyTaskPanel( dateStr, day );
+    }, 100 );
   }
 
   return newTask;
@@ -2884,6 +2989,7 @@ function addRecurringTasks( task, repeatType, startDate ) {
   let endDate;
   let currentDate = new Date( startDate );
   let tasksAdded = 0;
+  const createdDates = []; // ✅ NUEVO: Array para rastrear fechas
 
   if ( durationMonths === 1 ) {
     endDate = new Date( startDate.getFullYear(), startDate.getMonth() + 1, 0 );
@@ -2900,7 +3006,6 @@ function addRecurringTasks( task, repeatType, startDate ) {
     ).map( ( cb ) => parseInt( cb.value ) );
   }
 
-  // Recopilar todas las tareas antes de sincronizar
   const newTasks = [];
 
   while ( currentDate <= endDate ) {
@@ -2927,7 +3032,6 @@ function addRecurringTasks( task, repeatType, startDate ) {
     }
 
     if ( shouldAdd && !isDatePast( dateStr ) ) {
-      //CORREGIDO: Crear tarea con estado forzado a pending
       const taskToAdd = {
         ...task,
         state: "pending",
@@ -2935,6 +3039,7 @@ function addRecurringTasks( task, repeatType, startDate ) {
       };
       const newTask = addTaskToDate( dateStr, taskToAdd );
       newTasks.push( { dateStr, task: newTask } );
+      createdDates.push( dateStr ); // ✅ NUEVO: Guardar fecha
       tasksAdded++;
     }
 
@@ -2942,9 +3047,11 @@ function addRecurringTasks( task, repeatType, startDate ) {
   }
 
   // Sync automático batch para todas las tareas recurrentes
-  newTasks.forEach( ( { dateStr, task } ) => {
-    enqueueSync( "upsert", dateStr, task );
-  } );
+  if ( currentUser && isOnline ) {
+    newTasks.forEach( ( { dateStr, task } ) => {
+      enqueueSync( "upsert", dateStr, task );
+    } );
+  }
 
   const durationText = {
     1: "lo que resta del mes actual",
@@ -2958,6 +3065,8 @@ function addRecurringTasks( task, repeatType, startDate ) {
     `${tasksAdded} tareas agregadas para ${durationText[ durationMonths.toString() ] || `${durationMonths} meses`}`,
     "success"
   );
+
+  return createdDates; // ✅ NUEVO: Retornar fechas creadas
 }
 
 function renderCalendar() {
@@ -3069,11 +3178,11 @@ function updatePanelDateHeader( dateStr, day, dayTasks ) {
     day: 'numeric'
   };
 
-  // SOLO actualizar el título - mantenerlo simple y limpio
+  // Título del panel
   panelDate.innerHTML = `
-        <i class="fas fa-tasks text-indigo-600 mr-2"></i>
-        Tareas del ${date.toLocaleDateString( 'es-ES', dateOptions )}
-    `;
+    <i class="fas fa-tasks text-indigo-600 mr-2"></i>
+    Tareas del ${date.toLocaleDateString( 'es-ES', dateOptions )}
+  `;
 
   // Limpiar botones existentes (excepto el botón de cierre)
   const existingButtons = actionButtons.querySelectorAll( 'button:not(#closePanelBtn)' );
@@ -3083,29 +3192,29 @@ function updatePanelDateHeader( dateStr, day, dayTasks ) {
   const buttonContainer = document.createElement( 'div' );
   buttonContainer.className = 'flex items-center space-x-2';
 
-  // Botón de limpiar día (solo si hay tareas)
+  // Botón de limpiar día (SIEMPRE visible si hay tareas)
   if ( dayTasks.length > 0 ) {
     const clearBtn = document.createElement( 'button' );
     clearBtn.onclick = () => clearDayTasks( dateStr );
     clearBtn.className = 'flex items-center space-x-1 text-red-600 hover:text-red-700 text-sm px-2 py-1 rounded hover:bg-red-50 transition';
     clearBtn.title = 'Eliminar todas las tareas del día';
     clearBtn.innerHTML = `
-            <i class="fas fa-trash-alt"></i>
-            <span class="hidden sm:inline">Limpiar Día</span>
-        `;
+      <i class="fas fa-trash-alt"></i>
+      <span class="hidden sm:inline">Limpiar Día</span>
+    `;
     buttonContainer.appendChild( clearBtn );
   }
 
-  // Botón de registro
+  // Botón de registro (SIEMPRE visible)
   const logBtn = document.createElement( 'button' );
   logBtn.onclick = () => showDayChangeLog( dateStr );
   logBtn.className = 'flex items-center space-x-1 text-purple-600 hover:text-purple-700 text-sm px-2 py-1 rounded hover:bg-purple-50 transition';
   logBtn.title = 'Ver registro de cambios del día';
   logBtn.innerHTML = `
-        <i class="fas fa-history"></i>
-        <span class="hidden sm:inline">Registro</span>
-        ${dayLogs.length > 0 ? `<span class="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full ml-1">${dayLogs.length}</span>` : ''}
-    `;
+    <i class="fas fa-history"></i>
+    <span class="hidden sm:inline">Registro</span>
+    ${dayLogs.length > 0 ? `<span class="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full ml-1">${dayLogs.length}</span>` : ''}
+  `;
   buttonContainer.appendChild( logBtn );
 
   // Insertar los botones ANTES del botón de cierre
@@ -3195,10 +3304,9 @@ function createPanelTaskElement( task, dateStr ) {
   if ( task.duration ) {
     if ( durationInfo && task.state === 'inProgress' ) {
       const color = getDurationColor( durationInfo.percentage );
-      const progressBarColor = color.replace( 'bg-', '' );
 
       durationDisplay = `
-        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium">
+        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium text-xs">
           <i class="fas fa-hourglass-half mr-1"></i>
           Duración: ${formatDuration( task.duration )}
         </div>
@@ -3220,7 +3328,6 @@ function createPanelTaskElement( task, dateStr ) {
         ` : ''}
       `;
     } else if ( task.state === 'completed' ) {
-      // Mostrar duración total para tareas completadas
       durationDisplay = `
         <div class="text-green-600 bg-green-50 px-2 py-1 rounded-full font-medium text-xs">
           <i class="fas fa-check-circle mr-1"></i>
@@ -3229,7 +3336,7 @@ function createPanelTaskElement( task, dateStr ) {
       `;
     } else {
       durationDisplay = `
-        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium">
+        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium text-xs">
           <i class="fas fa-clock mr-1"></i>
           Duración: ${formatDuration( task.duration )}
         </div>
@@ -3250,64 +3357,85 @@ function createPanelTaskElement( task, dateStr ) {
             </div>
         ` : ''}
 
-        <div class="flex sm:items-center sm:justify-between">
-            <div class="flex-1 sm:flex sm:items-start sm:space-x-3">
-                <div class="flex flex-col space-y-2 mb-3 sm:mb-0 w-28">
-                    <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)"
-                            class="text-xs px-1 py-2 rounded-lg border ${state.class} font-medium pr-6 cursor-pointer transition-colors duration-200"
-                            title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
-                        <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
-                        <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
-                        <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
-                    </select>
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <!-- COLUMNA IZQUIERDA: Estado y Prioridad -->
+            <div class="flex flex-col space-y-2 w-full sm:w-32 flex-shrink-0">
+                <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)"
+                        class="text-xs px-2 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200 w-full"
+                        title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
+                    <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
+                    <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
+                    <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
+                </select>
 
-                    <div class="flex items-center space-x-2">
-                        <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm"
-                              style="background-color: ${priority.color}"
-                              title="Prioridad: ${priority.label}"></span>
-                        <span class="text-xs text-gray-600 font-medium">${priority.label}</span>
-                    </div>
-                </div>
-
-                <div class="flex-1">
-                    <div class="task-title font-semibold text-base ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"}">${task.title}</div>
-                    ${task.description ? `<div class="task-description text-sm text-gray-600 mt-1">${task.description}</div>` : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
-                    <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
-                        ${task.time ? `<div class="text-indigo-600"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ""}
-                        ${durationDisplay}
-                        <div class="text-gray-500">${state.label}</div>
-                        ${task.completedLate ? `<div class="text-orange-600"><i class="fas fa-clock mr-1"></i>Completada con retraso</div>` : ''}
-                    </div>
+                <div class="flex items-center space-x-2">
+                    <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm flex-shrink-0"
+                          style="background-color: ${priority.color}"
+                          title="Prioridad: ${priority.label}"></span>
+                    <span class="text-xs text-gray-600 font-medium truncate">${priority.label}</span>
                 </div>
             </div>
 
-            <div class="task-actions flex flex-col space-y-1 ml-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-1 sm:ml-0">
+            <!-- COLUMNA CENTRAL: Info de la tarea -->
+            <div class="flex-1 min-w-0">
+                <div class="task-title font-semibold text-base mb-1 ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"} break-words">
+                    ${task.title}
+                </div>
+                
+                ${task.description
+      ? `<div class="task-description text-sm text-gray-600 mt-1 break-words">${task.description}</div>`
+      : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
+                
+                <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
+                    ${task.time ? `
+                        <div class="text-indigo-600 flex items-center">
+                            <i class="far fa-clock mr-1"></i>
+                            ${task.time}
+                        </div>
+                    ` : ""}
+                    ${durationDisplay}
+                    <div class="text-gray-500">${state.label}</div>
+                    ${task.completedLate ? `
+                        <div class="text-orange-600">
+                            <i class="fas fa-clock mr-1"></i>
+                            Completada con retraso
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+
+            <!-- COLUMNA DERECHA: Acciones -->
+            <div class="task-actions flex flex-clo sm:flex-row gap-2 justify-end items-center sm:items-end flex-shrink-0">
                 ${canPause ? `
                     <button onclick="pauseTask('${dateStr}', '${task.id}')"
-                            class="flex items-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm"
+                            class="flex items-center justify-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap"
                             title="Pausar tarea activa">
                         <i class="fas fa-pause"></i>
-                        <span>Pausar</span>
+                        <span class="hidden sm:inline">Pausar</span>
                     </button>
                 ` : ""}
+                
                 ${canResume ? `
                     <button onclick="resumeTask('${dateStr}', '${task.id}')"
-                            class="flex items-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm"
+                            class="flex items-center justify-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap"
                             title="Reanudar tarea pausada">
                         <i class="fas fa-play"></i>
-                        <span>Reanudar</span>
+                        <span class="hidden sm:inline">Reanudar</span>
                     </button>
                 ` : ""}
+                
                 <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
                         class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
                         title="Editar título, descripción, hora, duración y prioridad">
                     <i class="fas fa-edit text-sm"></i>
                 </button>
+                
                 <button onclick="showDayChangeLog('${dateStr}')"
                         class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
                         title="Ver registro de cambios del día">
                     <i class="fas fa-history text-sm"></i>
                 </button>
+                
                 <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
                         class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
                         title="Eliminar tarea permanentemente">
@@ -5224,53 +5352,53 @@ function showQuickAddTask( dateStr ) {
     .slice( 0, 5 );
 
   // Event listener para el formulario
-  document
-    .getElementById( "quickAddTaskForm" )
-    .addEventListener( "submit", ( e ) => {
-      e.preventDefault();
-      const title = document.getElementById( "quickAddTaskTitle" ).value.trim();
-      const description = document
-        .getElementById( "quickAddTaskDescription" )
-        .value.trim();
-      const time = document.getElementById( "quickAddTaskTime" ).value;
-      const priority = parseInt(
-        document.getElementById( "quickAddTaskPriority" ).value
-      );
+  // Dentro de showQuickAddTask(), modificar el event listener:
 
-      if ( !title || !time || !priority ) {
-        showNotification(
-          "Por favor completa todos los campos obligatorios",
-          "error"
-        );
-        return;
-      }
+  document.getElementById( "quickAddTaskForm" ).addEventListener( "submit", ( e ) => {
+    e.preventDefault();
+    const title = document.getElementById( "quickAddTaskTitle" ).value.trim();
+    const description = document.getElementById( "quickAddTaskDescription" ).value.trim();
+    const time = document.getElementById( "quickAddTaskTime" ).value;
+    const priority = parseInt( document.getElementById( "quickAddTaskPriority" ).value );
 
-      //CORREGIDO: Crear tarea SIEMPRE en estado pending
-      const task = {
-        id: `${dateStr}-${Date.now()}`,
-        title,
-        description,
-        time,
-        priority,
-        state: "pending", //FORZAR pendiente
-        completed: false, //FORZAR no completada
-      };
+    if ( !title || !time || !priority ) {
+      showNotification( "Por favor completa todos los campos obligatorios", "error" );
+      return;
+    }
 
-      addTaskToDate( dateStr, task );
-      saveTasks();
-      renderCalendar();
-      updateProgress();
+    const task = {
+      id: `${dateStr}-${Date.now()}`,
+      title,
+      description,
+      time,
+      priority,
+      state: "pending",
+      completed: false,
+    };
+
+    addTaskToDate( dateStr, task );
+    saveTasks();
+    renderCalendar();
+    updateProgress();
+
+    // Sync solo si hay conexión
+    if ( currentUser && isOnline ) {
       enqueueSync( "upsert", dateStr, task );
+    }
 
-      closeAllModals();
-      showNotification( "Tarea agregada exitosamente", "success" );
+    closeAllModals();
+    showNotification( "Tarea agregada exitosamente", "success" );
 
-      // Actualizar panel si está abierto
-      if ( selectedDateForPanel === dateStr ) {
-        const day = new Date( dateStr + "T12:00:00" ).getDate();
+    // ✅ CRÍTICO: Actualizar panel inmediatamente
+    if ( selectedDateForPanel === dateStr ) {
+      console.log( '🔄 Actualizando panel después de agregar tarea rápida' );
+      const day = new Date( dateStr + "T12:00:00" ).getDate();
+
+      setTimeout( () => {
         showDailyTaskPanel( dateStr, day );
-      }
-    } );
+      }, 100 );
+    }
+  } );
 }
 
 // FUNCIÓN para cerrar todos los modales
@@ -6528,16 +6656,33 @@ function updateUI() {
 
   console.log( '🎨 Actualizando UI - Usuario:', currentUser ? `logged in (${currentUser.email})` : 'not logged' );
 
-  if ( currentUser && !currentUser.isOffline ) {
-    //  Usuario logueado correctamente
-    if ( loginBtn ) {
-      loginBtn.classList.add( "hidden" );
+  // ✅ CRÍTICO: SIEMPRE mantener elementos core visibles
+  const coreElements = {
+    calendar: document.getElementById( "calendar" ),
+    dailyTaskPanel: document.getElementById( "dailyTaskPanel" ),
+    taskForm: document.getElementById( "taskForm" ),
+    progressBar: document.getElementById( "progressBar" ),
+    progressText: document.getElementById( "progressText" ),
+    currentMonth: document.getElementById( "currentMonth" ),
+    panelTaskList: document.getElementById( "panelTaskList" )
+  };
+
+  // Asegurar visibilidad de elementos core
+  Object.values( coreElements ).forEach( el => {
+    if ( el ) {
+      el.style.display = ''; // Reset display
+      el.style.visibility = 'visible'; // ✅ NUEVO
+      el.classList.remove( 'hidden', 'force-hidden', 'opacity-0' );
     }
+  } );
+
+  if ( currentUser && !currentUser.isOffline ) {
+    // ✅ Usuario logueado correctamente
+    if ( loginBtn ) loginBtn.classList.add( "hidden" );
 
     if ( userInfo ) {
       userInfo.classList.remove( "hidden" );
 
-      // Actualizar información del usuario
       const userName = document.getElementById( "userName" );
       const userEmail = document.getElementById( "userEmail" );
       const userPhoto = document.getElementById( "userPhoto" );
@@ -6550,43 +6695,26 @@ function updateUI() {
       }
     }
 
-    // Mostrar botón de sync
     if ( syncBtn ) {
       syncBtn.classList.remove( "hidden" );
       syncBtn.disabled = false;
     }
 
-    // Mostrar indicador de estado
-    if ( statusEl ) {
-      statusEl.classList.remove( "force-hidden" );
-    }
+    if ( statusEl ) statusEl.classList.remove( "force-hidden" );
 
-    console.log( ' UI actualizada: Usuario logueado' );
+    console.log( '✅ UI actualizada: Usuario logueado' );
 
   } else {
-    //  Usuario no logueado
-    if ( loginBtn ) {
-      loginBtn.classList.remove( "hidden" );
-    }
+    // ✅ Usuario no logueado - Mostrar solo login
+    if ( loginBtn ) loginBtn.classList.remove( "hidden" );
+    if ( userInfo ) userInfo.classList.add( "hidden" );
+    if ( syncBtn ) syncBtn.classList.add( "hidden" );
+    if ( statusEl ) statusEl.classList.add( "force-hidden" );
 
-    if ( userInfo ) {
-      userInfo.classList.add( "hidden" );
-    }
-
-    // Ocultar botón de sync
-    if ( syncBtn ) {
-      syncBtn.classList.add( "hidden" );
-    }
-
-    // Ocultar indicador de estado
-    if ( statusEl ) {
-      statusEl.classList.add( "force-hidden" );
-    }
-
-    console.log( ' UI actualizada: Usuario no logueado' );
+    console.log( '✅ UI actualizada: Modo local' );
   }
 
-  //  Manejar botón de instalación independientemente
+  // ✅ Botón de instalación
   const installBtn = document.getElementById( "install-button" );
   if ( installBtn ) {
     if ( isPWAInstalled() ) {
@@ -6770,14 +6898,20 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   initNotifications();
 
+  // ✅ Mostrar panel hoy después de 500ms
   setTimeout( () => {
     console.log( '📅 Ejecutando initializeTodayPanel...' );
     initializeTodayPanel();
-  }, 1500 );
+  }, 500 );
 
-  // ✅ CRÍTICO: SIEMPRE inicializar Firebase (para restaurar sesión)
-  console.log( '🔥 Inicializando Firebase automáticamente...' );
-  await initFirebase();
+  // ✅ Firebase solo si HAY conexión
+  if ( navigator.onLine ) {
+    console.log( '🔥 Inicializando Firebase...' );
+    await initFirebase();
+  } else {
+    console.log( '📴 Sin conexión inicial - modo offline' );
+    initOfflineMode();
+  }
 
   setTimeout( () => {
     handleServiceWorkerMessages();
@@ -6801,7 +6935,10 @@ document.addEventListener( "DOMContentLoaded", async function () {
     }
   }, 500 );
 
-  setupAuthListeners();
+  // ✅ Auth listeners solo si Firebase está listo
+  if ( firebaseInitialized ) {
+    setupAuthListeners();
+  }
 
   // Limpieza preventiva
   await cleanupDuplicates();

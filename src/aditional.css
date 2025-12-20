@@ -33,3 +33,30 @@
 .updating-task {
   animation: pulseUpdate 0.6s ease-out;
 }
+
+/* Estilo para botón deshabilitado en modal */
+#googleSignInBtn:disabled {
+  background-color: #4e5c8e !important;
+  cursor: not-allowed !important;
+  opacity: 0.6;
+}
+
+#googleSignInBtn:disabled:hover {
+  background-color: #728bb0 !important;
+  transform: none;
+  -webkit-transform: none;
+  -moz-transform: none;
+  -ms-transform: none;
+  -o-transform: none;
+}
+
+/* Efecto de "sacudida" al intentar click offline */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.shake-animation {
+  animation: shake 0.3s ease-in-out;
+}

@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v5.0';
+const CACHE_VERSION = 'v6.0';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -27,6 +27,11 @@ const STATIC_FILES = [
     '/images/IconLogo.png',
     '/images/favicon-192.png',
     '/favicon.png',
+
+    // ✅ AGREGAR ESTAS 3 LÍNEAS:
+    '/dist/output.css',
+    '/src/aditional.css',
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css'
 ];
 
 // ==========================================
@@ -654,9 +659,6 @@ initDB().then( async () => {
     }
 } );
 
-// ==========================================
-// 🧹 LIMPIEZA PERIÓDICA
-// ==========================================
 setInterval( () => {
     clearOldNotifications();
 }, 24 * 60 * 60 * 1000 ); // Cada 24 horas
