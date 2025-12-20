@@ -36,13 +36,13 @@
 
 /* Estilo para botón deshabilitado en modal */
 #googleSignInBtn:disabled {
-  background-color: #4e5c8e !important;
+  background-color: #4464d7 !important;
   cursor: not-allowed !important;
   opacity: 0.6;
 }
 
 #googleSignInBtn:disabled:hover {
-  background-color: #728bb0 !important;
+  background-color: #325080 !important;
   transform: none;
   -webkit-transform: none;
   -moz-transform: none;
