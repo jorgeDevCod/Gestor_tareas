@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v6.0';
+const CACHE_VERSION = 'v7.0';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -647,7 +647,6 @@ self.addEventListener( 'periodicsync', ( event ) => {
 // 🚀 INICIALIZACIÓN
 // ==========================================
 initDB().then( async () => {
-    console.log( '✅ Service Worker v7.0 iniciado' );
 
     // Verificar si hay sesión guardada
     const session = await getUserSession();
