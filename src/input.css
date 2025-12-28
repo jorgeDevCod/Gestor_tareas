@@ -79,22 +79,3 @@
     }
   }
 }
-
-/* Estilos específicos para botón de Google Sign-In */
-#googleSignInBtn:disabled {
-  background-color: #9ca3af !important;
-  cursor: not-allowed !important;
-  opacity: 0.6;
-}
-
-#googleSignInBtn:disabled:hover {
-  background-color: #9ca3af !important;
-  transform: none;
-}
-
-/* Forzar ocultación de elementos */
-.force-hidden {
-  display: none !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-}

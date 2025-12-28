@@ -1,0 +1,190 @@
+/* ==============================
+   VARIABLES DARK MODE
+============================== */
+.dark {
+  --bg-main: #0f172a;          /* fondo principal */
+  --bg-card: #111827;          /* cards */
+  --bg-soft: #1f2937;          /* bloques suaves */
+  --border-dark: #374151;
+
+  --text-main: #f9fafb;
+  --text-soft: #d1d5db;
+  --text-muted: #9ca3af;
+
+  --primary: #3b82f6;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+
+/* ==============================
+   BASE
+============================== */
+.dark body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+}
+
+/* ==============================
+   CONTENEDORES / CARDS
+============================== */
+.dark .bg-white {
+  background-color: var(--bg-card) !important;
+}
+
+.dark .bg-gray-50 {
+  background-color: var(--bg-soft) !important;
+}
+
+.dark .shadow-lg,
+.dark .shadow-xl {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+
+.dark .border-gray-200,
+.dark .border-gray-300 {
+  border-color: var(--border-dark) !important;
+}
+
+/* ==============================
+   TEXTOS
+============================== */
+.dark .text-gray-800 {
+  color: var(--text-main) !important;
+}
+
+.dark .text-gray-700,
+.dark .text-gray-600 {
+  color: var(--text-soft) !important;
+}
+
+.dark .text-gray-500,
+.dark .text-gray-400 {
+  color: var(--text-muted) !important;
+}
+
+/* ==============================
+   INPUTS / TEXTAREA / SELECT
+============================== */
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #020617;
+  color: var(--text-main);
+  border-color: var(--border-dark);
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.dark input:focus,
+.dark textarea:focus,
+.dark select:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.6);
+}
+
+/* ==============================
+   BOTONES
+============================== */
+.dark button {
+  color: var(--text-main);
+}
+
+.dark .bg-blue-600 {
+  background-color: #2563eb;
+}
+
+.dark .bg-blue-700 {
+  background-color: #1d4ed8;
+}
+
+.dark .bg-green-500 {
+  background-color: #16a34a;
+}
+
+.dark .bg-purple-500 {
+  background-color: #7c3aed;
+}
+
+.dark .bg-red-500 {
+  background-color: #dc2626;
+}
+
+.dark .bg-gray-500,
+.dark .bg-gray-700 {
+  background-color: #374151;
+}
+
+/* ==============================
+   PROGRESS BARS
+============================== */
+.dark .bg-gray-200 {
+  background-color: #020617;
+}
+
+.dark #progressBar,
+.dark #panelProgressBar {
+  filter: brightness(1.1);
+}
+
+/* ==============================
+   CALENDARIO
+============================== */
+.dark #calendar > div {
+  background-color: var(--bg-soft);
+  border-color: var(--border-dark);
+  color: var(--text-main);
+}
+
+.dark #calendar > div:hover {
+  background-color: #020617;
+}
+
+/* ==============================
+   PANEL DE TAREAS
+============================== */
+.dark #panelTaskList > div {
+  background-color: var(--bg-soft);
+  border-color: var(--border-dark);
+}
+
+/* ==============================
+   MODALES
+============================== */
+.dark #taskModal,
+.dark #loginModal {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.dark #modal-content-wrapper {
+  background-color: var(--bg-card);
+  color: var(--text-main);
+}
+
+/* ==============================
+   TOGGLE THEME BUTTON
+============================== */
+.dark #themeToggle {
+  background-color: #e5e7eb;
+  color: #020617;
+}
+
+/* ==============================
+   SCROLLBAR (opcional)
+============================== */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #020617;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #374151;
+  border-radius: 6px;
+}

@@ -52,11 +52,102 @@
 
 /* Efecto de "sacudida" al intentar click offline */
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-5px); }
-  75% { transform: translateX(5px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
 }
 
 .shake-animation {
   animation: shake 0.3s ease-in-out;
+}
+
+/* Tema oscuro */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f4f6;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --border-color: #e5e7eb;
+}
+
+.dark {
+  --bg-primary: #1f2937;
+  --bg-secondary: #111827;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --border-color: #374151;
+}
+
+.dark body {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.dark .bg-white {
+  background-color: var(--bg-primary);
+}
+
+.dark .bg-gray-100 {
+  background-color: var(--bg-secondary);
+}
+
+.dark .text-gray-800 {
+  color: var(--text-primary);
+}
+
+.dark .text-gray-600 {
+  color: var(--text-secondary);
+}
+
+.dark .border-gray-200 {
+  border-color: var(--border-color);
+}
+
+/* Temporizador de tarea */
+.timer-display {
+  font-family: "Courier New", monospace;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.timer-active {
+  animation: pulse-timer 2s infinite;
+}
+
+@keyframes pulse-timer {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.timer-warning {
+  color: #f59e0b;
+}
+
+.timer-critical {
+  color: #ef4444;
+  animation: blink-timer 1s infinite;
+}
+
+@keyframes blink-timer {
+  0%,
+  50%,
+  100% {
+    opacity: 1;
+  }
+  25%,
+  75% {
+    opacity: 0.5;
+  }
 }

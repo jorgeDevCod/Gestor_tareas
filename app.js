@@ -16,7 +16,7 @@ let draggedTask = null;
 let draggedFromDate = null;
 let lastDeletedTask = null;
 let lastDeletedDate = null;
-let taskTimers = {};
+let taskTimers = new Map()
 let isOnline = navigator.onLine;
 let currentUser = null;
 let deletedTasksRegistry = JSON.parse( localStorage.getItem( 'deleted_tasks_registry' ) || '{}' );
@@ -2853,7 +2853,7 @@ function addTask( e ) {
     description: document.getElementById( "taskDescription" ).value.trim(),
     date: document.getElementById( "taskDate" ).value,
     time: document.getElementById( "taskTime" ).value,
-    duration: parseFloat( document.getElementById( "taskDuration" ).value ) || null,
+    duration: convertDurationInputToMinutes(), // Usar nueva función
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
     initialState: "pending",
@@ -2877,7 +2877,7 @@ function addTask( e ) {
     title: formData.title,
     description: formData.description,
     time: formData.time,
-    duration: formData.duration,
+    duration: formData.duration, // Ya está en minutos
     priority: formData.priority,
     state: "pending",
     completed: false,
@@ -3297,72 +3297,44 @@ function createPanelTaskElement( task, dateStr ) {
   const isLate = checkIfTaskIsLate( dateStr, task.time );
   const showLateWarning = isPastDate && task.state !== 'completed';
 
-  // Calcular progreso de duración
-  const durationInfo = task.duration ? calculateElapsedTime( task, dateStr ) : null;
+  // Timer display
+  let timerDisplay = '';
+  if ( task.duration && task.state === 'inProgress' ) {
+    timerDisplay = `
+            <div id="timer-${task.id}" class="timer-display timer-active text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+                ⏱️ Calculando...
+            </div>
+        `;
+  } else if ( task.duration ) {
+    const hours = Math.floor( task.duration / 60 );
+    const minutes = task.duration % 60;
+    const display = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 
-  let durationDisplay = '';
-  if ( task.duration ) {
-    if ( durationInfo && task.state === 'inProgress' ) {
-      const color = getDurationColor( durationInfo.percentage );
-
-      durationDisplay = `
-        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium text-xs">
-          <i class="fas fa-hourglass-half mr-1"></i>
-          Duración: ${formatDuration( task.duration )}
-        </div>
-        <div class="mt-2 bg-gray-200 rounded-full h-2.5 overflow-hidden">
-          <div class="${color} h-2.5 rounded-full transition-all duration-500 relative" 
-               style="width: ${durationInfo.percentage}%">
-            <span class="absolute right-1 top-0 text-xs text-white font-medium">
-              ${formatDuration( durationInfo.elapsed )} / ${formatDuration( task.duration )}
-            </span>
-          </div>
-        </div>
-        ${durationInfo.percentage > 80 ? `
-          <div class="text-xs ${durationInfo.percentage >= 100 ? 'text-red-600' : 'text-orange-600'} mt-1 font-medium">
-            <i class="fas fa-exclamation-triangle mr-1"></i>
-            ${durationInfo.percentage >= 100
-            ? `Tiempo excedido por ${formatDuration( durationInfo.elapsed - task.duration )}`
-            : `Quedan ${formatDuration( durationInfo.remaining )}`}
-          </div>
-        ` : ''}
-      `;
-    } else if ( task.state === 'completed' ) {
-      durationDisplay = `
-        <div class="text-green-600 bg-green-50 px-2 py-1 rounded-full font-medium text-xs">
-          <i class="fas fa-check-circle mr-1"></i>
-          Duración programada: ${formatDuration( task.duration )}
-        </div>
-      `;
-    } else {
-      durationDisplay = `
-        <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium text-xs">
-          <i class="fas fa-clock mr-1"></i>
-          Duración: ${formatDuration( task.duration )}
-        </div>
-      `;
-    }
+    timerDisplay = `
+            <div class="text-purple-600 bg-purple-50 px-2 py-1 rounded-full font-medium text-xs">
+                <i class="fas fa-clock mr-1"></i>
+                Duración: ${display}
+            </div>
+        `;
   }
 
   return `
-    <div class="panel-task-item bg-white rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50' : ''}"
+    <div class="panel-task-item bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50 dark:bg-orange-900' : ''}"
          style="border-left-color: ${priority.color}"
          data-priority="${task.priority}"
          data-task-id="${task.id}">
 
         ${showLateWarning ? `
-            <div class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-2 mb-3 rounded text-xs">
+            <div class="bg-orange-100 dark:bg-orange-800 border-l-4 border-orange-500 text-orange-700 dark:text-orange-200 p-2 mb-3 rounded text-xs">
                 <i class="fas fa-exclamation-triangle mr-1"></i>
                 <strong>Completada con retraso</strong> - Se registrará el retraso
             </div>
         ` : ''}
 
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <!-- COLUMNA IZQUIERDA: Estado y Prioridad -->
             <div class="flex flex-col space-y-2 w-full sm:w-32 flex-shrink-0">
-                <select onchange="changeTaskStateWithLateTracking('${dateStr}', '${task.id}', this.value)"
-                        class="text-xs px-2 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200 w-full"
-                        title="Cambiar estado de la tarea${isPastDate ? ' (se registrará como retraso)' : ''}">
+                <select onchange="changeTaskStateWithTimer('${dateStr}', '${task.id}', this.value)"
+                        class="text-xs px-2 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200 w-full">
                     <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
                     <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
                     <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
@@ -3372,79 +3344,95 @@ function createPanelTaskElement( task, dateStr ) {
                     <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm flex-shrink-0"
                           style="background-color: ${priority.color}"
                           title="Prioridad: ${priority.label}"></span>
-                    <span class="text-xs text-gray-600 font-medium truncate">${priority.label}</span>
+                    <span class="text-xs text-gray-600 dark:text-gray-300 font-medium truncate">${priority.label}</span>
                 </div>
             </div>
 
-            <!-- COLUMNA CENTRAL: Info de la tarea -->
             <div class="flex-1 min-w-0">
-                <div class="task-title font-semibold text-base mb-1 ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800"} break-words">
+                <div class="task-title font-semibold text-base mb-1 ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800 dark:text-gray-200"} break-words">
                     ${task.title}
                 </div>
                 
                 ${task.description
-      ? `<div class="task-description text-sm text-gray-600 mt-1 break-words">${task.description}</div>`
-      : '<div class="task-description text-sm text-gray-400 mt-1 italic">Sin descripción</div>'}
+      ? `<div class="task-description text-sm text-gray-600 dark:text-gray-400 mt-1 break-words">${task.description}</div>`
+      : '<div class="task-description text-sm text-gray-400 dark:text-gray-500 mt-1 italic">Sin descripción</div>'}
                 
                 <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
                     ${task.time ? `
-                        <div class="text-indigo-600 flex items-center">
+                        <div class="text-indigo-600 dark:text-indigo-400 flex items-center">
                             <i class="far fa-clock mr-1"></i>
                             ${task.time}
                         </div>
                     ` : ""}
-                    ${durationDisplay}
-                    <div class="text-gray-500">${state.label}</div>
-                    ${task.completedLate ? `
-                        <div class="text-orange-600">
-                            <i class="fas fa-clock mr-1"></i>
-                            Completada con retraso
-                        </div>
-                    ` : ''}
+                    ${timerDisplay}
+                    <div class="text-gray-500 dark:text-gray-400">${state.label}</div>
                 </div>
             </div>
 
-            <!-- COLUMNA DERECHA: Acciones -->
-            <div class="task-actions flex flex-clo sm:flex-row gap-2 justify-end items-center sm:items-end flex-shrink-0">
+            <div class="task-actions flex flex-col sm:flex-row gap-2 justify-end items-center sm:items-end flex-shrink-0">
                 ${canPause ? `
-                    <button onclick="pauseTask('${dateStr}', '${task.id}')"
-                            class="flex items-center justify-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap"
-                            title="Pausar tarea activa">
+                    <button onclick="pauseTaskWithTimer('${dateStr}', '${task.id}')"
+                            class="flex items-center justify-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
                         <i class="fas fa-pause"></i>
                         <span class="hidden sm:inline">Pausar</span>
                     </button>
                 ` : ""}
                 
                 ${canResume ? `
-                    <button onclick="resumeTask('${dateStr}', '${task.id}')"
-                            class="flex items-center justify-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap"
-                            title="Reanudar tarea pausada">
+                    <button onclick="resumeTaskWithTimer('${dateStr}', '${task.id}')"
+                            class="flex items-center justify-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
                         <i class="fas fa-play"></i>
                         <span class="hidden sm:inline">Reanudar</span>
                     </button>
                 ` : ""}
                 
                 <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
-                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors duration-200"
-                        title="Editar título, descripción, hora, duración y prioridad">
+                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors duration-200">
                     <i class="fas fa-edit text-sm"></i>
                 </button>
                 
-                <button onclick="showDayChangeLog('${dateStr}')"
-                        class="text-purple-500 hover:text-purple-700 p-2 rounded-lg hover:bg-purple-50 transition-colors duration-200"
-                        title="Ver registro de cambios del día">
-                    <i class="fas fa-history text-sm"></i>
-                </button>
-                
                 <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
-                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
-                        title="Eliminar tarea permanentemente">
+                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 transition-colors duration-200">
                     <i class="fas fa-trash text-sm"></i>
                 </button>
             </div>
         </div>
     </div>
-  `;
+    `;
+}
+
+function changeTaskStateWithTimer( dateStr, taskId, newState ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+
+  const oldState = task.state || "pending";
+  if ( oldState === newState ) return;
+
+  // Manejar temporizador según estado
+  if ( newState === 'inProgress' && task.duration ) {
+    // Iniciar temporizador
+    startTaskTimer( taskId, dateStr, task.duration );
+  } else {
+    // Detener temporizador si cambia a otro estado
+    stopTaskTimer( taskId );
+  }
+
+  // Llamar a la función original
+  changeTaskStateWithLateTracking( dateStr, taskId, newState );
+}
+
+// ===== FUNCIONES MODIFICADAS PARA PAUSAR/REANUDAR CON TIMER =====
+function pauseTaskWithTimer( dateStr, taskId ) {
+  stopTaskTimer( taskId );
+  pauseTask( dateStr, taskId );
+}
+
+function resumeTaskWithTimer( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( task?.duration ) {
+    startTaskTimer( taskId, dateStr, task.duration );
+  }
+  resumeTask( dateStr, taskId );
 }
 
 // Cambio de estado con tracking de retraso
@@ -6898,6 +6886,9 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   initNotifications();
 
+  // Inicializar tema
+  initThemeToggle();
+
   // ✅ Mostrar panel hoy después de 500ms
   setTimeout( () => {
     console.log( '📅 Ejecutando initializeTodayPanel...' );
@@ -6942,6 +6933,17 @@ document.addEventListener( "DOMContentLoaded", async function () {
 
   // Limpieza preventiva
   await cleanupDuplicates();
+
+  // Restaurar temporizadores activos
+  Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
+    dayTasks.forEach( task => {
+      if ( task.state === 'inProgress' && task.duration ) {
+        startTaskTimer( task.id, dateStr, task.duration );
+      }
+    } );
+  } );
+
+  console.log( '✅ Sistema de temporizadores y tema inicializado' );
 
   console.log( '✅ Aplicación inicializada completamente' );
 } );
@@ -7097,6 +7099,128 @@ function checkSessionHealth() {
     signOut();
   }
 }
+
+// ===== SISTEMA DE TEMA OSCURO/CLARO =====
+function initThemeToggle() {
+  const themeToggle = document.getElementById( 'themeToggle' );
+  const html = document.documentElement;
+
+  // Cargar tema guardado
+  const savedTheme = localStorage.getItem( 'theme' ) || 'light';
+  if ( savedTheme === 'dark' ) {
+    html.classList.add( 'dark' );
+  }
+
+  // Event listener para cambio de tema
+  themeToggle?.addEventListener( 'click', () => {
+    html.classList.toggle( 'dark' );
+    const newTheme = html.classList.contains( 'dark' ) ? 'dark' : 'light';
+    localStorage.setItem( 'theme', newTheme );
+
+    // Animación de cambio
+    themeToggle.classList.add( 'rotate-180' );
+    setTimeout( () => themeToggle.classList.remove( 'rotate-180' ), 300 );
+
+    showNotification(
+      `Modo ${newTheme === 'dark' ? 'oscuro' : 'claro'} activado`,
+      'success'
+    );
+  } );
+}
+
+window.addEventListener( 'beforeunload', () => {
+  taskTimers.forEach( ( timer, taskId ) => {
+    clearInterval( timer.interval );
+  } );
+} );
+
+// ===== SISTEMA DE TEMPORIZADOR PARA TAREAS =====
+function startTaskTimer( taskId, dateStr, durationMinutes ) {
+  // Si ya existe un timer, limpiarlo
+  if ( taskTimers.has( taskId ) ) {
+    clearInterval( taskTimers.get( taskId ).interval );
+  }
+
+  const startTime = Date.now();
+  const endTime = startTime + ( durationMinutes * 60 * 1000 );
+
+  const interval = setInterval( () => {
+    updateTimerDisplay( taskId, endTime );
+  }, 1000 );
+
+  taskTimers.set( taskId, {
+    interval,
+    startTime,
+    endTime,
+    dateStr
+  } );
+
+  console.log( `⏱️ Timer iniciado para tarea ${taskId}` );
+}
+
+function stopTaskTimer( taskId ) {
+  const timer = taskTimers.get( taskId );
+  if ( timer ) {
+    clearInterval( timer.interval );
+    taskTimers.delete( taskId );
+    console.log( `⏹️ Timer detenido para tarea ${taskId}` );
+  }
+}
+
+function updateTimerDisplay( taskId, endTime ) {
+  const timerElement = document.getElementById( `timer-${taskId}` );
+  if ( !timerElement ) {
+    stopTaskTimer( taskId );
+    return;
+  }
+
+  const now = Date.now();
+  const remaining = endTime - now;
+
+  if ( remaining <= 0 ) {
+    // Tiempo agotado
+    timerElement.textContent = '⏰ ¡Tiempo agotado!';
+    timerElement.className = 'timer-display timer-critical text-sm font-bold';
+    stopTaskTimer( taskId );
+
+    // Notificación
+    if ( notificationsEnabled ) {
+      showDesktopNotificationPWA(
+        '⏰ Tiempo agotado',
+        `La tarea ha excedido su tiempo programado`,
+        `${taskId}-timeout`,
+        true,
+        'task-late'
+      );
+    }
+    return;
+  }
+
+  // Calcular tiempo restante
+  const hours = Math.floor( remaining / ( 1000 * 60 * 60 ) );
+  const minutes = Math.floor( ( remaining % ( 1000 * 60 * 60 ) ) / ( 1000 * 60 ) );
+  const seconds = Math.floor( ( remaining % ( 1000 * 60 ) ) / 1000 );
+
+  const display = `${String( hours ).padStart( 2, '0' )}:${String( minutes ).padStart( 2, '0' )}:${String( seconds ).padStart( 2, '0' )}`;
+  timerElement.textContent = `⏱️ ${display}`;
+
+  // Cambiar color según tiempo restante
+  const totalMinutes = Math.floor( remaining / ( 1000 * 60 ) );
+  if ( totalMinutes <= 5 ) {
+    timerElement.className = 'timer-display timer-critical text-sm font-bold animate-pulse';
+  } else if ( totalMinutes <= 15 ) {
+    timerElement.className = 'timer-display timer-warning text-sm font-bold';
+  } else {
+    timerElement.className = 'timer-display timer-active text-sm font-bold text-blue-600';
+  }
+}
+
+function convertDurationInputToMinutes() {
+  const hours = parseInt( document.getElementById( 'taskDurationHours' )?.value ) || 0;
+  const minutes = parseInt( document.getElementById( 'taskDurationMinutes' )?.value ) || 0;
+  return ( hours * 60 ) + minutes;
+}
+
 
 // Verificar salud de sesión cada hora
 setInterval( checkSessionHealth, 60 * 60 * 1000 );
