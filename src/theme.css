@@ -2,9 +2,9 @@
    VARIABLES DARK MODE
 ============================== */
 .dark {
-  --bg-main: #0f172a;          /* fondo principal */
-  --bg-card: #111827;          /* cards */
-  --bg-soft: #1f2937;          /* bloques suaves */
+  --bg-main: #0f172a; /* fondo principal */
+  --bg-card: #111827; /* cards */
+  --bg-soft: #1f2937; /* bloques suaves */
   --border-dark: #374151;
 
   --text-main: #f9fafb;
@@ -12,6 +12,7 @@
   --text-muted: #9ca3af;
 
   --primary: #3b82f6;
+  --secondary: #579ef0e9;
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -171,6 +172,50 @@
 .dark #themeToggle {
   background-color: #e5e7eb;
   color: #020617;
+}
+
+/* ==============================
+   FIX TEXTOS FORMULARIO (DARK)
+============================== */
+
+/* Labels generales */
+.dark label {
+  color: var(--text-soft) !important;
+}
+
+/* Textos azules (ej: Programación) */
+.dark .text-blue-700,
+.dark .text-blue-600 {
+  color: var(--secondary) !important; /* azul claro legible */
+}
+
+.dark .text-blue-800 {
+  color: var(--text-soft);
+}
+
+/* Textos pequeños auxiliares */
+.dark .text-gray-500,
+.dark .text-gray-400 {
+  color: var(--text-muted) !important;
+}
+
+/* Inputs tipo date / time / number */
+.dark input[type="date"],
+.dark input[type="time"],
+.dark input[type="number"] {
+  color: var(--text-main) !important;
+  background-color: #020617;
+}
+
+/* Placeholder (hh, mm, fecha, hora) */
+.dark input::placeholder {
+  color: #64748b !important;
+}
+
+/* Iconos nativos (date / time picker) */
+.dark input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.8;
 }
 
 /* ==============================
