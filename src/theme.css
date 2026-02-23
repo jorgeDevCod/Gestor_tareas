@@ -10,8 +10,8 @@
   --border-focus: #58a6ff;
 
   --text-main: #e6edf3;
-  --text-soft: #b0bec5;
-  --text-muted: #6e7681;
+  --text-soft: #bfd9e5;
+  --text-muted: #e5ebf4;
 
   --primary: #58a6ff;
   --secondary: #79c0ff;
@@ -410,7 +410,7 @@
 
 .dark .fixed.inset-0 .bg-green-100 {
   background-color: #0f2d1a !important;
-  color: #86efac !important;
+  color: #33de71 !important;
 }
 
 .dark .fixed.inset-0 .bg-green-100:hover {
@@ -504,6 +504,62 @@
 }
 
 /* ==============================
+   BADGES Y PILLS DE COLOR
+============================== */
+
+/* Badge GRATIS y similares */
+.dark .bg-green-100.text-green-800 {
+  background-color: #0f2d1a !important;
+  color: #4ade80 !important;
+}
+
+.dark .bg-blue-100.text-blue-800 {
+  background-color: #0d2137 !important;
+  color: #60a5fa !important;
+}
+
+.dark .bg-red-100.text-red-800 {
+  background-color: #2d0f0f !important;
+  color: #f87171 !important;
+}
+
+.dark .bg-orange-100.text-orange-800 {
+  background-color: #2d1a0f !important;
+  color: #fb923c !important;
+}
+
+.dark .bg-yellow-100.text-yellow-800 {
+  background-color: #2d2208 !important;
+  color: #facc15 !important;
+}
+
+.dark .bg-purple-100.text-purple-800 {
+  background-color: #1e0d37 !important;
+  color: #c084fc !important;
+}
+
+.dark .bg-gray-200.text-gray-800 {
+  background-color: #21262d !important;
+  color: #d1d5db !important;
+}
+
+/* Estados de tarea (pills en panel) */
+.dark .bg-blue-200.text-blue-800 {
+  background-color: #0d2137 !important;
+  color: #79c0ff !important;
+}
+
+.dark .bg-orange-200.text-orange-800 {
+  background-color: #2d1a0f !important;
+  color: #fdba74 !important;
+}
+
+.dark .bg-green-200.text-green-800 {
+  background-color: #0f2d1a !important;
+  color: #86efac !important;
+}
+
+/* ==============================
    MODAL LOGIN
 ============================== */
 .dark #loginModal .bg-white {
@@ -529,8 +585,43 @@
 /* ==============================
    NOTIFICACIONES IN-APP
 ============================== */
-.dark .fixed.top-20.right-4 {
-  border: 1px solid var(--border-dark) !important;
+.dark .fixed.top-20.right-4,
+.dark .fixed.top-4.right-4,
+.dark .fixed.bottom-4.left-4,
+.dark .fixed.bottom-4.right-4 {
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Forzar texto blanco puro en todas las notificaciones de color */
+.dark .fixed.top-4.right-4 span,
+.dark .fixed.top-4.right-4 div,
+.dark .fixed.top-20.right-4 span,
+.dark .fixed.top-20.right-4 div,
+.dark .fixed.bottom-4.left-4 span,
+.dark .fixed.bottom-4.left-4 div {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Iconos en notificaciones */
+.dark .fixed.top-4.right-4 i,
+.dark .fixed.top-20.right-4 i,
+.dark .fixed.bottom-4.left-4 i {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Botón X de cerrar en notificaciones */
+.dark .fixed.top-4.right-4 button,
+.dark .fixed.top-20.right-4 button,
+.dark .fixed.bottom-4.left-4 button {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.dark .fixed.top-4.right-4 button:hover,
+.dark .fixed.top-20.right-4 button:hover,
+.dark .fixed.bottom-4.left-4 button:hover {
+  color: #ffffff !important;
 }
 
 /* ==============================
@@ -642,4 +733,74 @@
   background-color: var(--bg-soft) !important;
   border-color: var(--warning) !important;
   color: var(--text-main) !important;
+}
+
+/* ==============================
+   BOTONES HOVER EN CELDA CALENDARIO
+============================== */
+
+/* Contenedor gradiente que aparece al hover en task-item */
+.dark .task-item-wrapper .bg-gradient-to-l {
+  background: linear-gradient(
+    to left,
+    var(--bg-soft) 60%,
+    transparent
+  ) !important;
+}
+
+/* Botones editar/eliminar dentro de celda */
+.dark .task-item-wrapper button {
+  background-color: transparent !important;
+  color: var(--text-muted) !important;
+}
+
+.dark .task-item-wrapper button:hover {
+  background-color: #30363d !important;
+  color: var(--text-main) !important;
+}
+
+/* Específico para el botón editar (azul) */
+.dark .task-item-wrapper .text-blue-500 {
+  color: #58a6ff !important;
+}
+
+.dark .task-item-wrapper .text-blue-500:hover {
+  color: #79c0ff !important;
+  background-color: #0d2137 !important;
+}
+
+/* Específico para el botón eliminar (rojo) */
+.dark .task-item-wrapper .text-red-500 {
+  color: #f85149 !important;
+}
+
+.dark .task-item-wrapper .text-red-500:hover {
+  color: #ff7b72 !important;
+  background-color: #2d0f0f !important;
+}
+
+/* ==============================
+   BADGE CONTADOR (Registro, logs)
+============================== */
+
+/* Badge número junto a "Registro" en el panel */
+.dark .bg-purple-100.text-purple-700 {
+  background-color: #2d1a4a !important;
+  color: #c084fc !important;
+}
+
+/* Cualquier badge de conteo redondeado en la barra del panel */
+.dark span.rounded-full.bg-purple-100,
+.dark span.rounded-full.bg-blue-100,
+.dark span.rounded-full.bg-gray-100 {
+  background-color: #21262d !important;
+  color: var(--text-main) !important;
+}
+
+/* Tooltip nativo del navegador no se puede estilizar,
+   pero el tooltip HTML personalizado sí */
+.dark [title]:hover::after {
+  background-color: var(--bg-soft) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-dark) !important;
 }
