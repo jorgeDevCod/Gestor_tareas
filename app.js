@@ -4724,31 +4724,6 @@ function checkIfTaskIsLate( dateStr, taskTime ) {
   return false;
 }
 
-//Limpiar notificaciones cuando se completa/elimina una tarea
-function clearTaskNotifications( taskId ) {
-  const keysToRemove = [
-    `${taskId}-15min`,
-    `${taskId}-start`,
-    `${taskId}-late`
-  ];
-
-  // Limpiar de app
-  keysToRemove.forEach( key => {
-    notificationStatus.taskReminders.delete( key );
-    sentNotifications.delete( key );
-  } );
-
-  // Informar al Service Worker
-  if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
-    navigator.serviceWorker.controller.postMessage( {
-      type: 'CLEAR_TASK_NOTIFICATION',
-      taskId: taskId
-    } );
-  }
-
-  console.log( `🧹 Notificaciones limpiadas para tarea: ${taskId}` );
-}
-
 // FUNCIÓN para actualizar tareas desde el panel
 function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
   const title = document.getElementById( "advancedEditTaskTitle" ).value.trim();
@@ -5061,93 +5036,6 @@ function setupRealtimeSync() {
   } );
 }
 
-//Sincronizar estados de tareas en tiempo real
-async function syncTaskStatesRealTime() {
-  if ( !currentUser || !db || !isOnline ) {
-    console.log( '⚠️ No se puede sincronizar estados - no hay conexión o usuario' );
-    return;
-  }
-
-  try {
-    const userTasksRef = db
-      .collection( "users" )
-      .doc( currentUser.uid )
-      .collection( "tasks" );
-
-    const snapshot = await userTasksRef.get();
-
-    if ( snapshot.empty ) {
-      console.log( '📭 No hay tareas remotas para sincronizar estados' );
-      return;
-    }
-
-    let statesUpdated = 0;
-
-    snapshot.forEach( ( doc ) => {
-      const remoteTask = doc.data();
-      const dateStr = remoteTask.date;
-      const taskId = remoteTask.id;
-
-      // Buscar tarea local
-      if ( tasks[ dateStr ] ) {
-        const localTaskIndex = tasks[ dateStr ].findIndex( t => t.id === taskId );
-
-        if ( localTaskIndex !== -1 ) {
-          const localTask = tasks[ dateStr ][ localTaskIndex ];
-
-          // Comparar timestamps de última modificación
-          const remoteModified = remoteTask.lastModified?.toMillis() || 0;
-          const localModified = localTask.lastModified || 0;
-
-          // Si el remoto es más reciente, actualizar local
-          if ( remoteModified > localModified ) {
-            const oldState = localTask.state;
-
-            tasks[ dateStr ][ localTaskIndex ] = {
-              ...localTask,
-              state: remoteTask.state || 'pending',
-              completed: remoteTask.completed || false,
-              lastModified: remoteModified
-            };
-
-            // Registrar cambio si el estado cambió
-            if ( oldState !== remoteTask.state ) {
-              addToChangeLog(
-                "stateChanged",
-                localTask.title,
-                dateStr,
-                oldState,
-                remoteTask.state,
-                taskId
-              );
-              statesUpdated++;
-
-              console.log( `✅ Estado actualizado: ${localTask.title} (${oldState} → ${remoteTask.state})` );
-            }
-          }
-        }
-      }
-    } );
-
-    if ( statesUpdated > 0 ) {
-      saveTasks();
-      renderCalendar();
-      updateProgress();
-
-      // Actualizar panel si está abierto
-      if ( selectedDateForPanel ) {
-        const day = new Date( selectedDateForPanel + 'T12:00:00' ).getDate();
-        showDailyTaskPanel( selectedDateForPanel, day );
-      }
-
-      showNotification( `✅ ${statesUpdated} estado${statesUpdated > 1 ? 's' : ''} sincronizado${statesUpdated > 1 ? 's' : ''}`, 'success' );
-    }
-
-  } catch ( error ) {
-    console.error( '❌ Error sincronizando estados:', error );
-  }
-}
-
 // Animación de tarea añadida
 function animateTaskAddition( dateStr, taskId, taskTitle ) {
   showInAppNotification(
@@ -5165,38 +5053,6 @@ function animateTaskAddition( dateStr, taskId, taskTitle ) {
       }, 2000 );
     }
   }, 100 );
-}
-
-function showSyncNotification( message, type = 'info' ) {
-  const notification = document.createElement( 'div' );
-
-  const typeConfig = {
-    info: { bg: 'bg-blue-500', icon: 'fa-sync-alt' },
-    warning: { bg: 'bg-orange-500', icon: 'fa-exclamation-triangle' },
-    success: { bg: 'bg-green-500', icon: 'fa-check-circle' }
-  };
-
-  const config = typeConfig[ type ] || typeConfig.info;
-
-  notification.className = `fixed top-20 right-4 ${config.bg} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
-
-  notification.innerHTML = `
-    <div class="flex items-center space-x-3">
-      <i class="fas ${config.icon} text-xl"></i>
-      <span class="text-sm">${message}</span>
-      <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200 ml-2">
-        <i class="fas fa-times"></i>
-      </button>
-    </div>
-  `;
-
-  document.body.appendChild( notification );
-  setTimeout( () => notification.classList.remove( 'translate-x-full' ), 100 );
-
-  setTimeout( () => {
-    notification.classList.add( 'translate-x-full' );
-    setTimeout( () => notification.remove(), 300 );
-  }, 4000 );
 }
 
 // Animación visual de eliminación en tiempo real
@@ -5812,7 +5668,7 @@ function clearWeek() {
       // Guardar tareas para sync y notificaciones
       tasks[ dateStr ].forEach( ( task ) => {
         deletedTasks.push( { dateStr, taskId: task.id } );
-        clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones pendientes para esta tarea
+        clearTaskNotifications( task.id ); // Limpiar notificaciones pendientes para esta tarea
       } );
       delete tasks[ dateStr ];
     }
@@ -6564,13 +6420,13 @@ function clearAll() {
     return;
   }
 
-  const deletedTasks = []; // NUEVO: Para recopilar taskIds y limpiar notificaciones
+  const deletedTasks = []; //  Para recopilar taskIds y limpiar notificaciones
 
   // Recopilar todas las tareas para sync y notificaciones
   Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
     dayTasks.forEach( ( task ) => {
       deletedTasks.push( { dateStr, taskId: task.id } );
-      clearTaskNotifications( task.id ); // NUEVO: Limpiar notificaciones para cada tarea
+      clearTaskNotifications( task.id ); //  Limpiar notificaciones para cada tarea
     } );
   } );
 
@@ -6769,63 +6625,6 @@ function saveTasks() {
     showNotification( "Error al guardar tareas", "error" );
   }
 }
-
-// Limpieza de duplicados existentes
-async function cleanupDuplicateTasks() {
-  console.log( '🧹 Iniciando limpieza de duplicados...' );
-
-  let cleaned = 0;
-
-  Object.keys( tasks ).forEach( dateStr => {
-    if ( !tasks[ dateStr ] ) return;
-
-    const seen = new Map(); // title:time -> task
-    const uniqueTasks = [];
-
-    tasks[ dateStr ].forEach( task => {
-      const key = `${task.title}:${task.time}`;
-
-      if ( !seen.has( key ) ) {
-        seen.set( key, task );
-        uniqueTasks.push( task );
-      } else {
-        console.log( `🗑️ Duplicado encontrado: ${task.title}` );
-        cleaned++;
-      }
-    } );
-
-    if ( uniqueTasks.length < tasks[ dateStr ].length ) {
-      tasks[ dateStr ] = uniqueTasks;
-    }
-
-    if ( tasks[ dateStr ].length === 0 ) {
-      delete tasks[ dateStr ];
-    }
-  } );
-
-  if ( cleaned > 0 ) {
-    saveTasks();
-    renderCalendar();
-    updateProgress();
-    showNotification( `🧹 ${cleaned} tareas duplicadas eliminadas`, 'success' );
-  } else {
-    console.log( 'No se encontraron duplicados' );
-  }
-
-  return cleaned;
-}
-
-// 7️EJECUTAR LIMPIEZA AL INICIO (una sola vez)
-if ( !localStorage.getItem( 'duplicates_cleaned_v2' ) ) {
-  cleanupDuplicateTasks().then( count => {
-    if ( count > 0 ) {
-      localStorage.setItem( 'duplicates_cleaned_v2', 'true' );
-      console.log( 'Limpieza de duplicados completada' );
-    }
-  } );
-}
-
-console.log( 'Sistema anti-duplicados cargado' );
 
 // NUEVA FUNCIÓN: Limpieza de duplicados
 async function cleanupDuplicates() {
@@ -7224,13 +7023,5 @@ function convertDurationInputToMinutes() {
 
 // Verificar salud de sesión cada hora
 setInterval( checkSessionHealth, 60 * 60 * 1000 );
-
-// AGREGAR al final del archivo: Sincronización periódica de estados
-setInterval( () => {
-  if ( currentUser && isOnline && !isSyncing ) {
-    syncTaskStatesRealTime();
-    syncTaskLogs();
-  }
-}, 30000 ); // Cada 30 segundos
 
 console.log( 'Sistema de autenticación configurado' );

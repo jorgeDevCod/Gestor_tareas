@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v4.3';
+const CACHE_VERSION = 'v4.4';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -413,8 +413,8 @@ async function checkTaskNotifications() {
         }
 
         const tasks = await getTasksFromDB();
-        const now = new Date();
-        const today = formatDate( now );
+        const local = getLocalNow(); // ✅ hora local real
+        const today = local.dateStr;
         const todayTasks = tasks[ today ] || [];
 
         if ( todayTasks.length === 0 ) {
@@ -422,11 +422,11 @@ async function checkTaskNotifications() {
             return;
         }
 
-        const currentHour = now.getHours();
-        const currentMinute = now.getMinutes();
-        const currentTimeInMinutes = currentHour * 60 + currentMinute;
+        const currentHour = local.hours;
+        const currentMinute = local.minutes;
+        const currentTimeInMinutes = local.totalMinutes;
 
-        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today} - ${currentHour}:${String( currentMinute ).padStart( 2, '0' )}` );
+        console.log( `🔍 Verificando ${todayTasks.length} tareas para ${today} - ${currentHour}:${String( currentMinute ).padStart( 2, '0' )} (hora local)` );
 
         // Reset diario
         if ( currentHour === 0 && currentMinute < 1 ) {
@@ -527,12 +527,27 @@ async function showNotification( options ) {
         return false;
     }
 }
-
 function formatDate( date ) {
     const year = date.getFullYear();
     const month = String( date.getMonth() + 1 ).padStart( 2, '0' );
     const day = String( date.getDate() ).padStart( 2, '0' );
     return `${year}-${month}-${day}`;
+}
+
+// obtiene fecha y hora local correcta desde el SW
+function getLocalNow() {
+    const now = new Date();
+    // toLocaleString con timeZone fuerza la interpretación local correcta
+    const localStr = now.toLocaleString( 'sv-SE', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } );
+    // localStr tiene formato "YYYY-MM-DD HH:MM:SS"
+    const [ datePart, timePart ] = localStr.split( ' ' );
+    const [ hours, minutes ] = timePart.split( ':' ).map( Number );
+    return {
+        dateStr: datePart,
+        hours,
+        minutes,
+        totalMinutes: hours * 60 + minutes
+    };
 }
 
 // ==========================================
