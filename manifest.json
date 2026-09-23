@@ -1,22 +1,25 @@
 {
   "name": "Calendario de Tareas",
   "short_name": "TaskSmart",
-  "gcm_sender_id": "646091363424",
-  "start_url": "/",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#2d1ad6",
-  "permissions": ["notifications", "periodicSync"],
+  "description": "Gestor de tareas con calendario visual, notificaciones y sincronización en la nube.",
   "icons": [
     {
-      "src": "/images/IconLogo.png",
+      "src": "./images/IconLogo.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/images/favicon-512.png",
+      "src": "./images/favicon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }

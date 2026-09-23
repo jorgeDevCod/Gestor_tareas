@@ -1,0 +1,28 @@
+# Netlify: frontend estático (index.html en raíz) + Firebase para backend
+[build]
+  publish = "."
+  command = "npm run build:css"
+
+[[headers]]
+  for = "/firebase-messaging-sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "public, max-age=3600, must-revalidate"
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/dist/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"

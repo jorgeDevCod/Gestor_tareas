@@ -57,7 +57,7 @@ const USER_PREFERENCES_KEY = 'user_preferences';
 const TASK_STATES = {
   pending: {
     label: "Pendiente",
-    class: "bg-gray-200 text-gray-800",
+    class: "bg-indigo-100 text-indigo-900",
     icon: "fa-clock",
   },
   inProgress: {
@@ -96,8 +96,18 @@ const PRIORITY_LEVELS = {
   },
 };
 
-// REGISTRO DEL SERVICE WORKER - Evitar duplicados
+// REGISTRO DEL SERVICE WORKER - Evitar duplicados + auto-actualización.
+// Si hay un SW nuevo (v5.1+), al tomar control recarga UNA vez para
+// garantizar HTML+JS frescos y no mezclar versiones cacheadas.
+let swControllerChanged = false;
 if ( 'serviceWorker' in navigator ) {
+  navigator.serviceWorker.addEventListener( 'controllerchange', () => {
+    if ( swControllerChanged ) return;
+    swControllerChanged = true;
+    console.log( '🔄 Nuevo SW tomó control, recargando...' );
+    window.location.reload();
+  } );
+
   window.addEventListener( 'load', async () => {
     try {
       // Verificar si ya hay un SW registrado
@@ -296,26 +306,31 @@ function getVibrationPattern( type ) {
 }
 
 // Función auxiliar para notificaciones web fallback
-function showInAppNotification( title, message, type = 'info' ) {
+function showInAppNotification( title, message, type = 'info', options = null ) {
   const notification = document.createElement( 'div' );
 
   const typeIcons = {
     success: 'fa-check-circle',
     warning: 'fa-exclamation-triangle',
     info: 'fa-info-circle',
+    task: 'fa-tasks',
   };
 
   const typeColors = {
     success: 'bg-green-500',
     warning: 'bg-orange-500',
     info: 'bg-blue-500',
+    task: 'bg-indigo-600',
   };
 
-  notification.className = `fixed top-20 right-4 ${typeColors[ type ]} text-white px-4 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full max-w-sm`;
+  const safeType = typeColors[ type ] ? type : 'info';
+  notification.className = `fixed top-20 right-4 ${typeColors[ safeType ]} text-white px-4 py-3 rounded-lg shadow-lg z-[100] transition-all duration-300 transform translate-x-full max-w-sm`;
+  if ( options?.taskId ) notification.dataset.taskId = options.taskId;
+  if ( options?.dateStr ) notification.dataset.dateStr = options.dateStr;
 
   notification.innerHTML = `
     <div class="flex items-start space-x-3">
-      <i class="fas ${typeIcons[ type ]} text-xl mt-1"></i>
+      <i class="fas ${typeIcons[ safeType ]} text-xl mt-1"></i>
       <div class="flex-1">
         <div class="font-semibold text-sm">${title}</div>
         <div class="text-xs opacity-90 mt-1">${message}</div>
@@ -795,21 +810,19 @@ async function processSyncQueue() {
         switch ( op.operation ) {
           case "upsert":
             if ( op.task ) {
-              // Solo insertar si NO existe en Firebase
-              if ( !existingTaskIds.has( taskDocId ) ) {
-                batch.set( taskRef, {
-                  ...op.task,
-                  date: op.dateStr,
-                  lastModified: new Date(),
-                  syncVersion: Date.now()
-                }, { merge: false } );
+              // Upsert real: crear si no existe y ACTUALIZAR si ya existe,
+              // para que los cambios de título/hora/estado se propaguen.
+              // Se usa merge:true igual que en el sync manual.
+              batch.set( taskRef, {
+                ...op.task,
+                date: op.dateStr,
+                lastModified: new Date(),
+                syncVersion: Date.now()
+              }, { merge: true } );
 
-                processedInThisBatch.add( taskDocId );
-                processedCount++;
-                console.log( `✅ Upsert: ${op.task.title}` );
-              } else {
-                console.log( `⏭️ Ya existe: ${op.task.title}` );
-              }
+              processedInThisBatch.add( taskDocId );
+              processedCount++;
+              console.log( `✅ Upsert: ${op.task.title}` );
             }
             break;
 
@@ -929,6 +942,10 @@ async function syncToFirebase() {
           title: task.title,
           description: task.description || "",
           time: task.time || "",
+          endTime: task.endTime || null,
+          duration: task.duration ?? computeMinutesFromRange( task.time, task.endTime ),
+          priority: task.priority || 3,
+          state: task.state || "pending",
           completed: task.completed || false,
         } );
       } );
@@ -1025,6 +1042,7 @@ function setupDateInput() {
     const currentHour = String( now.getHours() ).padStart( 2, "0" );
     const currentMinute = String( now.getMinutes() ).padStart( 2, "0" );
     taskTimeInput.value = `${currentHour}:${currentMinute}`;
+    refreshEndTimeMin( 'taskTime', 'taskEndTime', false );
   }
 }
 
@@ -1547,18 +1565,27 @@ function setupFCMListeners() {
     }
   } );
 
-  // LISTENER: Errores de token
-  messaging.onTokenRefresh( async () => {
-    console.log( '🔄 Token FCM necesita renovación' );
-    try {
-      const newToken = await requestFCMToken();
-      if ( newToken ) {
-        console.log( 'Token FCM renovado' );
-      }
-    } catch ( error ) {
-      console.error( '❌ Error renovando token FCM:', error );
+  // LISTENER: renovación de token (onTokenRefresh está deprecado en Firebase 10+;
+  // se conserva por compatibilidad solo si existe, si no se re-obtiene bajo demanda)
+  try {
+    if ( typeof messaging.onTokenRefresh === 'function' ) {
+      messaging.onTokenRefresh( async () => {
+        console.log( '🔄 Token FCM necesita renovación' );
+        try {
+          const newToken = await requestFCMToken();
+          if ( newToken ) {
+            console.log( 'Token FCM renovado' );
+          }
+        } catch ( error ) {
+          console.error( '❌ Error renovando token FCM:', error );
+        }
+      } );
+    } else {
+      console.log( 'ℹ️ messaging.onTokenRefresh no disponible: se renovará token bajo demanda' );
     }
-  } );
+  } catch ( error ) {
+    console.warn( '⚠️ No se pudo registrar onTokenRefresh:', error );
+  }
 
   console.log( 'FCM listeners configurados (foreground)' );
 }
@@ -2395,21 +2422,124 @@ window.addEventListener( 'appinstalled', () => {
   showNotification( 'Aplicación instalada correctamente', 'success' );
 } );
 
+// ===== DELEGACIÓN GLOBAL DE ACCIONES DINÁMICAS =====
+// Un único listener a nivel document para [data-action]. El HTML solo
+// aporta marcado estático + hooks inertes; toda la conducta vive aquí.
+// Al registrarse una sola vez en la evaluación del script, es inmune
+// al doble cableado del init.
+document.addEventListener( 'click', ( e ) => {
+  const el = e.target.closest( '[data-action]' );
+  if ( !el ) return;
+
+  const action = el.dataset.action;
+  const date = el.dataset.date;
+  const id = el.dataset.id;
+
+  switch ( action ) {
+    case 'close-modals':
+      closeAllModals();
+      break;
+    case 'day-modal':
+      e.stopPropagation();
+      showDayTasksModal( date );
+      break;
+    case 'goto-task':
+      closeAllModals();
+      goToTask( date, id );
+      break;
+    case 'quick-add':
+      closeAllModals();
+      showQuickAddTask( date );
+      break;
+    case 'clear-week':
+      closeAllModals();
+      clearWeek( true );
+      break;
+    case 'clear-month':
+      closeAllModals();
+      clearMonth( true );
+      break;
+    case 'clear-specific':
+      showClearSpecificDaysModal();
+      break;
+    case 'confirm-clear-specific':
+      confirmClearSpecificDays();
+      break;
+    case 'toggle-form':
+      toggleTaskForm();
+      break;
+    case 'show-form':
+      toggleTaskForm( true );
+      break;
+    case 'fab-create':
+      openCreateTaskModal();
+      break;
+    case 'month-year-picker':
+      showMonthYearPicker();
+      break;
+    case 'pick-month':
+      pickMonthYear( parseInt( el.dataset.month, 10 ) );
+      break;
+    case 'picker-year-prev':
+      shiftPickerYear( -1 );
+      break;
+    case 'picker-year-next':
+      shiftPickerYear( 1 );
+      break;
+    case 'picker-today':
+      pickerGoToday();
+      break;
+  }
+} );
+
+// ===== RANGO HORARIO INICIO/FIN =====
+// La hora de fin solo puede elegirse después de la de inicio:
+// fija `min` en el picker y limpia en vivo cualquier valor inválido.
+function refreshEndTimeMin( startId, endId, notify = true ) {
+  const start = document.getElementById( startId );
+  const end = document.getElementById( endId );
+  if ( !start || !end ) return;
+
+  if ( start.value ) {
+    end.min = start.value;
+    if ( end.value && end.value <= start.value ) {
+      end.value = '';
+      if ( notify ) showNotification( 'La hora de fin debe ser posterior a la de inicio', 'error' );
+    }
+  } else {
+    end.removeAttribute( 'min' );
+  }
+}
+
+function wireTimeRangeValidation( startId, endId ) {
+  const start = document.getElementById( startId );
+  const end = document.getElementById( endId );
+  if ( !start || !end ) return;
+  start.addEventListener( 'change', () => refreshEndTimeMin( startId, endId ) );
+  end.addEventListener( 'change', () => refreshEndTimeMin( startId, endId ) );
+  refreshEndTimeMin( startId, endId, false );
+}
+
 // CONFIGURACIÓN de eventos
+// Guard: el init se invoca desde el fallback por readyState Y desde
+// DOMContentLoaded; sin esto cada botón quedaba con doble listener y
+// acciones como el toggle se anulaban (abrir+cerrar en el mismo clic).
+let eventListenersConfigured = false;
 function setupEventListeners() {
+  if ( eventListenersConfigured ) return;
   // Verificar que DOM esté listo
   if ( document.readyState === 'loading' ) {
     document.addEventListener( 'DOMContentLoaded', setupEventListeners );
     return;
   }
+  if ( eventListenersConfigured ) return;
 
   const elements = {
     taskForm: addTask,
     prevMonth: () => changeMonth( -1 ),
     nextMonth: () => changeMonth( 1 ),
     taskRepeat: toggleCustomDays,
-    clearWeekBtn: clearWeek,
-    clearMonthBtn: clearMonth,
+    clearOptionsBtn: showClearOptionsModal,
     exportExcelBtn: exportToExcel,
     notificationsBtn: toggleNotifications,
     syncBtn: syncToFirebase,
@@ -2419,6 +2549,9 @@ function setupEventListeners() {
     closeLoginModal: closeLoginModal,
     resetFormBtn: resetForm,
     clearAllBtn: clearAll,
+    // NOTA: formToggleBtn / showFormBtn / fabAddTask NO van aquí:
+    // los gestiona la delegación global [data-action] (un solo listener
+    // a nivel document, inmune a doble cableado).
   };
 
   // Configurar event listeners principales
@@ -2463,6 +2596,11 @@ function setupEventListeners() {
     input.addEventListener( 'change', updateRepeatPreview );
   } );
 
+  // La hora de fin del formulario principal solo admite valores
+  // posteriores a la hora de inicio (min dinámico + limpieza en vivo).
+  wireTimeRangeValidation( 'taskTime', 'taskEndTime' );
+
+  eventListenersConfigured = true;
   console.log( 'Event listeners configurados completamente' );
 }
 
@@ -2529,6 +2667,9 @@ function initializeTodayPanel() {
     } else {
       console.log( `⏭️ Panel no abierto - No hay tareas y no es desktop` );
     }
+
+    // Aviso de atrasadas al ingresar (una vez por sesión)
+    notifyOverdueOnEntry();
   }, 500 ); // Esperar 500ms para asegurar que las tareas estén cargadas
 }
 
@@ -2853,7 +2994,7 @@ function addTask( e ) {
     description: document.getElementById( "taskDescription" ).value.trim(),
     date: document.getElementById( "taskDate" ).value,
     time: document.getElementById( "taskTime" ).value,
-    duration: convertDurationInputToMinutes(), // Usar nueva función
+    endTime: document.getElementById( "taskEndTime" ).value || null,
     repeat: document.getElementById( "taskRepeat" ).value,
     priority: parseInt( document.getElementById( "taskPriority" ).value ) || 3,
     initialState: "pending",
@@ -2861,6 +3002,11 @@ function addTask( e ) {
 
   if ( !formData.title ) {
     showNotification( "Por favor ingresa un título", "error" );
+    return;
+  }
+
+  if ( formData.endTime && formData.time && formData.endTime <= formData.time ) {
+    showNotification( "La hora de fin debe ser posterior a la de inicio", "error" );
     return;
   }
 
@@ -2877,7 +3023,8 @@ function addTask( e ) {
     title: formData.title,
     description: formData.description,
     time: formData.time,
-    duration: formData.duration, // Ya está en minutos
+    endTime: formData.endTime,
+    duration: computeMinutesFromRange( formData.time, formData.endTime ),
     priority: formData.priority,
     state: "pending",
     completed: false,
@@ -3104,9 +3251,13 @@ function renderCalendar() {
   const daysInMonth = lastDay.getDate();
   const startingDayOfWeek = firstDay.getDay();
 
+  const fullMode = !isFormSidebarOpen;
+
   for ( let i = 0; i < startingDayOfWeek; i++ ) {
     const emptyDay = document.createElement( "div" );
-    emptyDay.className = "h-32 border border-gray-200";
+    emptyDay.className = fullMode
+      ? "min-h-32 border border-gray-200"
+      : "h-32 border border-gray-200";
     calendar.appendChild( emptyDay );
   }
 
@@ -3129,20 +3280,25 @@ function createDayElement( day, dateStr, dayTasks ) {
   const todayStr = getTodayString();
   const isToday = dateStr === todayStr;
   const isPastDate = isDatePast( dateStr );
+  // Modo full (sidebar oculta, calendario a pantalla completa): casillas
+  // elásticas con todas las tareas y nombres completos.
+  // Modo normal: dimensiones originales (h-32, 2 tareas + "+N más").
+  const fullMode = !isFormSidebarOpen;
 
-  dayElement.className = `h-32 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
+  dayElement.className = fullMode
+    ? `min-h-32 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`
+    : `h-32 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
   dayElement.dataset.date = dateStr;
+
+  const visibleTasks = fullMode ? dayTasks : dayTasks.slice( 0, 2 );
 
   dayElement.innerHTML = `
     <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
     <div class="space-y-1">
-      ${dayTasks
-      .slice( 0, 2 )
-      .map( ( task ) => createTaskElement( task, dateStr ) )
-      .join( "" )}
-      ${dayTasks.length > 2
+      ${visibleTasks.map( ( task ) => createTaskElement( task, dateStr, fullMode ) ).join( "" )}
+      ${!fullMode && dayTasks.length > 2
       ? `<div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors"
-             onclick="showDailyTaskPanel('${dateStr}', ${day})">
+             data-action="day-modal" data-date="${dateStr}">
             +${dayTasks.length - 2} más
           </div>`
       : ""}
@@ -3157,8 +3313,8 @@ function createDayElement( day, dateStr, dayTasks ) {
   `;
 
   dayElement.addEventListener( "click", ( e ) => {
-    if ( !e.target.closest( ".task-item" ) && !e.target.closest( "button" ) ) {
-      showDailyTaskPanel( dateStr, day );
+    if ( !e.target.closest( ".task-item" ) && !e.target.closest( "button" ) && !e.target.closest( "[data-action]" ) ) {
+      showDayTasksModal( dateStr );
     }
   } );
 
@@ -3254,7 +3410,13 @@ function showDailyTaskPanel( dateStr, day ) {
     `;
   } else {
     const sortedTasks = sortTasksByPriority( dayTasks );
-    taskList.innerHTML = sortedTasks
+    const overdueCount = dayTasks.filter( ( t ) => isTaskOverdue( dateStr, t ) ).length;
+    const overdueBanner = overdueCount > 0 ? `
+      <div class="bg-red-500 text-white px-4 py-2 rounded-lg shadow mb-3 text-sm font-semibold flex items-center">
+        <i class="fas fa-exclamation-triangle mr-2"></i>
+        ${overdueCount} tarea(s) atrasada(s) sin iniciar
+      </div>` : '';
+    taskList.innerHTML = overdueBanner + sortedTasks
       .map( ( task ) => createPanelTaskElement( task, dateStr ) )
       .join( "" );
   }
@@ -3295,7 +3457,9 @@ function createPanelTaskElement( task, dateStr ) {
   const canResume = task.state === "paused";
 
   const isLate = checkIfTaskIsLate( dateStr, task.time );
-  const showLateWarning = isPastDate && task.state !== 'completed';
+  // Pendientes atrasadas usan el cintillo rojo propio (overdue), no el naranja.
+  const showLateWarning = isPastDate && task.state !== 'completed' && task.state !== 'pending';
+  const overdue = isTaskOverdue( dateStr, task );
 
   // Timer display
   let timerDisplay = '';
@@ -3331,6 +3495,13 @@ function createPanelTaskElement( task, dateStr ) {
             </div>
         ` : ''}
 
+        ${overdue ? `
+            <div class="bg-red-500 text-white p-2 mb-3 rounded text-xs font-semibold flex items-center">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                Atrasada — no iniciada y fuera de hora
+            </div>
+        ` : ''}
+
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div class="flex flex-col space-y-2 w-full sm:w-32 flex-shrink-0">
                 <select onchange="changeTaskStateWithTimer('${dateStr}', '${task.id}', this.value)"
@@ -3358,10 +3529,10 @@ function createPanelTaskElement( task, dateStr ) {
       : '<div class="task-description text-sm text-gray-400 dark:text-gray-500 mt-1 italic">Sin descripción</div>'}
                 
                 <div class="task-meta flex flex-wrap items-center gap-3 mt-2 text-xs">
-                    ${task.time ? `
+                    ${task.time || task.endTime ? `
                         <div class="text-indigo-600 dark:text-indigo-400 flex items-center">
                             <i class="far fa-clock mr-1"></i>
-                            ${task.time}
+                            ${task.endTime ? `${task.time || ''} – ${task.endTime}` : task.time}
                         </div>
                     ` : ""}
                     ${timerDisplay}
@@ -3750,37 +3921,40 @@ function clearDayTasks( dateStr ) {
   );
 }
 
-function createTaskElement( task, dateStr ) {
+function createTaskElement( task, dateStr, fullName = false ) {
   const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
   const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
+  const overdue = isTaskOverdue( dateStr, task );
 
-  // Calcular duración si aplica
-  const durationInfo = task.duration ? calculateElapsedTime( task, dateStr ) : null;
+  // En la casilla solo la cantidad de tiempo programada (sin inicio/fin)
+  const minutes = task.endTime
+    ? computeMinutesFromRange( task.time, task.endTime )
+    : ( task.duration || null );
 
-  let durationBadge = '';
-  if ( task.duration ) {
-    if ( durationInfo && task.state === 'inProgress' ) {
-      const color = getDurationColor( durationInfo.percentage );
-      durationBadge = `<span class="text-xs ml-1 ${color} text-white px-1 rounded">⏱️${formatDuration( durationInfo.elapsed )}/${formatDuration( task.duration )}</span>`;
-    } else {
-      durationBadge = `<span class="text-xs ml-1 bg-gray-300 text-gray-700 px-1 rounded">⏱️${formatDuration( task.duration )}</span>`;
-    }
+  let amountBadge = '';
+  if ( minutes ) {
+    amountBadge = `<span class="text-xs ml-1 bg-gray-300 text-gray-700 px-1 rounded">⏱️${formatMinutes( minutes )}</span>`;
+  } else if ( task.time ) {
+    amountBadge = `<span class="text-xs opacity-75 ml-1">${task.time}</span>`;
   }
+
+  const pillClass = overdue ? 'bg-red-500 text-white' : state.class;
+  const overdueLabel = overdue ? ' · atrasada' : '';
+  const timeRange = task.endTime ? `${task.time || ''}–${task.endTime}` : ( task.time || '' );
 
   return `
     <div class="task-item-wrapper relative group/task">
-      <div class="text-xs p-1 rounded ${state.class} truncate task-item cursor-move pr-8 border-l-4"
+      <div class="text-xs p-1 rounded ${pillClass} task-item cursor-move pr-8 border-l-4 ${fullName ? "break-words whitespace-normal" : "truncate"}"
            data-task-id="${task.id}"
            data-date="${dateStr}"
            draggable="true"
            style="border-left-color: ${priority.color}"
-           title="${task.title}${task.time ? " - " + task.time : ""} | ${state.label} | ${priority.label}${task.duration ? ' | Duración: ' + formatDuration( task.duration ) : ''}">
-        <i class="fas ${state.icon} mr-1 opacity-75"></i>
-        ${task.title}
-        ${task.time ? `<span class="text-xs opacity-75 ml-1">${task.time}</span>` : ""}
-        ${durationBadge}
+           title="${task.title}${timeRange ? " - " + timeRange : ""} | ${state.label}${overdueLabel} | ${priority.label}${minutes ? ' | Duración: ' + formatMinutes( minutes ) : ''}">
+        <i class="fas ${overdue ? 'fa-exclamation-triangle' : state.icon} mr-1 opacity-75"></i>
+        ${task.title}${overdue ? `<span class="font-bold"> · atrasada</span>` : ""}
+        ${amountBadge}
       </div>
-      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white to-transparent pl-2">
+      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white dark:from-[#18202b] dark:via-[#18202b] to-transparent pl-2">
         <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
                 class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
                 title="Editar tarea completa">
@@ -4647,24 +4821,31 @@ function showAdvancedEditModal( dateStr, taskId ) {
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">
-              Hora <span class="text-red-500">*</span>
+              Hora de inicio <span class="text-red-500">*</span>
             </label>
             <input type="time" id="advancedEditTaskTime" value="${task.time || ""}" required
                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">
-              Prioridad <span class="text-red-500">*</span>
+              Hora de fin <span class="text-gray-400 font-normal">(opcional)</span>
             </label>
-            <select id="advancedEditTaskPriority" required
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-              <option value="" disabled>Selecciona una prioridad</option>
-              <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
-              <option value="2" ${task.priority === 2 ? "selected" : ""}>🟠 Importante</option>
-              <option value="3" ${task.priority === 3 ? "selected" : ""}>🔵 Moderado</option>
-              <option value="4" ${task.priority === 4 ? "selected" : ""}>⚫ No Prioritario</option>
-            </select>
+            <input type="time" id="advancedEditTaskEndTime" value="${task.endTime || ""}"
+                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
           </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            Prioridad <span class="text-red-500">*</span>
+          </label>
+          <select id="advancedEditTaskPriority" required
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            <option value="" disabled>Selecciona una prioridad</option>
+            <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 Muy Importante</option>
+            <option value="2" ${task.priority === 2 ? "selected" : ""}>🟠 Importante</option>
+            <option value="3" ${task.priority === 3 ? "selected" : ""}>🔵 Moderado</option>
+            <option value="4" ${task.priority === 4 ? "selected" : ""}>⚫ No Prioritario</option>
+          </select>
         </div>
 
         <div class="bg-blue-50 p-3 rounded-lg">
@@ -4690,6 +4871,9 @@ function showAdvancedEditModal( dateStr, taskId ) {
   `;
 
   document.body.appendChild( modal );
+
+  // La hora de fin solo admite valores posteriores a la de inicio
+  wireTimeRangeValidation( "advancedEditTaskTime", "advancedEditTaskEndTime" );
 
   // Event listener para el formulario
   document.getElementById( "advancedEditTaskForm" ).addEventListener( "submit", ( e ) => {
@@ -4724,6 +4908,53 @@ function checkIfTaskIsLate( dateStr, taskTime ) {
   return false;
 }
 
+// ¿Tarea NO iniciada (pendiente) y fuera de hora? Incluye días pasados y hoy tardío.
+function isTaskOverdue( dateStr, task ) {
+  if ( !task || !task.time || task.state !== 'pending' ) return false;
+
+  if ( isDatePast( dateStr ) ) return true;
+
+  if ( dateStr === getTodayString() ) {
+    const now = new Date();
+    const current = now.getHours() * 60 + now.getMinutes();
+    const [ h, m ] = task.time.split( ':' ).map( Number );
+    return current > ( h * 60 + m );
+  }
+
+  return false;
+}
+
+// Minutos → "45m" / "1h 30m" (la duración usa minutos en este proyecto)
+function formatMinutes( minutes ) {
+  if ( !minutes || minutes <= 0 ) return '';
+  const h = Math.floor( minutes / 60 );
+  const m = Math.round( minutes % 60 );
+  if ( h === 0 ) return `${m}m`;
+  if ( m === 0 ) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+// Al ingresar a la plataforma: avisa UNA vez por sesión si hay atrasadas hoy.
+let entryOverdueNotified = false;
+function notifyOverdueOnEntry() {
+  if ( entryOverdueNotified ) return;
+  entryOverdueNotified = true;
+
+  const today = getTodayString();
+  const overdue = ( tasks[ today ] || [] ).filter( ( t ) => isTaskOverdue( today, t ) );
+  if ( overdue.length === 0 ) return;
+
+  const msg = overdue.length === 1
+    ? `Tarea atrasada: "${overdue[ 0 ].title}"`
+    : `Tienes ${overdue.length} tareas atrasadas sin iniciar`;
+
+  showInAppNotification( '⚠️ Tareas atrasadas', msg, 'warning' );
+
+  if ( notificationsEnabled && 'Notification' in window && Notification.permission === 'granted' ) {
+    showDesktopNotificationPWA( '⚠️ Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );
+  }
+}
+
 // FUNCIÓN para actualizar tareas desde el panel
 function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
   const title = document.getElementById( "advancedEditTaskTitle" ).value.trim();
@@ -4731,6 +4962,7 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
     .getElementById( "advancedEditTaskDescription" )
     .value.trim();
   const time = document.getElementById( "advancedEditTaskTime" ).value;
+  const endTime = document.getElementById( "advancedEditTaskEndTime" ).value || null;
   const priority = parseInt(
     document.getElementById( "advancedEditTaskPriority" ).value
   );
@@ -4740,6 +4972,11 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
       "Por favor completa todos los campos obligatorios",
       "error"
     );
+    return;
+  }
+
+  if ( endTime && endTime <= time ) {
+    showNotification( "La hora de fin debe ser posterior a la de inicio", "error" );
     return;
   }
 
@@ -4762,6 +4999,8 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
     title: title,
     description: description,
     time: time,
+    endTime: endTime,
+    duration: computeMinutesFromRange( time, endTime ),
     priority: priority,
     // NO cambiar el estado aquí
   };
@@ -4820,8 +5059,13 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
                               class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">${task.description || ""}</textarea>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Hora de inicio <span class="text-red-500">*</span></label>
                     <input type="time" id="quickEditTime" value="${task.time || ""}" required
+                           class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Hora de fin <span class="text-gray-400 font-normal">(opcional)</span></label>
+                    <input type="time" id="quickEditEndTime" value="${task.endTime || ""}"
                            class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div>
@@ -4849,6 +5093,9 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
 
   document.body.appendChild( modal );
 
+  // La hora de fin solo admite valores posteriores a la de inicio
+  wireTimeRangeValidation( "quickEditTime", "quickEditEndTime" );
+
   // Event listener para el formulario
   document.getElementById( "quickEditForm" ).addEventListener( "submit", ( e ) => {
     e.preventDefault();
@@ -4868,6 +5115,7 @@ function saveQuickEditImproved( dateStr, taskId ) {
     .getElementById( "quickEditDescription" )
     .value.trim();
   const newTime = document.getElementById( "quickEditTime" ).value;
+  const newEndTime = document.getElementById( "quickEditEndTime" ).value || null;
   const newPriority = parseInt(
     document.getElementById( "quickEditPriority" ).value
   );
@@ -4880,10 +5128,17 @@ function saveQuickEditImproved( dateStr, taskId ) {
     return;
   }
 
+  if ( newEndTime && newEndTime <= newTime ) {
+    showNotification( "La hora de fin debe ser posterior a la de inicio", "error" );
+    return;
+  }
+
   // Actualizar la tarea
   task.title = newTitle;
   task.description = newDescription;
   task.time = newTime;
+  task.endTime = newEndTime;
+  task.duration = computeMinutesFromRange( newTime, newEndTime );
   task.priority = newPriority;
 
   // Persistir cambios
@@ -4921,6 +5176,331 @@ function closeDailyTaskPanel() {
     panel.classList.add( "hidden" );
     selectedDateForPanel = null;
   }
+}
+
+// ===== FORMULARIO LATERAL COLAPSABLE + FAB + MODAL DE DÍA =====
+let isFormSidebarOpen = true;
+
+function toggleTaskForm( forceOpen ) {
+  const wantOpen = typeof forceOpen === 'boolean' ? forceOpen : !isFormSidebarOpen;
+  const formColumn = document.getElementById( 'formColumn' );
+  const calendarColumn = document.getElementById( 'calendarColumn' );
+  const toggleIcon = document.getElementById( 'formToggleIcon' );
+  const toggleBtn = document.getElementById( 'formToggleBtn' );
+  const showFormBtn = document.getElementById( 'showFormBtn' );
+  const fab = document.getElementById( 'fabAddTask' );
+
+  isFormSidebarOpen = wantOpen;
+
+  if ( wantOpen ) {
+    formColumn?.classList.remove( 'hidden' );
+    calendarColumn?.classList.remove( 'lg:col-span-3' );
+    calendarColumn?.classList.add( 'lg:col-span-2' );
+    if ( toggleIcon ) toggleIcon.className = 'fas fa-chevron-up text-sm';
+    toggleBtn?.setAttribute( 'title', 'Ocultar formulario' );
+    showFormBtn?.classList.add( 'hidden' );
+    if ( fab ) { fab.classList.add( 'hidden' ); fab.classList.remove( 'flex' ); }
+    renderCalendar();
+  } else {
+    formColumn?.classList.add( 'hidden' );
+    calendarColumn?.classList.remove( 'lg:col-span-2' );
+    calendarColumn?.classList.add( 'lg:col-span-3' );
+    if ( toggleIcon ) toggleIcon.className = 'fas fa-chevron-down text-sm';
+    toggleBtn?.setAttribute( 'title', 'Crear tarea' );
+    showFormBtn?.classList.remove( 'hidden' );
+    if ( fab ) { fab.classList.remove( 'hidden' ); fab.classList.add( 'flex' ); }
+    renderCalendar();
+  }
+}
+
+// Abre el modal de creación (usado por el FAB en todos los dispositivos)
+function openCreateTaskModal() {
+  const base = selectedDateForPanel || getTodayString();
+  showQuickAddTask( isDatePast( base ) ? getTodayString() : base );
+}
+
+// Modal centrado con todas las tareas del día. Al pulsar una tarea,
+// cierra el modal y lleva con scroll suave hasta ella en el panel inferior.
+function showDayTasksModal( dateStr ) {
+  closeAllModals();
+
+  const dayTasks = sortTasksByPriority( [ ...( tasks[ dateStr ] || [] ) ] );
+  const date = new Date( dateStr + 'T12:00:00' );
+  const label = date.toLocaleDateString( 'es-ES', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  } );
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'dayTasksModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[85vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-calendar-day text-teal-600 mr-2"></i>${label}
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="space-y-2">
+        ${dayTasks.length === 0 ? `
+          <div class="text-center py-6 text-gray-500">
+            <i class="fas fa-calendar-plus text-3xl mb-2 opacity-50"></i>
+            <p>No hay tareas para este día</p>
+          </div>` : dayTasks.map( ( task ) => {
+            const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+            const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
+            const range = task.endTime ? `${task.time || ''} – ${task.endTime}` : ( task.time || 'Sin hora' );
+            return `
+              <button data-action="goto-task" data-date="${dateStr}" data-id="${task.id}"
+                      class="w-full text-left bg-gray-50 hover:bg-blue-50 rounded-lg p-3 border-l-4 transition flex items-center gap-3"
+                      style="border-left-color: ${priority.color}">
+                <i class="fas ${state.icon} text-gray-500"></i>
+                <span class="flex-1 min-w-0">
+                  <span class="block font-medium text-sm text-gray-800 break-words">${task.title}</span>
+                  <span class="block text-xs text-gray-500">${range} · ${state.label}</span>
+                </span>
+                <i class="fas fa-chevron-down text-gray-400"></i>
+              </button>`;
+          } ).join( '' )}
+      </div>
+      <button data-action="quick-add" data-date="${dateStr}"
+              class="mt-4 w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+        <i class="fas fa-plus mr-2"></i>Agregar tarea este día
+      </button>
+    </div>
+  `;
+
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+
+  document.body.appendChild( modal );
+}
+
+// ===== MODAL TRIPLE DE LIMPIEZA (semana / mes / días específicos) =====
+function showClearOptionsModal() {
+  closeAllModals();
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'clearOptionsModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-trash-alt text-orange-500 mr-2"></i>Limpiar tareas
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="space-y-2">
+        <button data-action="clear-week"
+                class="w-full bg-orange-500 text-white py-2.5 px-4 rounded-lg hover:bg-orange-600 transition text-sm font-medium">
+          <i class="fas fa-calendar-week mr-2"></i>Limpiar toda la semana
+        </button>
+        <button data-action="clear-month"
+                class="w-full bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-600 transition text-sm font-medium">
+          <i class="fas fa-calendar-alt mr-2"></i>Limpiar todo el mes
+        </button>
+        <button data-action="clear-specific"
+                class="w-full bg-purple-500 text-white py-2.5 px-4 rounded-lg hover:bg-purple-600 transition text-sm font-medium">
+          <i class="fas fa-calendar-check mr-2"></i>Limpiar días específicos…
+        </button>
+      </div>
+    </div>
+  `;
+
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+
+  document.body.appendChild( modal );
+}
+
+function showClearSpecificDaysModal() {
+  closeAllModals();
+
+  const dates = Object.keys( tasks )
+    .filter( ( d ) => tasks[ d ] && tasks[ d ].length > 0 )
+    .sort();
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'clearSpecificDaysModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[85vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-calendar-check text-purple-500 mr-2"></i>Días específicos
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      ${dates.length === 0 ? `
+        <p class="text-center text-gray-500 py-6">No hay días con tareas para limpiar.</p>
+      ` : `
+        <div class="space-y-2 mb-4">
+          ${dates.map( ( d ) => `
+            <label class="flex items-center gap-3 bg-gray-50 p-2.5 rounded-lg border cursor-pointer hover:bg-gray-100 transition">
+              <input type="checkbox" value="${d}" class="clear-day-checkbox rounded text-purple-600 w-4 h-4">
+              <span class="flex-1 text-sm text-gray-800">${new Date( d + 'T12:00:00' ).toLocaleDateString( 'es-ES', { weekday: 'short', day: 'numeric', month: 'short' } )}</span>
+              <span class="text-xs text-gray-500">${tasks[ d ].length} tarea(s)</span>
+            </label>` ).join( '' )}
+        </div>
+        <button data-action="confirm-clear-specific"
+                class="w-full bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-600 transition text-sm font-medium">
+          <i class="fas fa-trash-alt mr-2"></i>Eliminar días seleccionados
+        </button>
+      `}
+    </div>
+  `;
+
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+
+  document.body.appendChild( modal );
+}
+
+function confirmClearSpecificDays() {
+  const selected = Array.from( document.querySelectorAll( '.clear-day-checkbox:checked' ) )
+    .map( ( cb ) => cb.value );
+
+  if ( selected.length === 0 ) {
+    showNotification( 'Selecciona al menos un día', 'info' );
+    return;
+  }
+
+  closeAllModals();
+  clearSpecificDates( selected );
+}
+
+function clearSpecificDates( dateList ) {
+  const deletedTasks = [];
+
+  dateList.forEach( ( dateStr ) => {
+    if ( !tasks[ dateStr ] ) return;
+    tasks[ dateStr ].forEach( ( task ) => {
+      deletedTasks.push( { dateStr, taskId: task.id } );
+      clearTaskNotifications( task.id );
+    } );
+    delete tasks[ dateStr ];
+  } );
+
+  deletedTasks.forEach( ( { dateStr, taskId } ) => {
+    enqueueSync( 'delete', dateStr, { id: taskId } );
+  } );
+
+  saveTasks();
+  renderCalendar();
+  updateProgress();
+  showNotification( `${dateList.length} día(s) limpiados`, 'success' );
+
+  if ( selectedDateForPanel && dateList.includes( selectedDateForPanel ) ) {
+    updatePanelProgress( [] );
+    closeDailyTaskPanel();
+  }
+}
+
+// ===== SELECTOR RÁPIDO DE MES / AÑO =====
+let pickerYear = null;
+const PICKER_MONTHS = [ 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre' ];
+
+function showMonthYearPicker() {
+  closeAllModals();
+  pickerYear = currentDate.getFullYear();
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'monthYearPickerModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-xs w-full p-5">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-base font-semibold text-gray-800">
+          <i class="fas fa-calendar-alt text-teal-600 mr-2"></i>Ir a…
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="flex items-center justify-between mb-3">
+        <button data-action="picker-year-prev" class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 transition flex items-center justify-center" title="Año anterior">
+          <i class="fas fa-chevron-left text-sm"></i>
+        </button>
+        <span id="pickerYear" class="text-xl font-bold text-gray-800"></span>
+        <button data-action="picker-year-next" class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 transition flex items-center justify-center" title="Año siguiente">
+          <i class="fas fa-chevron-right text-sm"></i>
+        </button>
+      </div>
+      <div id="pickerMonthGrid" class="grid grid-cols-3 gap-2 mb-4"></div>
+      <button data-action="picker-today" class="w-full bg-teal-500 text-white py-2 px-4 rounded-lg hover:bg-teal-600 transition text-sm font-medium">
+        <i class="fas fa-calendar-day mr-2"></i>Volver a hoy
+      </button>
+    </div>
+  `;
+
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+
+  document.body.appendChild( modal );
+  renderPickerMonths();
+}
+
+function renderPickerMonths() {
+  const grid = document.getElementById( 'pickerMonthGrid' );
+  const yearEl = document.getElementById( 'pickerYear' );
+  if ( !grid || !yearEl || pickerYear === null ) return;
+
+  yearEl.textContent = pickerYear;
+  const isCurrentYear = pickerYear === currentDate.getFullYear();
+
+  grid.innerHTML = PICKER_MONTHS.map( ( name, i ) => {
+    const active = isCurrentYear && i === currentDate.getMonth();
+    return `
+      <button data-action="pick-month" data-month="${i}"
+              class="py-2 px-1 rounded-lg text-sm font-medium transition ${active
+                ? 'bg-blue-600 text-white shadow'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-blue-100 dark:hover:bg-gray-600'}">
+        ${name.slice( 0, 3 )}
+      </button>`;
+  } ).join( '' );
+}
+
+function shiftPickerYear( delta ) {
+  if ( pickerYear === null ) return;
+  pickerYear += delta;
+  renderPickerMonths();
+}
+
+function pickMonthYear( month ) {
+  // Fijar día 1 antes de cambiar mes/año para evitar desbordes (ej. 31 → feb).
+  currentDate.setDate( 1 );
+  currentDate.setFullYear( pickerYear );
+  currentDate.setMonth( month );
+  closeAllModals();
+  renderCalendar();
+  updateProgress();
+}
+
+function pickerGoToday() {
+  const today = new Date();
+  currentDate.setDate( 1 );
+  currentDate.setFullYear( today.getFullYear() );
+  currentDate.setMonth( today.getMonth() );
+  closeAllModals();
+  renderCalendar();
+  updateProgress();
+  const todayStr = getTodayString();
+  showDailyTaskPanel( todayStr, today.getDate() );
 }
 
 function quickDeleteTask( dateStr, taskId ) {
@@ -5157,22 +5737,32 @@ function showQuickAddTask( dateStr ) {
                     <textarea id="quickAddTaskDescription" rows="3"
                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Fecha <span class="text-red-500">*</span></label>
+                    <input type="date" id="quickAddTaskDate" value="${dateStr}" required
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora <span class="text-red-500">*</span></label>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora de inicio <span class="text-red-500">*</span></label>
                         <input type="time" id="quickAddTaskTime" required
                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
-                        <select id="quickAddTaskPriority" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="" disabled selected>Selecciona una prioridad</option>
-                            <option value="1">🔴 Muy Importante</option>
-                            <option value="2">🟠 Importante</option>
-                            <option value="3">🔵 Moderado</option>
-                            <option value="4">⚫ No Prioritario</option>
-                        </select>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hora de fin <span class="text-gray-400 font-normal">(opcional)</span></label>
+                        <input type="time" id="quickAddTaskEndTime"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Prioridad <span class="text-red-500">*</span></label>
+                    <select id="quickAddTaskPriority" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="" disabled selected>Selecciona una prioridad</option>
+                        <option value="1">🔴 Muy Importante</option>
+                        <option value="2">🟠 Importante</option>
+                        <option value="3">🔵 Moderado</option>
+                        <option value="4">⚫ No Prioritario</option>
+                    </select>
                 </div>
                 <div class="flex space-x-3 pt-4 border-t">
                     <button type="submit" class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
@@ -5195,6 +5785,9 @@ function showQuickAddTask( dateStr ) {
     .toTimeString()
     .slice( 0, 5 );
 
+  // La hora de fin solo admite valores posteriores a la de inicio
+  wireTimeRangeValidation( "quickAddTaskTime", "quickAddTaskEndTime" );
+
   // Event listener para el formulario
   // Dentro de showQuickAddTask(), modificar el event listener:
 
@@ -5202,44 +5795,58 @@ function showQuickAddTask( dateStr ) {
     e.preventDefault();
     const title = document.getElementById( "quickAddTaskTitle" ).value.trim();
     const description = document.getElementById( "quickAddTaskDescription" ).value.trim();
+    const targetDate = document.getElementById( "quickAddTaskDate" ).value || dateStr;
     const time = document.getElementById( "quickAddTaskTime" ).value;
+    const endTime = document.getElementById( "quickAddTaskEndTime" ).value || null;
     const priority = parseInt( document.getElementById( "quickAddTaskPriority" ).value );
 
-    if ( !title || !time || !priority ) {
+    if ( !title || !targetDate || !time || !priority ) {
       showNotification( "Por favor completa todos los campos obligatorios", "error" );
       return;
     }
 
+    if ( isDatePast( targetDate ) ) {
+      showNotification( "No puedes agregar tareas a fechas anteriores", "error" );
+      return;
+    }
+
+    if ( endTime && endTime <= time ) {
+      showNotification( "La hora de fin debe ser posterior a la de inicio", "error" );
+      return;
+    }
+
     const task = {
-      id: `${dateStr}-${Date.now()}`,
+      id: `${targetDate}-${Date.now()}`,
       title,
       description,
       time,
+      endTime,
+      duration: computeMinutesFromRange( time, endTime ),
       priority,
       state: "pending",
       completed: false,
     };
 
-    addTaskToDate( dateStr, task );
+    addTaskToDate( targetDate, task );
     saveTasks();
     renderCalendar();
     updateProgress();
 
     // Sync solo si hay conexión
     if ( currentUser && isOnline ) {
-      enqueueSync( "upsert", dateStr, task );
+      enqueueSync( "upsert", targetDate, task );
     }
 
     closeAllModals();
     showNotification( "Tarea agregada exitosamente", "success" );
 
     // ✅ CRÍTICO: Actualizar panel inmediatamente
-    if ( selectedDateForPanel === dateStr ) {
+    if ( selectedDateForPanel === targetDate ) {
       console.log( '🔄 Actualizando panel después de agregar tarea rápida' );
-      const day = new Date( dateStr + "T12:00:00" ).getDate();
+      const day = new Date( targetDate + "T12:00:00" ).getDate();
 
       setTimeout( () => {
-        showDailyTaskPanel( dateStr, day );
+        showDailyTaskPanel( targetDate, day );
       }, 100 );
     }
   } );
@@ -5253,6 +5860,10 @@ function closeAllModals() {
     "quickAddTaskModal",
     "editTaskModal",
     "taskModal",
+    "dayTasksModal",
+    "clearOptionsModal",
+    "clearSpecificDaysModal",
+    "monthYearPickerModal",
   ];
 
   modals.forEach( ( modalId ) => {
@@ -5306,7 +5917,7 @@ function showTooltip( tooltip, target, task ) {
   tooltip.innerHTML = `
         <div class="font-semibold">${task.title}</div>
         ${task.description ? `<div class="text-gray-300">${task.description}</div>` : ""}
-        ${task.time ? `<div class="text-blue-300"><i class="far fa-clock mr-1"></i>${task.time}</div>` : ""}
+        ${task.time || task.endTime ? `<div class="text-blue-300"><i class="far fa-clock mr-1"></i>${task.time || '—'}${task.endTime ? ` – ${task.endTime}` : ''}</div>` : ""}
         <div class="text-gray-400 text-xs mt-1">
             ${task.completed ? "✓ Completada" : "Pendiente"} • Arrastra para mover
         </div>
@@ -5599,7 +6210,7 @@ function loadTaskLogs() {
 function showUndoNotification() {
   const notification = document.createElement( "div" );
   notification.className =
-    "fixed bottom-4 left-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center space-x-3";
+    "fixed bottom-4 left-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-[100] flex items-center space-x-3";
   notification.innerHTML = `
         <span>Tarea eliminada</span>
         <button onclick="undoDelete()" class="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition">
@@ -5643,8 +6254,9 @@ function changeMonth( delta ) {
 }
 
 //clearWeek con sync automático optimizado
-function clearWeek() {
+function clearWeek( skipConfirm = false ) {
   if (
+    !skipConfirm &&
     !confirm(
       "¿Estás seguro de que quieres limpiar todas las tareas de esta semana?"
     )
@@ -5706,8 +6318,9 @@ function clearWeek() {
 }
 
 //clearMonth con sync automático optimizado
-function clearMonth() {
+function clearMonth( skipConfirm = false ) {
   if (
+    !skipConfirm &&
     !confirm(
       "¿Estás seguro de que quieres limpiar todas las tareas de este mes?"
     )
@@ -5812,7 +6425,7 @@ function exportToExcel() {
   }
 
   const wb = XLSX.utils.book_new();
-  const data = [ [ "Fecha", "Título", "Descripción", "Hora", "Estado", "Prioridad" ] ];
+  const data = [ [ "Fecha", "Título", "Descripción", "Hora de inicio", "Hora de fin", "Estado", "Prioridad" ] ];
 
   Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
     dayTasks.forEach( task => {
@@ -5823,6 +6436,7 @@ function exportToExcel() {
         task.title,
         task.description || "",
         task.time || "",
+        task.endTime || "",
         state.label,
         priority.label
       ] );
@@ -5947,6 +6561,7 @@ function updateNotificationButton() {
 // función para limpiar notificaciones cuando se completa una tarea
 function clearTaskNotifications( taskId ) {
   const keysToRemove = [
+    `${taskId}-5min`,
     `${taskId}-15min`,
     `${taskId}-start`,
     `${taskId}-late`
@@ -5974,7 +6589,7 @@ function showNotification( message, type = "success" ) {
       }
       : { className: "bg-blue-500 text-white", icon: "fa-info-circle" };
 
-  notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-x-full ${className}`;
+  notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-[100] transition-all duration-300 transform translate-x-full ${className}`;
   notification.innerHTML = `
         <div class="flex items-center space-x-2">
             <i class="fas ${icon}"></i>
@@ -7014,10 +7629,14 @@ function updateTimerDisplay( taskId, endTime ) {
   }
 }
 
-function convertDurationInputToMinutes() {
-  const hours = parseInt( document.getElementById( 'taskDurationHours' )?.value ) || 0;
-  const minutes = parseInt( document.getElementById( 'taskDurationMinutes' )?.value ) || 0;
-  return ( hours * 60 ) + minutes;
+// Duración en minutos calculada desde hora inicio/fin (HH:MM).
+// Sin hora de fin no hay duración y el temporizador no aplica.
+function computeMinutesFromRange( start, end ) {
+  if ( !start || !end ) return null;
+  const [ sh, sm ] = start.split( ':' ).map( Number );
+  const [ eh, em ] = end.split( ':' ).map( Number );
+  const diff = ( eh * 60 + em ) - ( sh * 60 + sm );
+  return diff > 0 ? diff : null;
 }
 
 

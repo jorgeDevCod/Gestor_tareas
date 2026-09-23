@@ -1,6 +1,6 @@
-// 🔥 SERVICE WORKER CON FCM BACKGROUND v7.0 - NOTIFICACIONES PERSISTENTES
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js' );
+// 🔥 SERVICE WORKER CON FCM BACKGROUND v8.0 - NOTIFICACIONES PERSISTENTES
+importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js' );
+importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js' );
 
 // Configuración Firebase
 const firebaseConfig = {
@@ -15,23 +15,25 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v4.4';
+const CACHE_VERSION = 'v5.1';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
+// NOTA: solo archivos locales del mismo origen. Los CDN (font-awesome,
+// gstatic, cdnjs) NO van en cache.addAll porque una respuesta opaque/404
+// aborta toda la instalación del SW.
 const STATIC_FILES = [
-    '/',
-    '/index.html',
-    '/app.js',
-    '/manifest.json',
-    '/images/IconLogo.png',
-    '/images/favicon-192.png',
-    '/favicon.png',
-
-    // ✅ AGREGAR ESTAS 3 LÍNEAS:
-    '/dist/output.css',
-    '/src/aditional.css',
-    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css'
+    './',
+    './index.html',
+    './app.js',
+    './manifest.json',
+    './images/IconLogo.png',
+    './images/favicon-192.png',
+    './images/favicon-512.png',
+    './favicon.png',
+    './dist/output.css',
+    './src/aditional.css',
+    './src/theme.css'
 ];
 
 // ==========================================
@@ -247,6 +249,7 @@ async function clearTaskNotifications( taskId ) {
     const store = transaction.objectStore( NOTIFICATIONS_STORE );
 
     const keysToRemove = [
+        `${taskId}-5min`,
         `${taskId}-15min`,
         `${taskId}-start`,
         `${taskId}-late`
@@ -263,17 +266,26 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v7.0 instalando...' );
+    console.log( '🔧 SW v8.1 instalando...' );
     event.waitUntil(
         Promise.all( [
-            caches.open( CACHE_STATIC ).then( cache => cache.addAll( STATIC_FILES ) ),
+            // Cache resiliente: un archivo faltante no aborta la instalación
+            caches.open( CACHE_STATIC ).then( async cache => {
+                await Promise.all( STATIC_FILES.map( async url => {
+                    try {
+                        await cache.add( url );
+                    } catch ( err ) {
+                        console.warn( '⚠️ SW: no se pudo cachear', url, err?.message || err );
+                    }
+                } ) );
+            } ),
             initDB()
         ] ).then( () => self.skipWaiting() )
     );
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v7.0 activándose...' );
+    console.log( '🚀 SW v8.1 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -440,17 +452,17 @@ async function checkTaskNotifications() {
             const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
             const taskTimeInMinutes = taskHours * 60 + taskMinutes;
 
-            // 🔔 15 minutos antes
-            const reminderKey = `${task.id}-15min`;
+            // 🔔 5 minutos antes
+            const reminderKey = `${task.id}-5min`;
             const alreadySentReminder = await wasNotificationSent( reminderKey );
 
             if ( !alreadySentReminder &&
-                currentTimeInMinutes >= taskTimeInMinutes - 15 &&
-                currentTimeInMinutes < taskTimeInMinutes - 13 ) {
+                currentTimeInMinutes >= taskTimeInMinutes - 5 &&
+                currentTimeInMinutes < taskTimeInMinutes - 3 ) {
 
                 await showNotification( {
                     title: `⏰ Próximamente: ${task.title}`,
-                    body: `Comienza en 15 minutos (${task.time})`,
+                    body: `Comienza en 5 minutos (${task.time})`,
                     tag: reminderKey,
                     requireInteraction: false,
                     vibrate: [ 300, 100, 300 ],

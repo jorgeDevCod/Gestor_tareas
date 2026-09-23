@@ -1,10 +1,15 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: 'class', // el toggle añade/quita .dark en <html> (initThemeToggle)
   content: [
     "./index.html",
     "./app.js",
+    "./firebase-messaging-sw.js",
     "./*.html",
-    "./**/*.js"
+    "./src/**/*.js",
+    "!./node_modules/**",
+    "!./functions/node_modules/**",
+    "!./dist/**"
   ],
   theme: {
     extend: {

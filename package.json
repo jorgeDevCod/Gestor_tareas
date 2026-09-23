@@ -1,0 +1,18 @@
+{
+  "name": "gestor-tareas",
+  "version": "1.1.0",
+  "description": "Gestor de tareas PWA - frontend en Netlify + Firebase (Auth/Firestore/FCM/Functions)",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/input.css -o ./dist/output.css --minify",
+    "watch:css": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch",
+    "server": "npx serve .",
+    "firebase:emulators": "firebase emulators:start --only functions,firestore",
+    "firebase:deploy:functions": "firebase deploy --only functions"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15"
+  }
+}

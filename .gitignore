@@ -7,7 +7,8 @@ functions/node_modules/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
-.firebaserc
+# NOTA: .firebaserc SÍ se commitea (alias del proyecto calendario-tareas-app).
+# No ignorarlo para que `firebase deploy` y CI sepan el target.
 
 # Logs
 *.log

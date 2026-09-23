@@ -17,6 +17,7 @@
 
     <!-- Meta Description (≤ 152 caracteres) -->
     <meta name="description" content="Planificador de tareas diarias con calendario visual, notificaciones inteligentes y sincronización en la nube. Organiza tu día y aumenta tu productividad. ¡Gratis y sin registro!">
+    <meta name="theme-color" content="#2d1ad6">
 
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="./favicon.png">
@@ -40,22 +41,26 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
     <!-- Estilos -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous">
     <link rel="stylesheet" href="./dist/output.css">
-    <link rel="stylesheet" href="./src/aditional.css">
     <link rel="stylesheet" href="./src/theme.css">
 
     <!-- PWA -->
     <link rel="manifest" href="./manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="TaskSmart">
+    <link rel="apple-touch-icon" href="./images/favicon-192.png">
 
     <!-- Scripts -->
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.3/xlsx.full.min.js"></script>
 
     <!-- Firebase -->
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-firestore-compat.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-auth-compat.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-messaging-compat.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.5/firebase-app-compat.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.5/firebase-firestore-compat.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.5/firebase-auth-compat.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.5/firebase-messaging-compat.min.js"></script>
 
     <script type="application/ld+json">
     {
@@ -89,8 +94,8 @@
         "Gestión visual con drag & drop",
         "Enfoque en productividad"
       ],
-      "softwareVersion": "1.0",
-      "datePublished": "2025-15-07"
+      "softwareVersion": "1.1.0",
+      "datePublished": "2025-07-15"
     }
     </script>
 
@@ -106,11 +111,7 @@
         </div>
     </div>
 
-    <!-- Firebase Status -->
-    <div id="firebaseStatus" class="fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 hidden">
-        <i id="statusIcon" class="fas mr-2"></i>
-        <span id="statusText"></span>
-    </div>
+    <!-- Firebase Status (ID único: firebaseStatus) -->
 
     <main class="container mx-auto px-4 py-6">
         <div class="bg-white rounded-xl shadow-lg p-4 mb-6 border border-gray-200">
@@ -194,8 +195,8 @@
                 </div>
             </div>
 
-            <!-- INDICADOR DE ESTADO FIREBASE -->
-            <div id="firebaseStatus" class="fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 transition-all duration-300 hidden force-hidden">
+            <!-- INDICADOR DE ESTADO FIREBASE (único en el DOM) -->
+            <div id="firebaseStatus" class="fixed top-4 left-4 px-3 py-2 rounded-lg text-sm font-medium z-40 transition-all duration-300 hidden">
                 <i id="statusIcon" class="fas fa-check-circle mr-2"></i>
                 <span id="statusText">Sincronizado</span>
             </div>
@@ -225,17 +226,22 @@
             </div>
         </div>
 
-        <!-- Formulario -->
-        <div class="grid lg:grid-cols-3 gap-4">
-            <!-- Task Form -->
-            <div class="lg:col-span-1">
-                <div class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-purple-500">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">
-                        <svg class="w-5 h-5 text-green-600 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                        </svg>
-                        Nueva Tarea
-                    </h2>
+        <!-- Formulario + Calendario -->
+        <div id="mainGrid" class="grid lg:grid-cols-3 gap-4">
+            <!-- Columna lateral: formulario y acciones -->
+            <div id="formColumn" class="lg:col-span-1 space-y-4">
+                <div id="formCard" class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-purple-500">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">
+                            <svg class="w-5 h-5 text-green-600 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Nueva Tarea
+                        </h2>
+                        <button type="button" id="formToggleBtn" data-action="toggle-form" class="w-8 h-8 rounded-full bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 hover:shadow transition flex items-center justify-center dark:bg-purple-900/40 dark:text-purple-300 dark:border-purple-800 dark:hover:bg-purple-900/70" title="Ocultar formulario">
+                            <i id="formToggleIcon" class="fas fa-chevron-up text-sm"></i>
+                        </button>
+                    </div>
                     <form id="taskForm" class="space-y-6">
                         <!-- Información básica -->
                         <div class="space-y-4">
@@ -268,39 +274,21 @@
                                     <input required type="date" id="taskDate" min="" class="w-full h-[38px] px-2 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white">
                                 </div>
 
-                                <!-- Hora -->
+                                <!-- Hora de inicio -->
                                 <div class="w-full">
                                     <label for="taskTime" class="block text-xs font-medium text-blue-700 mb-1">
-                                        Hora<span class="text-red-500 font-bold ml-0.5">*</span>
+                                        Hora de inicio<span class="text-red-500 font-bold ml-0.5">*</span>
                                     </label>
                                     <input required type="time" id="taskTime" class="w-full h-[38px] px-2 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white">
                                 </div>
 
-                                <!-- Campo de Duración -->
+                                <!-- Hora de finalización -->
                                 <div class="w-full">
-                                    <label class="block text-xs font-medium text-blue-700 mb-1">
-                                        Duración <span class="text-gray-400 font-normal">(opcional)</span>
+                                    <label for="taskEndTime" class="block text-xs font-medium text-blue-700 mb-1">
+                                        Hora de fin <span class="text-gray-400 font-normal">(opcional)</span>
                                     </label>
-                                    <div class="flex items-center gap-1">
-                                        <input type="number" id="taskDurationHours" min="0" max="24" placeholder="hh" class="text-xs text-center px1 w-full h-[40px] px-2 py-2
-                                             border border-blue-300 rounded-md
-                                             focus:ring-1 focus:ring-blue-500 focus:border-blue-500
-                                             bg-white text-gray-700 " />
-
-                                        <span class="text-gray-400 text-xs font-medium">:</span>
-
-                                        <input type="number" id="taskDurationMinutes" min="0" max="59" step="5" placeholder="mm" class=" text-xs text-center w-full h-[40px] px-2 py-2
-                                             border border-blue-300 rounded-md
-                                             focus:ring-1 focus:ring-blue-500 focus:border-blue-500
-                                             bg-white text-gray-700" />
-                                    </div>
+                                    <input type="time" id="taskEndTime" class="w-full h-[38px] px-2 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white">
                                 </div>
-                            </div>
-
-                            <!-- Ayuda visual para duración -->
-                            <div id="durationHelper" class="mt-3 text-xs text-gray-600 bg-blue-50 p-2.5 rounded-md border border-blue-100 hidden">
-                                <i class="fas fa-info-circle text-blue-500 mr-1"></i>
-                                <span id="durationText"></span>
                             </div>
                         </div>
 
@@ -429,7 +417,7 @@
                 </div>
 
                 <!-- Quick Actions -->
-                <div class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-red-500">
+                <div id="quickActionsCard" class="bg-white rounded-2xl shadow-lg p-6 border-t-4 border-red-500">
                     <h3 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
                         <svg class="w-5 h-5 text-red-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -437,17 +425,11 @@
                         Acciones Rápidas
                     </h3>
                     <div class="space-y-2">
-                        <button id="clearWeekBtn" class="w-full bg-orange-500 text-white py-2.5 px-4 rounded-lg hover:bg-orange-600 transition duration-200 text-sm font-medium">
+                        <button id="clearOptionsBtn" class="w-full bg-orange-500 text-white py-2.5 px-4 rounded-lg hover:bg-orange-600 transition duration-200 text-sm font-medium">
                             <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
-                            Limpiar Semana
-                        </button>
-                        <button id="clearMonthBtn" class="w-full bg-red-500 text-white py-2.5 px-4 rounded-lg hover:bg-red-600 transition duration-200 text-sm font-medium">
-                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            Limpiar Mes
+                            Limpiar Semana / Mes
                         </button>
                         <button id="clearAllBtn" class="w-full bg-gray-700 text-white py-2.5 px-4 rounded-lg hover:bg-gray-800 transition duration-200 text-sm font-medium">
                             <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -460,16 +442,23 @@
             </div>
 
             <!-- Calendar -->
-            <div class="lg:col-span-2">
+            <div id="calendarColumn" class="lg:col-span-2">
                 <div class="bg-white rounded-2xl shadow-lg px-4 py-7 border-t-4 border-teal-500">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-xl font-semibold text-gray-800 flex items-center">
                             <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
-                            <span id="currentMonth"></span>
+                            <button id="monthYearBtn" data-action="month-year-picker" class="flex items-center gap-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg px-2 py-1 transition" title="Cambiar mes y año">
+                                <span id="currentMonth"></span>
+                                <i class="fas fa-chevron-down text-xs text-gray-400"></i>
+                            </button>
                         </h2>
                         <div class="flex gap-2">
+                            <button id="showFormBtn" data-action="show-form" class="hidden px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-400 dark:hover:bg-purple-500 hover:shadow-lg transition duration-200 shadow" title="Mostrar formulario de tareas">
+                                <i class="fas fa-plus"></i>
+                                <span class="text-sm font-medium ml-1 hidden sm:inline">Mostrar formulario</span>
+                            </button>
                             <button id="prevMonth" class="px-3 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-200">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -520,7 +509,7 @@
                 </div>
 
                 <!-- Lista de tareas -->
-                <div id="panelTaskList" class="space-y-3 max-h-76 overflow-y-auto">
+                <div id="panelTaskList" class="space-y-3 max-h-96 overflow-y-auto">
                     <!-- Las tareas se generarán aquí dinámicamente -->
                 </div>
 
@@ -557,7 +546,7 @@
                     <div class="text-center mb-6">
                         <i class="fas fa-cloud text-blue-500 text-4xl mb-4"></i>
                         <h4 class="text-2xl font-bold text-gray-800 mb-2">Sincroniza tus tareas</h4>
-                        <p class="text-cyan-700s">Regístrate para guardar tu progreso y acceder a tus tareas desde cualquier dispositivo.</p>
+                        <p class="text-cyan-700">Regístrate para guardar tu progreso y acceder a tus tareas desde cualquier dispositivo.</p>
 
                     </div>
 
@@ -576,12 +565,17 @@
         </div>
 
         <!-- Message/Info Box -->
-        <div id="messageBox" class="fixed bottom-4 right-4 bg-blue-600 text-white px-6 py-3 rounded-lg shadow-xl hidden transition-all duration-300 transform translate-y-full opacity-0">
+        <div id="messageBox" class="fixed bottom-4 right-4 bg-blue-600 text-white px-6 py-3 rounded-lg shadow-xl z-[100] hidden transition-all duration-300 transform translate-y-full opacity-0">
             <span id="messageText"></span>
         </div>
+
+        <!-- FAB crear tarea (visible cuando el formulario lateral está oculto) -->
+        <button id="fabAddTask" data-action="fab-create" class="hidden fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 text-white shadow-xl hover:bg-blue-700 dark:hover:bg-blue-500 hover:shadow-2xl hover:scale-105 transition items-center justify-center" title="Crear tarea">
+            <i class="fas fa-plus text-xl"></i>
+        </button>
     </main>
 
-    <button id="themeToggle" class="fixed top-4 right-2 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-800 px-4 py-1 rounded-full shadow-lg hover:scale-100 transition-transform duration-300 z-50">
+    <button id="themeToggle" class="fixed top-4 left-2 bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-800 px-4 py-1 rounded-full shadow-lg hover:scale-100 transition-transform duration-300 z-50">
         <i class="fas fa-moon dark:hidden text-xl"></i>
         <i class="fas fa-sun hidden dark:inline text-xl"></i>
     </button>

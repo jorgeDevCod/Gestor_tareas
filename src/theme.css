@@ -1,47 +1,36 @@
-/* ==============================
-   VARIABLES DARK MODE
-============================== */
-.dark {
-  --bg-main: #0d1117;
-  --bg-card: #161b22;
-  --bg-soft: #21262d;
-  --bg-input: #0d1117;
-  --border-dark: #30363d;
-  --border-focus: #58a6ff;
-
-  --text-main: #e6edf3;
-  --text-soft: #bfd9e5;
-  --text-muted: #e5ebf4;
-
-  --primary: #58a6ff;
-  --secondary: #79c0ff;
-  --success: #3fb950;
-  --warning: #d29922;
-  --danger: #f85149;
+/* ============================================================
+   TEMA CLARO / OSCURO — Gestor de tareas
+   Una sola fuente de verdad. El tema claro lo dan las clases
+   Tailwind del HTML; aquí solo se equilibra el modo oscuro
+   mapeando las mismas utilidades a una paleta uniforme.
+   Paleta oscura:
+     fondo página  #0f141b | tarjetas #18202b | suave #1f2937
+     borde #2b3646 | texto #e8eef5 | texto suave #b8c4d4
+   ============================================================ */
+:root {
+  color-scheme: light;
 }
 
-/* ==============================
-   BASE
-============================== */
-.dark body {
+.dark {
+  color-scheme: dark;
+  --bg-main: #0f141b;
+  --bg-card: #18202b;
+  --bg-soft: #1f2937;
+  --border-dark: #2b3646;
+  --text-main: #e8eef5;
+  --text-soft: #b8c4d4;
+}
+
+/* ---------- Superficies base ---------- */
+.dark body,
+.dark main {
   background-color: var(--bg-main) !important;
   color: var(--text-main) !important;
 }
 
-.dark main {
-  background-color: var(--bg-main) !important;
-}
-
-/* ==============================
-   CONTENEDORES / CARDS
-============================== */
 .dark .bg-white {
   background-color: var(--bg-card) !important;
   color: var(--text-main) !important;
-}
-
-.dark .bg-gray-100 {
-  background-color: var(--bg-main) !important;
 }
 
 .dark .bg-gray-50 {
@@ -49,20 +38,15 @@
   color: var(--text-main) !important;
 }
 
-.dark .shadow-lg,
-.dark .shadow-xl,
-.dark .shadow-md {
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6) !important;
+.dark .bg-gray-100 {
+  background-color: var(--bg-main) !important;
 }
 
-.dark .border-gray-200,
-.dark .border-gray-300 {
-  border-color: var(--border-dark) !important;
+.dark .bg-gray-200 {
+  background-color: var(--bg-soft) !important;
 }
 
-/* ==============================
-   TEXTOS
-============================== */
+/* ---------- Textos grises ---------- */
 .dark .text-gray-900,
 .dark .text-gray-800 {
   color: var(--text-main) !important;
@@ -75,598 +59,121 @@
 
 .dark .text-gray-500,
 .dark .text-gray-400 {
-  color: var(--text-muted) !important;
+  color: #8fa0b5 !important;
 }
 
-.dark h1,
-.dark h2,
-.dark h3,
-.dark h4 {
-  color: var(--text-main) !important;
+/* ---------- Bordes ---------- */
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border {
+  border-color: var(--border-dark) !important;
 }
 
-.dark p,
-.dark span,
-.dark label {
-  color: var(--text-soft) !important;
-}
+/* ---------- Acentos pastel (badges, avisos, día actual) ---------- */
+.dark .bg-blue-50 { background-color: #14273d !important; }
+.dark .bg-blue-100 { background-color: #16283d !important; }
+.dark .bg-indigo-100 { background-color: #1e2452 !important; }
+.dark .text-indigo-900 { color: #c7d2fe !important; }
+.dark .bg-green-50 { background-color: #10281a !important; }
+.dark .bg-green-100 { background-color: #10281a !important; }
+.dark .bg-red-50 { background-color: #2d1414 !important; }
+.dark .bg-red-100 { background-color: #2d1414 !important; }
+.dark .bg-orange-50,
+.dark .bg-orange-100,
+.dark .bg-yellow-50 { background-color: #2b1c0e !important; }
+.dark .bg-purple-50,
+.dark .bg-purple-100 { background-color: #221239 !important; }
 
-/* ==============================
-   INPUTS / TEXTAREA / SELECT (formulario principal)
-============================== */
+.dark .text-blue-700,
+.dark .text-blue-800 { color: #7fb8f5 !important; }
+.dark .text-green-800 { color: #5fd68a !important; }
+.dark .text-red-800 { color: #f08a8a !important; }
+.dark .text-orange-800 { color: #f5b06a !important; }
+.dark .text-purple-700 { color: #c9a2f7 !important; }
+.dark .border-blue-300 { border-color: #33597f !important; }
+
+/* ---------- Formularios ---------- */
 .dark input,
 .dark textarea,
 .dark select {
-  background-color: var(--bg-input) !important;
+  background-color: var(--bg-main) !important;
   color: var(--text-main) !important;
   border-color: var(--border-dark) !important;
 }
 
 .dark input::placeholder,
 .dark textarea::placeholder {
-  color: var(--text-muted) !important;
+  color: #8fa0b5 !important;
 }
 
 .dark input:focus,
 .dark textarea:focus,
 .dark select:focus {
-  border-color: var(--border-focus) !important;
+  border-color: #3f6d9e !important;
+  box-shadow: 0 0 0 2px rgba(90, 150, 210, 0.25) !important;
   outline: none !important;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2) !important;
 }
 
 .dark input[type="date"],
-.dark input[type="time"],
-.dark input[type="number"] {
+.dark input[type="time"] {
   color-scheme: dark;
-  color: var(--text-main) !important;
-  background-color: var(--bg-input) !important;
 }
 
-.dark input::-webkit-calendar-picker-indicator {
-  filter: invert(0.8) brightness(1.2);
-  opacity: 0.9;
-}
-
-/* ==============================
-   BOTONES NATIVOS (prev/next mes)
-============================== */
-.dark #prevMonth,
-.dark #nextMonth {
-  background-color: var(--bg-soft) !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border-dark) !important;
-}
-
-.dark #prevMonth:hover,
-.dark #nextMonth:hover {
-  background-color: #30363d !important;
-}
-
-.dark #prevMonth svg,
-.dark #nextMonth svg {
-  stroke: var(--text-main) !important;
-}
-
-/* ==============================
-   BOTONES GENERALES
-============================== */
-.dark button {
-  color: var(--text-main);
-}
-
-/* Reset botón gris de papelera (formulario) */
-.dark .bg-gray-500 {
-  background-color: #374151 !important;
-  color: var(--text-main) !important;
-}
-
-.dark .bg-gray-500:hover,
-.dark .bg-gray-700:hover {
-  background-color: #4b5563 !important;
-}
-
-/* Botón limpiar todo */
-.dark .bg-gray-700 {
-  background-color: #1f2937 !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border-dark) !important;
-}
-
-/* ==============================
-   CALENDARIO
-============================== */
-.dark #calendar {
-  gap: 2px;
-}
-
-/* Headers de días (Dom, Lun...) */
+/* ---------- Calendario ---------- */
 .dark #calendar > div.text-center.font-semibold {
-  color: var(--text-muted) !important;
-  background-color: transparent !important;
+  color: #8fa0b5 !important;
 }
 
-/* Celdas de días */
-.dark .calendar-day,
-.dark #calendar > div.h-32 {
+.dark .calendar-day {
   background-color: var(--bg-soft) !important;
   border-color: var(--border-dark) !important;
   color: var(--text-main) !important;
 }
 
 .dark .calendar-day:hover {
-  background-color: #2d333b !important;
+  background-color: #26313f !important;
 }
 
-/* Día actual */
-.dark .bg-blue-100 {
-  background-color: #1c2d3f !important;
-}
-
-.dark .border-blue-300 {
-  border-color: #3d6a9e !important;
-}
-
-.dark .ring-blue-200 {
-  --tw-ring-color: rgba(61, 106, 158, 0.5) !important;
-}
-
-.dark .text-blue-700 {
-  color: var(--secondary) !important;
-}
-
-/* Días pasados */
-.dark .opacity-75 {
-  opacity: 0.5 !important;
-}
-
-/* ==============================
-   PANEL DE TAREAS DEL DÍA
-============================== */
-.dark #dailyTaskPanel .bg-white {
-  background-color: var(--bg-card) !important;
-}
-
+/* ---------- Panel y tarjetas de tarea ---------- */
 .dark .panel-task-item {
   background-color: var(--bg-soft) !important;
   border-color: var(--border-dark) !important;
-  color: var(--text-main) !important;
 }
 
-.dark .panel-task-item:hover {
-  background-color: #2d333b !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
-}
-
-.dark #panelTaskList > div {
-  background-color: transparent !important;
-}
-
-/* Select de estado dentro de panel */
-.dark .panel-task-item select {
-  background-color: var(--bg-input) !important;
-  color: var(--text-main) !important;
-  border-color: var(--border-dark) !important;
-}
-
-/* Barra de progreso del panel */
-.dark #panelProgressBar {
-  filter: brightness(1.2) !important;
-}
-
-/* Botón agregar tarea rápida */
-.dark #addQuickTaskBtn {
-  background-color: #1c2d3f !important;
-  color: var(--secondary) !important;
-  border: 1px solid #3d6a9e !important;
-}
-
-.dark #addQuickTaskBtn:hover {
-  background-color: #243447 !important;
-}
-
-/* ==============================
-   SECCIÓN PROGRAMACIÓN (azules)
-============================== */
-.dark .bg-gray-50.rounded-lg,
-.dark .bg-gray-50.rounded-lg.px-2,
-.dark .bg-gray-50.rounded-lg.p-3 {
+/* ---------- Botones neutros ---------- */
+.dark #prevMonth,
+.dark #nextMonth,
+.dark .bg-gray-500,
+.dark .bg-gray-700 {
   background-color: var(--bg-soft) !important;
-  border-color: var(--border-dark) !important;
-}
-
-.dark .text-blue-800 {
-  color: var(--secondary) !important;
-}
-
-.dark .border-blue-300 {
-  border-color: #3d6a9e !important;
-}
-
-/* Inputs dentro del bloque programación */
-.dark .border-blue-300 input {
-  background-color: var(--bg-input) !important;
-  border-color: #3d6a9e !important;
   color: var(--text-main) !important;
+  border: 1px solid var(--border-dark) !important;
 }
 
-/* ==============================
-   PROGRESS BAR GENERAL
-============================== */
-.dark .bg-gray-200 {
-  background-color: #21262d !important;
+.dark #userInfo {
+  background-color: #14273d !important;
+  border: 1px solid #33597f !important;
 }
 
-.dark #progressBar,
-.dark #panelProgressBar {
-  filter: brightness(1.15) !important;
-}
-
-/* ==============================
-   MODALES DINÁMICOS
-============================== */
-/* Overlay */
+/* ---------- Modales ---------- */
 .dark .fixed.inset-0.bg-black {
-  background-color: rgba(0, 0, 0, 0.85) !important;
+  background-color: rgba(0, 0, 0, 0.8) !important;
 }
 
-/* Contenedor modal */
-.dark .fixed.inset-0 .bg-white,
-.dark .fixed.inset-0 > div > div {
+.dark .fixed.inset-0 .bg-white {
   background-color: var(--bg-card) !important;
   color: var(--text-main) !important;
-  border-color: var(--border-dark) !important;
-}
-
-/* Textos en modales */
-.dark .fixed.inset-0 h3,
-.dark .fixed.inset-0 h4,
-.dark .fixed.inset-0 .font-semibold,
-.dark .fixed.inset-0 .font-bold {
-  color: var(--text-main) !important;
-}
-
-.dark .fixed.inset-0 p,
-.dark .fixed.inset-0 label {
-  color: var(--text-soft) !important;
-}
-
-.dark .fixed.inset-0 .text-gray-800,
-.dark .fixed.inset-0 .text-gray-700 {
-  color: var(--text-main) !important;
-}
-
-.dark .fixed.inset-0 .text-gray-600,
-.dark .fixed.inset-0 .text-gray-500 {
-  color: var(--text-soft) !important;
-}
-
-/* Inputs en modales */
-.dark .fixed.inset-0 input,
-.dark .fixed.inset-0 textarea,
-.dark .fixed.inset-0 select {
-  background-color: var(--bg-input) !important;
-  color: var(--text-main) !important;
-  border-color: var(--border-dark) !important;
-}
-
-.dark .fixed.inset-0 input:focus,
-.dark .fixed.inset-0 textarea:focus,
-.dark .fixed.inset-0 select:focus {
-  border-color: var(--border-focus) !important;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2) !important;
-}
-
-/* Bloques de info coloreados en modales */
-.dark .fixed.inset-0 .bg-blue-50 {
-  background-color: #0d2137 !important;
-  color: var(--secondary) !important;
-}
-
-.dark .fixed.inset-0 .bg-red-50 {
-  background-color: #152a52d1 !important;
-  color: #fca5a5 !important;
-}
-
-.dark .fixed.inset-0 .bg-orange-50,
-.dark .fixed.inset-0 .bg-yellow-50 {
-  background-color: #2d1a0f !important;
-  color: #fcd34d !important;
-}
-
-.dark .fixed.inset-0 .bg-green-50 {
-  background-color: #0f2d1a !important;
-  color: #86efac !important;
-}
-
-.dark .fixed.inset-0 .bg-purple-50 {
-  background-color: #1e0d37 !important;
-  color: #d8b4fe !important;
 }
 
 .dark .fixed.inset-0 .bg-gray-50 {
   background-color: var(--bg-soft) !important;
-  color: var(--text-soft) !important;
 }
 
-/* Bloques de color más saturados (opciones de modal) */
-.dark .fixed.inset-0 .bg-blue-100 {
-  background-color: #0d2137 !important;
-  color: #79c0ff !important;
-}
-
-.dark .fixed.inset-0 .bg-blue-100:hover {
-  background-color: #112840 !important;
-}
-
-.dark .fixed.inset-0 .bg-red-100 {
-  background-color: #2d0f0f !important;
-  color: #fca5a5 !important;
-}
-
-.dark .fixed.inset-0 .bg-red-100:hover {
-  background-color: #3d1515 !important;
-}
-
-.dark .fixed.inset-0 .bg-green-100 {
-  background-color: #0f2d1a !important;
-  color: #33de71 !important;
-}
-
-.dark .fixed.inset-0 .bg-green-100:hover {
-  background-color: #0f3820 !important;
-}
-
-.dark .fixed.inset-0 .bg-orange-100 {
-  background-color: #2d1a0f !important;
-  color: #fdba74 !important;
-}
-
-.dark .fixed.inset-0 .bg-purple-100 {
-  background-color: #1e0d37 !important;
-  color: #d8b4fe !important;
-}
-
-/* Bordes divisores en modales */
-.dark .fixed.inset-0 .border-t,
-.dark .fixed.inset-0 .border-b,
-.dark .fixed.inset-0 .border {
-  border-color: var(--border-dark) !important;
-}
-
-/* Botones grises en modales */
-.dark .fixed.inset-0 .bg-gray-300 {
-  background-color: var(--bg-soft) !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border-dark) !important;
-}
-
-.dark .fixed.inset-0 .bg-gray-300:hover {
-  background-color: #30363d !important;
-}
-
-/* Header sticky de modales con scroll */
-.dark .fixed.inset-0 .sticky {
-  background-color: var(--bg-card) !important;
-  border-color: var(--border-dark) !important;
-}
-
-/* Grid de fechas personalizadas */
-.dark .fixed.inset-0 #deleteDatesGrid,
-.dark .fixed.inset-0 #datesGrid {
-  background-color: var(--bg-main) !important;
-  border-color: var(--border-dark) !important;
-}
-
-/* Items del grid de fechas */
-.dark .fixed.inset-0 .bg-white.p-3,
-.dark .fixed.inset-0 label.bg-white,
-.dark .fixed.inset-0 label.bg-gray-50 {
-  background-color: var(--bg-soft) !important;
-  color: var(--text-main) !important;
-  border-color: var(--border-dark) !important;
-}
-
-.dark .fixed.inset-0 label.bg-white:hover,
-.dark .fixed.inset-0 label.bg-gray-50:hover,
-.dark .fixed.inset-0 label.bg-gray-100 {
-  background-color: #30363d !important;
-}
-
-/* Botón cancelar / texto X */
-.dark .fixed.inset-0 .text-gray-500 {
-  color: var(--text-muted) !important;
-}
-
-.dark .fixed.inset-0 button.text-gray-500:hover {
-  color: var(--text-main) !important;
-}
-
-/* Iconos en modales */
-.dark .fixed.inset-0 svg {
-  opacity: 0.85;
-}
-
-/* Log de actividad - items */
-.dark .fixed.inset-0 .bg-gray-50.rounded-lg.p-4 {
-  background-color: var(--bg-soft) !important;
-  color: var(--text-soft) !important;
-}
-
-/* Texto mono (timestamps) */
-.dark .font-mono {
-  color: var(--secondary) !important;
-}
-
-/* Texto ID de tarea */
-.dark .text-gray-400 {
-  color: var(--text-muted) !important;
-}
-
-/* ==============================
-   BADGES Y PILLS DE COLOR
-============================== */
-
-/* Badge GRATIS y similares */
-.dark .bg-green-100.text-green-800 {
-  background-color: #0f2d1a !important;
-  color: #4ade80 !important;
-}
-
-.dark .bg-blue-100.text-blue-800 {
-  background-color: #0d2137 !important;
-  color: #60a5fa !important;
-}
-
-.dark .bg-red-100.text-red-800 {
-  background-color: #2d0f0f !important;
-  color: #f87171 !important;
-}
-
-.dark .bg-orange-100.text-orange-800 {
-  background-color: #2d1a0f !important;
-  color: #fb923c !important;
-}
-
-.dark .bg-yellow-100.text-yellow-800 {
-  background-color: #2d2208 !important;
-  color: #facc15 !important;
-}
-
-.dark .bg-purple-100.text-purple-800 {
-  background-color: #1e0d37 !important;
-  color: #c084fc !important;
-}
-
-.dark .bg-gray-200.text-gray-800 {
-  background-color: #21262d !important;
-  color: #d1d5db !important;
-}
-
-/* Estados de tarea (pills en panel) */
-.dark .bg-blue-200.text-blue-800 {
-  background-color: #0d2137 !important;
-  color: #79c0ff !important;
-}
-
-.dark .bg-orange-200.text-orange-800 {
-  background-color: #2d1a0f !important;
-  color: #fdba74 !important;
-}
-
-.dark .bg-green-200.text-green-800 {
-  background-color: #0f2d1a !important;
-  color: #86efac !important;
-}
-
-/* ==============================
-   MODAL LOGIN
-============================== */
-.dark #loginModal .bg-white {
-  background-color: var(--bg-card) !important;
-}
-
-.dark #loginModal h4 {
-  color: var(--text-main) !important;
-}
-
-.dark #loginModal p {
-  color: var(--text-soft) !important;
-}
-
-.dark #closeLoginModal {
-  color: var(--text-muted) !important;
-}
-
-.dark #closeLoginModal:hover {
-  color: var(--text-main) !important;
-}
-
-/* ==============================
-   NOTIFICACIONES IN-APP
-============================== */
-.dark .fixed.top-20.right-4,
-.dark .fixed.top-4.right-4,
-.dark .fixed.bottom-4.left-4,
-.dark .fixed.bottom-4.right-4 {
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-}
-
-/* Forzar texto blanco puro en todas las notificaciones de color */
-.dark .fixed.top-4.right-4 span,
-.dark .fixed.top-4.right-4 div,
-.dark .fixed.top-20.right-4 span,
-.dark .fixed.top-20.right-4 div,
-.dark .fixed.bottom-4.left-4 span,
-.dark .fixed.bottom-4.left-4 div {
-  color: #ffffff !important;
-  opacity: 1 !important;
-}
-
-/* Iconos en notificaciones */
-.dark .fixed.top-4.right-4 i,
-.dark .fixed.top-20.right-4 i,
-.dark .fixed.bottom-4.left-4 i {
-  color: #ffffff !important;
-  opacity: 1 !important;
-}
-
-/* Botón X de cerrar en notificaciones */
-.dark .fixed.top-4.right-4 button,
-.dark .fixed.top-20.right-4 button,
-.dark .fixed.bottom-4.left-4 button {
-  color: rgba(255, 255, 255, 0.8) !important;
-}
-
-.dark .fixed.top-4.right-4 button:hover,
-.dark .fixed.top-20.right-4 button:hover,
-.dark .fixed.bottom-4.left-4 button:hover {
-  color: #ffffff !important;
-}
-
-/* ==============================
-   ESTADO FIREBASE (indicador)
-============================== */
 .dark #firebaseStatus {
   border: 1px solid var(--border-dark) !important;
 }
 
-/* ==============================
-   USER INFO BAR
-============================== */
-.dark #userInfo {
-  background-color: #0d2137 !important;
-  border: 1px solid #3d6a9e !important;
-}
-
-.dark #userName {
-  color: var(--secondary) !important;
-}
-
-.dark #userEmail {
-  color: var(--text-soft) !important;
-}
-
-.dark #logoutBtn {
-  color: #f85149 !important;
-}
-
-/* ==============================
-   TOGGLE THEME BUTTON
-============================== */
-.dark #themeToggle {
-  background-color: #21262d !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border-dark) !important;
-}
-
-.dark #themeToggle:hover {
-  background-color: #30363d !important;
-}
-
-/* ==============================
-   SCROLLBAR
-============================== */
+/* ---------- Scrollbar ---------- */
 .dark ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -677,130 +184,6 @@
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background-color: #30363d;
+  background-color: #2b3646;
   border-radius: 6px;
-  border: 2px solid var(--bg-main);
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background-color: #3d444d;
-}
-
-/* ==============================
-   ANIMACIONES HOVER CALENDAR
-============================== */
-.dark .hover\:bg-blue-50:hover {
-  background-color: #1c2d3f !important;
-}
-
-.dark .hover\:bg-red-50:hover {
-  background-color: #2d0f0f !important;
-}
-
-.dark .hover\:bg-purple-50:hover {
-  background-color: #1e0d37 !important;
-}
-
-/* ==============================
-   TASK ITEMS EN CALENDARIO
-============================== */
-.dark .task-item {
-  opacity: 0.9 !important;
-}
-
-/* Tooltip de tarea */
-.dark #task-tooltip {
-  background-color: var(--bg-soft) !important;
-  border: 1px solid var(--border-dark) !important;
-  color: var(--text-main) !important;
-}
-
-/* ==============================
-   BOTONES + QUICK ADD EN CELDA
-============================== */
-.dark .calendar-day .group-hover\:opacity-100 {
-  opacity: 0;
-}
-
-.dark .calendar-day:hover .group-hover\:opacity-100 {
-  opacity: 1;
-}
-
-/* ==============================
-   ESTADO OFFLINE MESSAGE
-============================== */
-.dark #offlineMessage {
-  background-color: var(--bg-soft) !important;
-  border-color: var(--warning) !important;
-  color: var(--text-main) !important;
-}
-
-/* ==============================
-   BOTONES HOVER EN CELDA CALENDARIO
-============================== */
-
-/* Contenedor gradiente que aparece al hover en task-item */
-.dark .task-item-wrapper .bg-gradient-to-l {
-  background: linear-gradient(
-    to left,
-    var(--bg-soft) 60%,
-    transparent
-  ) !important;
-}
-
-/* Botones editar/eliminar dentro de celda */
-.dark .task-item-wrapper button {
-  background-color: transparent !important;
-  color: var(--text-muted) !important;
-}
-
-.dark .task-item-wrapper button:hover {
-  background-color: #30363d !important;
-  color: var(--text-main) !important;
-}
-
-/* Específico para el botón editar (azul) */
-.dark .task-item-wrapper .text-blue-500 {
-  color: #58a6ff !important;
-}
-
-.dark .task-item-wrapper .text-blue-500:hover {
-  color: #79c0ff !important;
-  background-color: #0d2137 !important;
-}
-
-/* Específico para el botón eliminar (rojo) */
-.dark .task-item-wrapper .text-red-500 {
-  color: #f85149 !important;
-}
-
-.dark .task-item-wrapper .text-red-500:hover {
-  color: #ff7b72 !important;
-  background-color: #2d0f0f !important;
-}
-
-/* ==============================
-   BADGE CONTADOR (Registro, logs)
-============================== */
-
-/* Badge número junto a "Registro" en el panel */
-.dark .bg-purple-100.text-purple-700 {
-  background-color: #2d1a4a !important;
-  color: #c084fc !important;
-}
-
-/* Cualquier badge de conteo redondeado en la barra del panel */
-.dark span.rounded-full.bg-purple-100,
-.dark span.rounded-full.bg-blue-100,
-.dark span.rounded-full.bg-gray-100 {
-  background-color: #21262d !important;
-  color: var(--text-main) !important;
-}
-
-/* Tooltip nativo del navegador no se puede estilizar,
-   pero el tooltip HTML personalizado sí */
-.dark [title]:hover::after {
-  background-color: var(--bg-soft) !important;
-  color: var(--text-main) !important;
-  border: 1px solid var(--border-dark) !important;
 }

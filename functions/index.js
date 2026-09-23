@@ -49,17 +49,17 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
                 const [ taskHours, taskMinutes ] = task.time.split( ':' ).map( Number );
                 const taskTimeInMinutes = taskHours * 60 + taskMinutes;
 
-                // 🔔 15 minutos antes
-                if ( currentTimeInMinutes === taskTimeInMinutes - 15 ) {
+                // 🔔 5 minutos antes
+                if ( currentTimeInMinutes === taskTimeInMinutes - 5 ) {
                     await sendNotification( fcmToken, {
                         title: `⏰ Recordatorio: ${task.title}`,
-                        body: `Tu tarea inicia en 15 minutos (${task.time})`,
-                        tag: `${task.id}-15min`,
+                        body: `Tu tarea inicia en 5 minutos (${task.time})`,
+                        tag: `${task.id}-5min`,
                         taskId: task.id,
                         dateStr: today,
                         type: 'task-reminder'
                     } );
-                    console.log( `✅ Notificación 15min enviada: ${task.title}` );
+                    console.log( `✅ Notificación 5min enviada: ${task.title}` );
                 }
 
                 // 🔔 Hora exacta
