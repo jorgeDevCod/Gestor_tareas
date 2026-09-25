@@ -1147,6 +1147,7 @@ function setupDateInput() {
     const currentMinute = String( now.getMinutes() ).padStart( 2, "0" );
     taskTimeInput.value = `${currentHour}:${currentMinute}`;
     refreshEndTimeMin( 'taskTime', 'taskEndTime', false );
+    refreshStartTimeMin( taskDateInput ? taskDateInput.value : '', 'taskTime', 'taskEndTime', false );
   }
 }
 
@@ -2635,6 +2636,46 @@ function wireTimeRangeValidation( startId, endId ) {
   refreshEndTimeMin( startId, endId, false );
 }
 
+// Hora de inicio: si el día es hoy, no admite valores anteriores a ahora.
+// Deshabilita esas opciones en el picker (min) y limpia en vivo + al guardar.
+function nowHM() {
+  const n = new Date();
+  return `${String( n.getHours() ).padStart( 2, '0' )}:${String( n.getMinutes() ).padStart( 2, '0' )}`;
+}
+
+function refreshStartTimeMin( dateValue, startId, endId, notify = true ) {
+  const start = document.getElementById( startId );
+  if ( !start ) return;
+
+  if ( dateValue && dateValue === getTodayString() ) {
+    const min = nowHM();
+    start.min = min;
+    if ( start.value && start.value < min ) {
+      start.value = '';
+      if ( notify ) showNotification( 'La hora de inicio no puede ser anterior a la hora actual', 'error' );
+    }
+  } else {
+    start.removeAttribute( 'min' );
+  }
+
+  if ( endId ) refreshEndTimeMin( startId, endId, notify );
+}
+
+// opts: { dateId?, fixedDate?, startId, endId }
+function wireStartTimeValidation( opts ) {
+  const { dateId, fixedDate, startId, endId } = opts;
+  const start = document.getElementById( startId );
+  const dateEl = dateId ? document.getElementById( dateId ) : null;
+  if ( !start ) return;
+
+  const currentDateValue = () => dateEl ? dateEl.value : ( fixedDate || '' );
+  if ( dateEl ) {
+    dateEl.addEventListener( 'change', () => refreshStartTimeMin( currentDateValue(), startId, endId ) );
+  }
+  start.addEventListener( 'change', () => refreshStartTimeMin( currentDateValue(), startId, endId ) );
+  refreshStartTimeMin( currentDateValue(), startId, endId, false );
+}
+
 // CONFIGURACIÓN de eventos
 // Guard: el init se invoca desde el fallback por readyState Y desde
 // DOMContentLoaded; sin esto cada botón quedaba con doble listener y
@@ -2714,6 +2755,8 @@ function setupEventListeners() {
   // La hora de fin del formulario principal solo admite valores
   // posteriores a la hora de inicio (min dinámico + limpieza en vivo).
   wireTimeRangeValidation( 'taskTime', 'taskEndTime' );
+  // La hora de inicio no admite valores anteriores a ahora si es hoy.
+  wireStartTimeValidation( { dateId: 'taskDate', startId: 'taskTime', endId: 'taskEndTime' } );
 
   eventListenersConfigured = true;
   console.log( 'Event listeners configurados completamente' );
@@ -3128,6 +3171,14 @@ function addTask( e ) {
   if ( formData.date && isDatePast( formData.date ) ) {
     showNotification(
       "No puedes agregar tareas a fechas anteriores. Por favor selecciona hoy o una fecha futura.",
+      "error"
+    );
+    return;
+  }
+
+  if ( formData.date === getTodayString() && formData.time && formData.time < nowHM() ) {
+    showNotification(
+      "La hora de inicio no puede ser anterior a la hora actual",
       "error"
     );
     return;
@@ -4989,6 +5040,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
 
   // La hora de fin solo admite valores posteriores a la de inicio
   wireTimeRangeValidation( "advancedEditTaskTime", "advancedEditTaskEndTime" );
+  wireStartTimeValidation( { fixedDate: dateStr, startId: "advancedEditTaskTime", endId: "advancedEditTaskEndTime" } );
 
   // Event listener para el formulario
   document.getElementById( "advancedEditTaskForm" ).addEventListener( "submit", ( e ) => {
@@ -5093,6 +5145,11 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
 
   if ( endTime && endTime <= time ) {
     showNotification( "La hora de fin debe ser posterior a la de inicio", "error" );
+    return;
+  }
+
+  if ( dateStr === getTodayString() && time < nowHM() ) {
+    showNotification( "La hora de inicio no puede ser anterior a la hora actual", "error" );
     return;
   }
 
@@ -5211,6 +5268,7 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
 
   // La hora de fin solo admite valores posteriores a la de inicio
   wireTimeRangeValidation( "quickEditTime", "quickEditEndTime" );
+  wireStartTimeValidation( { fixedDate: dateStr, startId: "quickEditTime", endId: "quickEditEndTime" } );
 
   // Event listener para el formulario
   document.getElementById( "quickEditForm" ).addEventListener( "submit", ( e ) => {
@@ -5241,6 +5299,11 @@ function saveQuickEditImproved( dateStr, taskId ) {
       "Por favor completa todos los campos obligatorios",
       "error"
     );
+    return;
+  }
+
+  if ( dateStr === getTodayString() && newTime < nowHM() ) {
+    showNotification( "La hora de inicio no puede ser anterior a la hora actual", "error" );
     return;
   }
 
@@ -5903,6 +5966,8 @@ function showQuickAddTask( dateStr ) {
 
   // La hora de fin solo admite valores posteriores a la de inicio
   wireTimeRangeValidation( "quickAddTaskTime", "quickAddTaskEndTime" );
+  // La hora de inicio no admite valores anteriores a ahora si es hoy
+  wireStartTimeValidation( { dateId: "quickAddTaskDate", startId: "quickAddTaskTime", endId: "quickAddTaskEndTime" } );
 
   // Event listener para el formulario
   // Dentro de showQuickAddTask(), modificar el event listener:
@@ -5923,6 +5988,11 @@ function showQuickAddTask( dateStr ) {
 
     if ( isDatePast( targetDate ) ) {
       showNotification( "No puedes agregar tareas a fechas anteriores", "error" );
+      return;
+    }
+
+    if ( targetDate === getTodayString() && time < nowHM() ) {
+      showNotification( "La hora de inicio no puede ser anterior a la hora actual", "error" );
       return;
     }
 
