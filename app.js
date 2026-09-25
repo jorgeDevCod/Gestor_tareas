@@ -402,20 +402,28 @@ function goToTask( dateStr, taskId ) {
   const date = new Date( dateStr + 'T12:00:00' );
   showDailyTaskPanel( dateStr, date.getDate() );
 
-  // Scroll al panel
+  // Scroll hacia el panel y highlight de la tarea DENTRO del panel
+  // (acotado a #panelTaskList: el query global caía en la píldora del calendario)
   setTimeout( () => {
-
-    // Highlight de la tarea
-    const taskElement = document.querySelector( `[data-task-id="${taskId}"]` );
-    if ( taskElement ) {
-      taskElement.scrollIntoView( { behavior: 'smooth', block: 'center' } );
-      taskElement.classList.add( 'ring-4', 'ring-blue-400', 'animate-pulse' );
-
-      setTimeout( () => {
-        taskElement.classList.remove( 'animate-pulse' );
-      }, 2000 );
+    const panel = document.getElementById( 'dailyTaskPanel' );
+    if ( panel && typeof panel.scrollIntoView === 'function' ) {
+      panel.scrollIntoView( { behavior: 'smooth', block: 'start' } );
     }
-  }, 300 );
+
+    const taskElement = document.querySelector( `#panelTaskList [data-task-id="${taskId}"]` );
+    if ( taskElement ) {
+      setTimeout( () => {
+        if ( typeof taskElement.scrollIntoView === 'function' ) {
+          taskElement.scrollIntoView( { behavior: 'smooth', block: 'center' } );
+        }
+        taskElement.classList.add( 'ring-4', 'ring-blue-400', 'animate-pulse' );
+
+        setTimeout( () => {
+          taskElement.classList.remove( 'animate-pulse' );
+        }, 2000 );
+      }, 350 );
+    }
+  }, 150 );
 }
 
 // Función para generar hash único de tarea
