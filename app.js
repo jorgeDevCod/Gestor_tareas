@@ -113,33 +113,25 @@ if ( 'serviceWorker' in navigator ) {
       // Verificar si ya hay un SW registrado
       const existingRegistration = await navigator.serviceWorker.getRegistration( '/firebase-messaging-sw.js' );
 
-      if ( existingRegistration ) {
-        console.log( 'Service Worker ya registrado:', existingRegistration.scope );
-
-        // Actualizar si hay una nueva versión
-        existingRegistration.update().then( () => {
-          console.log( '🔄 Service Worker actualizado' );
-        } );
-
-        return;
-      }
-
-      // Registrar nuevo SW
-      const registration = await navigator.serviceWorker.register( '/firebase-messaging-sw.js', {
+      const registration = existingRegistration || await navigator.serviceWorker.register( '/firebase-messaging-sw.js', {
         scope: '/',
         updateViaCache: 'none' // Forzar actualización sin caché
       } );
 
-      console.log( 'Service Worker registrado con éxito:', registration.scope );
+      console.log( existingRegistration ? 'Service Worker ya registrado:' : 'Service Worker registrado con éxito:', registration.scope );
 
-      // Esperar a que esté activo
-      if ( registration.installing ) {
-        console.log( '⏳ Service Worker instalándose...' );
-      } else if ( registration.waiting ) {
-        console.log( '⏳ Service Worker esperando...' );
-      } else if ( registration.active ) {
-        console.log( 'Service Worker activo' );
-      }
+      // Chequeo inicial + polling: vital en PWA instalada móvil, donde el
+      // SW puede quedar desactualizado y servir JS viejo (funciones "muertas").
+      const checkSwUpdate = () => {
+        registration.update().then( () => {
+          console.log( '🔄 Chequeo de SW completado' );
+        } ).catch( () => {} );
+      };
+      checkSwUpdate();
+      setInterval( checkSwUpdate, 30 * 60 * 1000 );
+      document.addEventListener( 'visibilitychange', () => {
+        if ( document.visibilityState === 'visible' ) checkSwUpdate();
+      } );
 
     } catch ( error ) {
       console.error( '❌ Error al registrar el Service Worker:', error );
@@ -3200,9 +3192,12 @@ function addTask( e ) {
   // ✅ Variable para rastrear si se creó en el día actual
   let createdToday = false;
   const today = getTodayString();
+  // Fecha protagonista para llevar calendario+panel (una sola fecha o inicio)
+  let focusDateStr = null;
 
   if ( formData.date && formData.repeat === "none" ) {
     addTaskToDate( formData.date, task );
+    focusDateStr = formData.date;
 
     // ✅ Verificar si se creó hoy
     if ( formData.date === today ) {
@@ -3221,11 +3216,20 @@ function addTask( e ) {
       : new Date();
 
     const createdDates = addRecurringTasks( task, formData.repeat, startDate );
+    if ( createdDates.length > 0 ) focusDateStr = createdDates[ 0 ];
 
     // ✅ Verificar si alguna tarea recurrente es de hoy
     if ( createdDates.includes( today ) ) {
       createdToday = true;
     }
+  }
+
+  // Llevar el calendario al mes de la(s) tarea(s) creada(s)
+  if ( focusDateStr ) {
+    const focus = new Date( focusDateStr + "T12:00:00" );
+    currentDate.setDate( 1 );
+    currentDate.setFullYear( focus.getFullYear() );
+    currentDate.setMonth( focus.getMonth() );
   }
 
   saveTasks();
@@ -3249,8 +3253,13 @@ function addTask( e ) {
   const prioritySelect = document.getElementById( "taskPriority" );
   if ( prioritySelect ) prioritySelect.value = "3";
 
-  // ✅ CRÍTICO: Actualizar panel si está abierto Y se creó tarea para hoy
-  if ( createdToday ) {
+  // ✅ Abrir el panel en la fecha creada para verla de inmediato.
+  // Tarea única: siempre. Recurrentes: solo si incluyen hoy (no marear).
+  if ( focusDateStr && ( formData.repeat === "none" || createdToday ) ) {
+    const focus = new Date( focusDateStr + "T12:00:00" );
+    console.log( '📅 Abriendo panel en fecha creada' );
+    showDailyTaskPanel( focusDateStr, focus.getDate() );
+  } else if ( createdToday ) {
     console.log( '📅 Tarea creada para hoy - actualizando panel' );
 
     // Si el panel no está abierto, abrirlo
@@ -6015,7 +6024,6 @@ function showQuickAddTask( dateStr ) {
 
     addTaskToDate( targetDate, task );
     saveTasks();
-    renderCalendar();
     updateProgress();
 
     // Sync solo si hay conexión
@@ -6026,15 +6034,14 @@ function showQuickAddTask( dateStr ) {
     closeAllModals();
     showNotification( "Tarea agregada exitosamente", "success" );
 
-    // ✅ CRÍTICO: Actualizar panel inmediatamente
-    if ( selectedDateForPanel === targetDate ) {
-      console.log( '🔄 Actualizando panel después de agregar tarea rápida' );
-      const day = new Date( targetDate + "T12:00:00" ).getDate();
-
-      setTimeout( () => {
-        showDailyTaskPanel( targetDate, day );
-      }, 100 );
-    }
+    // Llevar el calendario al mes de la tarea y abrir su panel para
+    // verla de inmediato (sin recargar ni buscar el mes a mano).
+    const target = new Date( targetDate + "T12:00:00" );
+    currentDate.setDate( 1 );
+    currentDate.setFullYear( target.getFullYear() );
+    currentDate.setMonth( target.getMonth() );
+    renderCalendar();
+    showDailyTaskPanel( targetDate, target.getDate() );
   } );
 }
 
