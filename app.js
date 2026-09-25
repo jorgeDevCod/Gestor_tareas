@@ -3098,32 +3098,18 @@ function formatDuration( hours ) {
 }
 
 // Función para calcular tiempo transcurrido
+// Tiempo consumido en MINUTOS desde el acumulador persistido
+// (se congela al pausar; ya no depende de los logs).
 function calculateElapsedTime( task, dateStr ) {
   if ( !task.duration || task.state === 'completed' ) return null;
 
-  // Buscar en logs cuándo se puso en "inProgress"
-  const dayLogs = dailyTaskLogs[ dateStr ] || [];
-  const startLog = dayLogs
-    .slice()
-    .reverse()
-    .find( log =>
-      log.taskId === task.id &&
-      log.action === 'stateChanged' &&
-      log.newState === 'inProgress'
-    );
-
-  if ( !startLog ) return null;
-
-  const startTime = new Date( startLog.timestamp );
-  const now = new Date();
-  const elapsedMs = now - startTime;
-  const elapsedHours = elapsedMs / ( 1000 * 60 * 60 );
+  const elapsedMin = currentElapsedMin( task );
 
   return {
-    elapsed: elapsedHours,
+    elapsed: elapsedMin,
     total: task.duration,
-    percentage: Math.min( ( elapsedHours / task.duration ) * 100, 100 ),
-    remaining: Math.max( task.duration - elapsedHours, 0 )
+    percentage: task.duration > 0 ? Math.min( ( elapsedMin / task.duration ) * 100, 100 ) : 0,
+    remaining: Math.max( task.duration - elapsedMin, 0 )
   };
 }
 
@@ -3639,9 +3625,10 @@ function createPanelTaskElement( task, dateStr ) {
   // Timer display
   let timerDisplay = '';
   if ( task.duration && task.state === 'inProgress' ) {
+    const remaining = formatMinutes( Math.max( task.duration - currentElapsedMin( task ), 0 ) );
     timerDisplay = `
             <div id="timer-${task.id}" class="timer-display timer-active text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
-                ⏱️ Calculando...
+                ⏱️ ${remaining} restantes
             </div>
         `;
   } else if ( task.duration ) {
@@ -3677,24 +3664,60 @@ function createPanelTaskElement( task, dateStr ) {
             </div>
         ` : ''}
 
-        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <div class="flex flex-col space-y-2 w-full sm:w-32 flex-shrink-0">
-                <select onchange="changeTaskStateWithTimer('${dateStr}', '${task.id}', this.value)"
-                        class="text-xs px-2 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200 w-full">
-                    <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
-                    <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
-                    <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
-                </select>
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div class="flex items-start gap-2 sm:contents">
+                <div class="flex-1 sm:flex-none sm:w-32 sm:flex-shrink-0 space-y-2 min-w-0">
+                    <select onchange="changeTaskStateWithTimer('${dateStr}', '${task.id}', this.value)"
+                            class="text-xs px-2 py-2 rounded-lg border ${state.class} font-medium cursor-pointer transition-colors duration-200 w-full">
+                        <option value="pending" ${task.state === "pending" ? "selected" : ""}>⏸ Pendiente</option>
+                        <option value="inProgress" ${task.state === "inProgress" ? "selected" : ""}>▶ En Proceso</option>
+                        <option value="paused" ${task.state === "paused" ? "selected" : ""}>⏸ Pausada</option>
+                        <option value="completed" ${task.state === "completed" ? "selected" : ""}>✓ Completada</option>
+                    </select>
+                    ${task.state === "paused" ? `
+                        <div class="text-[11px] font-semibold text-orange-600 dark:text-orange-300 flex items-center">
+                            <i class="fas fa-pause-circle mr-1"></i>Tarea pausada
+                        </div>
+                    ` : ""}
 
-                <div class="flex items-center space-x-2">
-                    <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm flex-shrink-0"
-                          style="background-color: ${priority.color}"
-                          title="Prioridad: ${priority.label}"></span>
-                    <span class="text-xs text-gray-600 dark:text-gray-300 font-medium truncate">${priority.label}</span>
+                    <div class="flex items-center space-x-2">
+                        <span class="task-priority-dot inline-block w-3 h-3 rounded-full shadow-sm flex-shrink-0"
+                              style="background-color: ${priority.color}"
+                              title="Prioridad: ${priority.label}"></span>
+                        <span class="text-xs text-gray-600 dark:text-gray-300 font-medium truncate">${priority.label}</span>
+                    </div>
+                </div>
+
+                <div class="task-actions flex flex-row sm:flex-col gap-2 sm:order-3 justify-end items-center sm:items-end flex-shrink-0">
+                    ${canPause ? `
+                        <button onclick="pauseTaskWithTimer('${dateStr}', '${task.id}')"
+                                class="flex items-center justify-center space-x-1 bg-orange-100 text-orange-700 p-2 sm:px-3 sm:py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
+                            <i class="fas fa-pause"></i>
+                            <span class="hidden sm:inline">Pausar</span>
+                        </button>
+                    ` : ""}
+
+                    ${canResume ? `
+                        <button onclick="resumeTaskWithTimer('${dateStr}', '${task.id}')"
+                                class="flex items-center justify-center space-x-1 bg-blue-100 text-blue-700 p-2 sm:px-3 sm:py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
+                            <i class="fas fa-play"></i>
+                            <span class="hidden sm:inline">Reanudar</span>
+                        </button>
+                    ` : ""}
+
+                    <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
+                            class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors duration-200">
+                        <i class="fas fa-edit text-sm"></i>
+                    </button>
+
+                    <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
+                            class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 transition-colors duration-200">
+                        <i class="fas fa-trash text-sm"></i>
+                    </button>
                 </div>
             </div>
 
-            <div class="flex-1 min-w-0">
+            <div class="flex-1 min-w-0 sm:order-2">
                 <div class="task-title font-semibold text-base mb-1 ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800 dark:text-gray-200"} break-words">
                     ${task.title}
                 </div>
@@ -3714,34 +3737,6 @@ function createPanelTaskElement( task, dateStr ) {
                     <div class="text-gray-500 dark:text-gray-400">${state.label}</div>
                 </div>
             </div>
-
-            <div class="task-actions flex flex-col sm:flex-row gap-2 justify-end items-center sm:items-end flex-shrink-0">
-                ${canPause ? `
-                    <button onclick="pauseTaskWithTimer('${dateStr}', '${task.id}')"
-                            class="flex items-center justify-center space-x-1 bg-orange-100 text-orange-700 px-3 py-2 rounded-lg hover:bg-orange-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
-                        <i class="fas fa-pause"></i>
-                        <span class="hidden sm:inline">Pausar</span>
-                    </button>
-                ` : ""}
-                
-                ${canResume ? `
-                    <button onclick="resumeTaskWithTimer('${dateStr}', '${task.id}')"
-                            class="flex items-center justify-center space-x-1 bg-blue-100 text-blue-700 px-3 py-2 rounded-lg hover:bg-blue-200 transition-colors duration-200 text-xs font-medium shadow-sm whitespace-nowrap">
-                        <i class="fas fa-play"></i>
-                        <span class="hidden sm:inline">Reanudar</span>
-                    </button>
-                ` : ""}
-                
-                <button onclick="showAdvancedEditModal('${dateStr}', '${task.id}')"
-                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors duration-200">
-                    <i class="fas fa-edit text-sm"></i>
-                </button>
-                
-                <button onclick="deleteTaskFromPanel('${dateStr}', '${task.id}')"
-                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 transition-colors duration-200">
-                    <i class="fas fa-trash text-sm"></i>
-                </button>
-            </div>
         </div>
     </div>
     `;
@@ -3753,6 +3748,13 @@ function changeTaskStateWithTimer( dateStr, taskId, newState ) {
 
   const oldState = task.state || "pending";
   if ( oldState === newState ) return;
+
+  // Manejar tiempo acumulado según estado (antes de persistir)
+  if ( newState === 'inProgress' ) {
+    markRunning( task );
+  } else {
+    accumulateElapsed( task );
+  }
 
   // Manejar temporizador según estado
   if ( newState === 'inProgress' && task.duration ) {
@@ -3880,6 +3882,7 @@ function pauseTask( dateStr, taskId ) {
   }
 
   const oldState = task.state;
+  accumulateElapsed( task ); // congela el tiempo consumido al pausar
   task.state = "paused";
   task.completed = false;
 
@@ -3908,6 +3911,7 @@ function resumeTask( dateStr, taskId ) {
   }
 
   const oldState = task.state;
+  markRunning( task ); // reanuda el conteo desde lo acumulado
   task.state = "inProgress";
   task.completed = false;
 
@@ -7541,14 +7545,18 @@ document.addEventListener( "DOMContentLoaded", async function () {
   // Limpieza preventiva
   await cleanupDuplicates();
 
-  // Restaurar temporizadores activos
+  // Restaurar temporizadores: congelar el reloj (NO reanudar solo).
+  // El estado se conserva tal cual; el tiempo sigue solo al iniciar/reanudar.
+  let timersNeedSave = false;
   Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
     dayTasks.forEach( task => {
-      if ( task.state === 'inProgress' && task.duration ) {
-        startTaskTimer( task.id, dateStr, task.duration );
+      if ( task.state === 'inProgress' && task.runSince ) {
+        task.runSince = null;
+        timersNeedSave = true;
       }
     } );
   } );
+  if ( timersNeedSave ) saveTasks();
 
   console.log( '✅ Sistema de temporizadores y tema inicializado' );
 
@@ -7741,6 +7749,34 @@ window.addEventListener( 'beforeunload', () => {
   } );
 } );
 
+// ===== TIEMPO ACUMULADO POR TAREA (minutos, persistido) =====
+// task.elapsedMin: minutos consumidos acumulados (se congela al pausar).
+// task.runSince: timestamp ms desde cuando corre (solo en inProgress).
+// Al recargar NO se reanuda solo: se congela en lo acumulado hasta que
+// el usuario la inicie/reanude de nuevo.
+function currentElapsedMin( task ) {
+  if ( !task ) return 0;
+  const base = task.elapsedMin || 0;
+  if ( task.state === 'inProgress' && task.runSince ) {
+    return base + Math.max( 0, ( Date.now() - task.runSince ) / 60000 );
+  }
+  return base;
+}
+
+function accumulateElapsed( task ) {
+  if ( !task ) return;
+  if ( task.state === 'inProgress' && task.runSince ) {
+    task.elapsedMin = ( task.elapsedMin || 0 ) + Math.max( 0, ( Date.now() - task.runSince ) / 60000 );
+  }
+  task.runSince = null;
+}
+
+function markRunning( task ) {
+  if ( !task ) return;
+  if ( typeof task.elapsedMin !== 'number' ) task.elapsedMin = 0;
+  task.runSince = Date.now();
+}
+
 // ===== SISTEMA DE TEMPORIZADOR PARA TAREAS =====
 function startTaskTimer( taskId, dateStr, durationMinutes ) {
   // Si ya existe un timer, limpiarlo
@@ -7748,8 +7784,21 @@ function startTaskTimer( taskId, dateStr, durationMinutes ) {
     clearInterval( taskTimers.get( taskId ).interval );
   }
 
+  // Descontar lo ya consumido (pausas) del total programado
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  const remainingMin = durationMinutes - currentElapsedMin( task || {} );
+
+  if ( remainingMin <= 0 ) {
+    const timerElement = document.getElementById( `timer-${taskId}` );
+    if ( timerElement ) {
+      timerElement.textContent = '⏰ ¡Tiempo agotado!';
+      timerElement.className = 'timer-display timer-critical text-sm font-bold';
+    }
+    return;
+  }
+
   const startTime = Date.now();
-  const endTime = startTime + ( durationMinutes * 60 * 1000 );
+  const endTime = startTime + ( remainingMin * 60 * 1000 );
 
   const interval = setInterval( () => {
     updateTimerDisplay( taskId, endTime );
