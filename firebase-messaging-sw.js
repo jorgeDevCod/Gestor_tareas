@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v5.1';
+const CACHE_VERSION = 'v5.2';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -266,7 +266,7 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v8.1 instalando...' );
+    console.log( '🔧 SW v8.2 instalando...' );
     event.waitUntil(
         Promise.all( [
             // Cache resiliente: un archivo faltante no aborta la instalación
@@ -285,7 +285,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v8.1 activándose...' );
+    console.log( '🚀 SW v8.2 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -322,7 +322,9 @@ messaging.onBackgroundMessage( ( payload ) => {
         badge: '/images/favicon-192.png',
         tag: data?.tag || `fcm-${Date.now()}`,
         requireInteraction: data?.requiresAction === 'true',
-        vibrate: [ 200, 100, 200 ],
+        silent: false, // sonido del sistema en avisos y atrasadas
+        renotify: true, // no agrupar silenciosamente avisos del mismo tag
+        vibrate: data?.type === 'task-late' ? [ 100, 100, 100, 100, 100 ] : [ 300, 100, 300 ],
         data: {
             taskId: data?.taskId,
             dateStr: data?.dateStr,
@@ -524,6 +526,8 @@ async function showNotification( options ) {
             badge: '/images/favicon-192.png',
             tag: options.tag,
             requireInteraction: options.requireInteraction || false,
+            silent: false, // sonido del sistema en avisos y atrasadas
+            renotify: true,
             vibrate: options.vibrate || [ 200, 100, 200 ],
             data: { timestamp: Date.now(), ...options.data },
             actions: [

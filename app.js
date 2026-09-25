@@ -305,6 +305,56 @@ function getVibrationPattern( type ) {
   return patterns[ type ] || patterns.default;
 }
 
+// Vibración + sonido de alerta para avisos de tareas (previas y atrasadas).
+// El contexto de audio se desbloquea con el primer gesto del usuario
+// (los navegadores móviles lo exigen).
+let alertAudioCtx = null;
+function ensureAlertAudio() {
+  try {
+    if ( !alertAudioCtx ) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if ( !AC ) return;
+      alertAudioCtx = new AC();
+    }
+    if ( alertAudioCtx.state === 'suspended' ) alertAudioCtx.resume();
+  } catch ( e ) { /* audio no disponible */ }
+}
+document.addEventListener( 'pointerdown', ensureAlertAudio, { passive: true } );
+
+function playAlertSound( kind = 'reminder' ) {
+  try {
+    ensureAlertAudio();
+    if ( !alertAudioCtx ) return;
+    const urgent = kind === 'late';
+    const seq = urgent ? [ 0, 220, 440 ] : [ 0, 280 ];
+    seq.forEach( ( t ) => {
+      const osc = alertAudioCtx.createOscillator();
+      const gain = alertAudioCtx.createGain();
+      osc.type = urgent ? 'square' : 'sine';
+      osc.frequency.value = urgent ? 620 : 880;
+      const t0 = alertAudioCtx.currentTime + t / 1000;
+      gain.gain.setValueAtTime( 0.0001, t0 );
+      gain.gain.exponentialRampToValueAtTime( 0.22, t0 + 0.02 );
+      gain.gain.exponentialRampToValueAtTime( 0.0001, t0 + 0.2 );
+      osc.connect( gain );
+      gain.connect( alertAudioCtx.destination );
+      osc.start( t0 );
+      osc.stop( t0 + 0.24 );
+    } );
+  } catch ( e ) { /* silencioso */ }
+}
+
+// Alerta completa: vibra (móvil) + suena. kind: 'reminder' | 'late'
+function alertTask( type = 'default' ) {
+  const kind = ( type === 'task-late' || type === 'late' ) ? 'late' : 'reminder';
+  if ( 'vibrate' in navigator ) {
+    try {
+      navigator.vibrate( getVibrationPattern( type ) );
+    } catch ( e ) { /* sin vibración */ }
+  }
+  playAlertSound( kind );
+}
+
 // Función auxiliar para notificaciones web fallback
 function showInAppNotification( title, message, type = 'info', options = null ) {
   const notification = document.createElement( 'div' );
@@ -691,11 +741,59 @@ function clearDayChangeLog( dateStr ) {
 }
 
 
+// Borrados pendientes persistentes: si se elimina offline o se cierra la
+// app antes del sync, el delete se guarda en localStorage y se reintenta
+// al volver la conexión. Sin esto, esos borrados nunca llegaban a otros
+// dispositivos.
+const PENDING_DELETES_KEY = 'pending_deletes';
+
+function queuePendingDelete( dateStr, taskId ) {
+  try {
+    const list = JSON.parse( localStorage.getItem( PENDING_DELETES_KEY ) || '[]' );
+    const docId = `${dateStr}_${taskId}`;
+    if ( !list.some( ( d ) => d.docId === docId ) ) {
+      list.push( { docId, dateStr, taskId, ts: Date.now() } );
+      localStorage.setItem( PENDING_DELETES_KEY, JSON.stringify( list ) );
+    }
+  } catch ( e ) {
+    console.warn( '⚠️ No se pudo persistir delete pendiente:', e );
+  }
+}
+
+async function flushPendingDeletes() {
+  let list = [];
+  try {
+    list = JSON.parse( localStorage.getItem( PENDING_DELETES_KEY ) || '[]' );
+  } catch ( e ) {
+    list = [];
+  }
+  if ( list.length === 0 || !currentUser || !isOnline || !db ) return;
+
+  const userTasksRef = db.collection( 'users' ).doc( currentUser.uid ).collection( 'tasks' );
+
+  try {
+    for ( let i = 0; i < list.length; i += 400 ) {
+      const batch = db.batch();
+      list.slice( i, i + 400 ).forEach( ( d ) => batch.delete( userTasksRef.doc( d.docId ) ) );
+      await batch.commit();
+    }
+    localStorage.setItem( PENDING_DELETES_KEY, '[]' );
+    console.log( `🧹 ${list.length} borrados pendientes sincronizados` );
+  } catch ( e ) {
+    console.error( '❌ Error en flushPendingDeletes:', e );
+  }
+}
+
 //Encolar operaciones para sync automático
 function enqueueSync( operation, dateStr, task ) {
   if ( !task || !task.id ) {
     console.error( '❌ enqueueSync: task o task.id faltante', { operation, dateStr, task } );
     return;
+  }
+
+  // Los deletes siempre se persisten (aunque esté offline) para reintentarlos
+  if ( operation === 'delete' ) {
+    queuePendingDelete( dateStr, task.id );
   }
 
   // NUEVO: No encolar si no hay usuario o está offline
@@ -772,6 +870,9 @@ async function processSyncQueue() {
   updateSyncIndicator( "syncing" );
 
   try {
+    // Primero: borrados que quedaron pendientes (offline o app cerrada)
+    await flushPendingDeletes();
+
     const userTasksRef = db.collection( "users" ).doc( currentUser.uid ).collection( "tasks" );
 
     // NUEVO: Obtener snapshot actual de Firebase
@@ -890,6 +991,9 @@ async function syncToFirebase() {
       console.log( "🔄 Procesando cola pendiente antes del sync manual" );
       await processSyncQueue();
     }
+
+    // Borrados que quedaron pendientes (offline o app cerrada)
+    await flushPendingDeletes();
 
     // Hacer sync completo bidireccional
     isSyncing = true;
@@ -1139,6 +1243,10 @@ async function initFirebase() {
 
       updateUI();
       updateSyncIndicator( 'success' );
+
+      // Listener en tiempo real también en sesión restaurada (si no,
+      // este dispositivo nunca recibe borrados/cambios de otros).
+      setupRealtimeSync();
 
       // Sync con delay
       setTimeout( () => {
@@ -1502,12 +1610,18 @@ async function saveFCMToken( token ) {
   if ( !currentUser || !db ) return;
 
   try {
+    let timezone = 'America/Lima';
+    try {
+      timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
+    } catch ( e ) { /* valor por defecto */ }
+
     await db.collection( 'users' )
       .doc( currentUser.uid )
       .set( {
         fcmToken: token,
         lastTokenUpdate: new Date(),
-        email: currentUser.email
+        email: currentUser.email,
+        timezone
       }, { merge: true } );
 
     console.log( '💾 Token FCM guardado en Firestore' );
@@ -1542,10 +1656,8 @@ function setupFCMListeners() {
         icon: notification.icon || '/images/IconLogo.png'
       } );
 
-      // Vibrar si está disponible
-      if ( 'vibrate' in navigator ) {
-        navigator.vibrate( [ 200, 100, 200 ] );
-      }
+      // Vibración + sonido según tipo (previa o atrasada)
+      alertTask( data?.type || 'default' );
 
       // Si es PWA o navegador con permisos, mostrar también notificación del sistema
       if ( Notification.permission === 'granted' ) {
@@ -1943,6 +2055,9 @@ function handleOnline() {
   } else if ( currentUser ) {
     updateSyncIndicator( "success" );
     updateOfflineUI();
+
+    // Re-suscribir realtime al reconectar (el listener pudo caer offline)
+    setupRealtimeSync();
 
     const syncDelay = isPWAInstalled() ? 500 : 1000;
     setTimeout( () => {
@@ -3305,7 +3420,7 @@ function createDayElement( day, dateStr, dayTasks ) {
     </div>
     ${!isPastDate
       ? `<button onclick="event.stopPropagation(); showQuickAddTask('${dateStr}')"
-                class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
+                class="absolute bottom-1 right-1 w-6 h-6 bg-green-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 max-lg:opacity-100 transition-opacity duration-200 hover:bg-green-600 flex items-center justify-center"
                 title="Agregar tarea rápida">
             <i class="fas fa-plus"></i>
         </button>`
@@ -3954,7 +4069,7 @@ function createTaskElement( task, dateStr, fullName = false ) {
         ${task.title}${overdue ? `<span class="font-bold"> · atrasada</span>` : ""}
         ${amountBadge}
       </div>
-      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white dark:from-[#18202b] dark:via-[#18202b] to-transparent pl-2">
+      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 max-lg:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white dark:from-[#18202b] dark:via-[#18202b] to-transparent pl-2">
         <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
                 class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
                 title="Editar tarea completa">
@@ -4949,6 +5064,7 @@ function notifyOverdueOnEntry() {
     : `Tienes ${overdue.length} tareas atrasadas sin iniciar`;
 
   showInAppNotification( '⚠️ Tareas atrasadas', msg, 'warning' );
+  alertTask( 'task-late' );
 
   if ( notificationsEnabled && 'Notification' in window && Notification.permission === 'granted' ) {
     showDesktopNotificationPWA( '⚠️ Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );

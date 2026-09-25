@@ -4,15 +4,70 @@ const admin = require( 'firebase-admin' );
 
 admin.initializeApp();
 
+// Hora/fecha ACTUAL en la zona horaria del usuario.
+// El servidor corre en UTC: usar getHours() desplazaba los avisos varias
+// horas (llegaban "mucho antes"). La app guarda user.timezone (ver saveFCMToken).
+function getUserLocalParts( timeZone ) {
+    const tz = timeZone || 'America/Lima';
+    const parts = Object.fromEntries(
+        new Intl.DateTimeFormat( 'en-CA', {
+            timeZone: tz,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+        } ).formatToParts( new Date() ).map( p => [ p.type, p.value ] )
+    );
+    return {
+        today: `${parts.year}-${parts.month}-${parts.day}`,
+        minutes: ( parseInt( parts.hour, 10 ) % 24 ) * 60 + parseInt( parts.minute, 10 ),
+    };
+}
+
+// Idempotencia: reclama el tag en notifLog con create() (falla si existe).
+// Evita duplicados si la función reintenta o se solapa en el mismo minuto.
+async function claimNotification( userId, tag ) {
+    const ref = admin.firestore()
+        .collection( 'users' ).doc( userId )
+        .collection( 'notifLog' ).doc( tag );
+    try {
+        await ref.create( { sentAt: admin.firestore.FieldValue.serverTimestamp() } );
+        return true;
+    } catch ( e ) {
+        if ( e.code === 6 ) return false; // ALREADY_EXISTS → ya enviada
+        throw e;
+    }
+}
+
+async function sendOnce( userId, token, data ) {
+    const claimed = await claimNotification( userId, data.tag );
+    if ( !claimed ) {
+        console.log( `⏭️ Duplicado evitado: ${data.tag}` );
+        return null;
+    }
+    return sendNotification( token, data );
+}
+
+// Limpieza best-effort de notifLog mayor a 2 días (evita crecimiento infinito)
+async function cleanupNotifLog( userId ) {
+    try {
+        const cutoff = new Date( Date.now() - 2 * 24 * 60 * 60 * 1000 );
+        const snap = await admin.firestore()
+            .collection( 'users' ).doc( userId )
+            .collection( 'notifLog' )
+            .where( 'sentAt', '<', cutoff )
+            .limit( 100 )
+            .get();
+        if ( snap.empty ) return;
+        const batch = admin.firestore().batch();
+        snap.docs.forEach( d => batch.delete( d.ref ) );
+        await batch.commit();
+    } catch ( e ) {
+        console.warn( '⚠️ Limpieza notifLog omitida:', e.message );
+    }
+}
+
 // 🔥 FUNCIÓN PRINCIPAL: Verifica y envía notificaciones cada minuto
 exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) => {
     console.log( '⏰ Verificando tareas programadas...' );
-
-    const now = new Date();
-    const today = formatDate( now );
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
     try {
         const usersSnapshot = await admin.firestore().collection( 'users' ).get();
@@ -31,6 +86,8 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
                 console.log( `⚠️ Usuario ${userId} sin token FCM` );
                 continue;
             }
+
+            const { today, minutes: currentTimeInMinutes } = getUserLocalParts( userData.timezone );
 
             const tasksSnapshot = await admin.firestore()
                 .collection( 'users' )
@@ -51,7 +108,7 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
 
                 // 🔔 5 minutos antes
                 if ( currentTimeInMinutes === taskTimeInMinutes - 5 ) {
-                    await sendNotification( fcmToken, {
+                    await sendOnce( userId, fcmToken, {
                         title: `⏰ Recordatorio: ${task.title}`,
                         body: `Tu tarea inicia en 5 minutos (${task.time})`,
                         tag: `${task.id}-5min`,
@@ -64,7 +121,7 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
 
                 // 🔔 Hora exacta
                 if ( currentTimeInMinutes === taskTimeInMinutes ) {
-                    await sendNotification( fcmToken, {
+                    await sendOnce( userId, fcmToken, {
                         title: `🔔 Es hora de: ${task.title}`,
                         body: `Tu tarea programada para ${task.time}`,
                         tag: `${task.id}-start`,
@@ -78,7 +135,7 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
 
                 // 🔔 30 minutos tarde
                 if ( currentTimeInMinutes === taskTimeInMinutes + 30 ) {
-                    await sendNotification( fcmToken, {
+                    await sendOnce( userId, fcmToken, {
                         title: `⚠️ Tarea Retrasada: ${task.title}`,
                         body: 'Han pasado 30 minutos desde la hora programada',
                         tag: `${task.id}-late`,
@@ -89,6 +146,8 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
                     console.log( `⚠️ Notificación retraso enviada: ${task.title}` );
                 }
             }
+
+            await cleanupNotifLog( userId );
         }
 
         console.log( '✅ Verificación completada' );
