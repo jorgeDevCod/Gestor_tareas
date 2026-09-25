@@ -630,7 +630,7 @@ function showDayChangeLog( dateStr ) {
       : ""
     }
                     <button onclick="closeAllModals()" 
-                            class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition">
+                            class="bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
                         Cerrar
                     </button>
                 </div>
@@ -2555,6 +2555,13 @@ document.addEventListener( 'click', ( e ) => {
       closeAllModals();
       goToTask( date, id );
       break;
+    case 'edit-task':
+      closeAllModals();
+      quickEditTaskAdvanced( date, id );
+      break;
+    case 'delete-task':
+      quickDeleteTask( date, id );
+      break;
     case 'quick-add':
       closeAllModals();
       showQuickAddTask( date );
@@ -4003,7 +4010,7 @@ function showDeletedTasksModal() {
                     `
       : ""
     }
-                    <button onclick="closeAllModals()" class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition">
+                    <button onclick="closeAllModals()" class="bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
                         Cerrar
                     </button>
                 </div>
@@ -4123,7 +4130,7 @@ function createTaskElement( task, dateStr, fullName = false ) {
 
   return `
     <div class="task-item-wrapper relative group/task">
-      <div class="text-xs p-1 rounded ${pillClass} task-item cursor-move pr-8 border-l-4 ${fullName ? "break-words whitespace-normal" : "truncate"}"
+      <div class="text-xs p-1 rounded ${pillClass} task-item cursor-move border-l-4 ${fullName ? "break-words whitespace-normal" : "truncate"}"
            data-task-id="${task.id}"
            data-date="${dateStr}"
            draggable="true"
@@ -4132,18 +4139,6 @@ function createTaskElement( task, dateStr, fullName = false ) {
         <i class="fas ${overdue ? 'fa-exclamation-triangle' : state.icon} mr-1 opacity-75"></i>
         ${task.title}${overdue ? `<span class="font-bold"> · atrasada</span>` : ""}
         ${amountBadge}
-      </div>
-      <div class="absolute right-0 top-0 h-full flex items-center opacity-0 group-hover/task:opacity-100 max-lg:opacity-100 transition-opacity duration-200 bg-gradient-to-l from-white via-white dark:from-[#18202b] dark:via-[#18202b] to-transparent pl-2">
-        <button onclick="event.stopPropagation(); quickEditTaskAdvanced('${dateStr}', '${task.id}')"
-                class="text-blue-500 hover:text-blue-700 text-xs p-1 rounded hover:bg-blue-100"
-                title="Editar tarea completa">
-          <i class="fas fa-edit"></i>
-        </button>
-        <button onclick="event.stopPropagation(); quickDeleteTask('${dateStr}', '${task.id}')"
-                class="text-red-500 hover:text-red-700 text-xs p-1 rounded hover:bg-red-100 ml-1"
-                title="Eliminar tarea permanentemente">
-          <i class="fas fa-trash"></i>
-        </button>
       </div>
     </div>
   `;
@@ -4616,7 +4611,7 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
 
       <!-- Botón cancelar -->
       <button onclick="closeAllModals()"
-              class="w-full bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+              class="w-full bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-3 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
         <i class="fas fa-times mr-2"></i>Cancelar
       </button>
     </div>
@@ -4699,7 +4694,7 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
           <i class="fas fa-trash-alt mr-2"></i>Sí, Eliminar Todo
         </button>
         <button onclick="closeAllModals()"
-                class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+                class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-3 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
           Cancelar
         </button>
       </div>
@@ -4786,7 +4781,7 @@ function showCustomDatesDeleteSelector( dateStr, taskId ) {
           <i class="fas fa-trash-alt mr-2"></i>Eliminar Seleccionadas
         </button>
         <button onclick="closeAllModals()"
-                class="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg hover:bg-gray-400 transition font-medium">
+                class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-3 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
           Cancelar
         </button>
       </div>
@@ -5041,7 +5036,7 @@ function showAdvancedEditModal( dateStr, taskId ) {
             <i class="fas fa-save mr-2"></i>Guardar Solo Esta Tarea
           </button>
           <button type="button" onclick="closeAllModals()"
-                  class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                  class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
             Cancelar
           </button>
         </div>
@@ -5269,7 +5264,7 @@ function quickEditTaskAdvanced( dateStr, taskId ) {
                         <i class="fas fa-save mr-2"></i>Guardar
                     </button>
                     <button type="button" onclick="closeAllModals()"
-                            class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
+                            class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
                         Cancelar
                     </button>
                 </div>
@@ -5446,16 +5441,29 @@ function showDayTasksModal( dateStr ) {
             const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
             const range = task.endTime ? `${task.time || ''} – ${task.endTime}` : ( task.time || 'Sin hora' );
             return `
-              <button data-action="goto-task" data-date="${dateStr}" data-id="${task.id}"
-                      class="w-full text-left bg-gray-50 hover:bg-blue-50 rounded-lg p-3 border-l-4 transition flex items-center gap-3"
-                      style="border-left-color: ${priority.color}">
-                <i class="fas ${state.icon} text-gray-500"></i>
-                <span class="flex-1 min-w-0">
-                  <span class="block font-medium text-sm text-gray-800 break-words">${task.title}</span>
-                  <span class="block text-xs text-gray-500">${range} · ${state.label}</span>
-                </span>
-                <i class="fas fa-chevron-down text-gray-400"></i>
-              </button>`;
+              <div class="w-full bg-gray-50 hover:bg-blue-50 rounded-lg p-2 border-l-4 transition flex items-center gap-1"
+                   style="border-left-color: ${priority.color}">
+                <button data-action="goto-task" data-date="${dateStr}" data-id="${task.id}"
+                        class="flex-1 min-w-0 text-left flex items-center gap-3 p-1"
+                        title="Ver en el panel inferior">
+                  <i class="fas ${state.icon} text-gray-500 flex-shrink-0"></i>
+                  <span class="flex-1 min-w-0">
+                    <span class="block font-medium text-sm text-gray-800 break-words">${task.title}</span>
+                    <span class="block text-xs text-gray-500">${range} · ${state.label}</span>
+                  </span>
+                  <i class="fas fa-chevron-down text-gray-400 flex-shrink-0"></i>
+                </button>
+                <button data-action="edit-task" data-date="${dateStr}" data-id="${task.id}"
+                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900 transition flex-shrink-0"
+                        title="Editar tarea">
+                  <i class="fas fa-edit text-sm"></i>
+                </button>
+                <button data-action="delete-task" data-date="${dateStr}" data-id="${task.id}"
+                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 transition flex-shrink-0"
+                        title="Eliminar tarea">
+                  <i class="fas fa-trash text-sm"></i>
+                </button>
+              </div>`;
           } ).join( '' )}
       </div>
       <button data-action="quick-add" data-date="${dateStr}"
@@ -5961,7 +5969,7 @@ function showQuickAddTask( dateStr ) {
                         <i class="fas fa-save mr-2"></i>Agregar Tarea
                     </button>
                     <button type="button" onclick="closeAllModals()"
-                            class="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition">
+                            class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
                         Cancelar
                     </button>
                 </div>
@@ -6877,7 +6885,7 @@ function showBulkEditModal( dateStr, taskId ) {
       </div>
 
       <button onclick="closeAllModals()"
-              class="w-full bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition">
+              class="w-full bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
         Cancelar
       </button>
     </div>
@@ -6973,7 +6981,7 @@ function showBulkEditForm( dateStr, taskId, mode = 'all' ) {
             <i class="fas fa-save mr-2"></i>Aplicar Cambios
           </button>
           <button type="button" onclick="closeAllModals()"
-                  class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
+                  class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600">
             Cancelar
           </button>
         </div>
@@ -7179,7 +7187,7 @@ function showCustomDatesSelector( dateStr, taskId ) {
           <i class="fas fa-arrow-right mr-2"></i>Continuar con Selección
         </button>
         <button onclick="closeAllModals()"
-                class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400">
+                class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600">
           Cancelar
         </button>
       </div>
