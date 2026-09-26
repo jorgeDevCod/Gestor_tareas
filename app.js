@@ -2701,6 +2701,9 @@ document.addEventListener( 'click', ( e ) => {
     case 'toggle-form':
       toggleTaskForm();
       break;
+    case 'reminders-view':
+      toggleRemindersView();
+      break;
     case 'show-form':
       toggleTaskForm( true );
       break;
@@ -3841,10 +3844,14 @@ function createDayElement( day, dateStr, dayTasks ) {
     : `h-32 border border-gray-200 p-1 cursor-pointer hover:bg-blue-50 transition relative calendar-day group ${isToday ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200" : ""} ${isPastDate ? "opacity-75" : ""}`;
   dayElement.dataset.date = dateStr;
 
-  const visibleTasks = fullMode ? dayTasks : dayTasks.slice( 0, 2 );
+  // Filtro "solo recordatorios": oculta las tareas comunes del calendario
+  const tasksToShow = calendarShowOnlyReminders ? [] : dayTasks;
+  const visibleTasks = fullMode
+    ? tasksToShow
+    : tasksToShow.slice( 0, 2 );
   const remItems = getRemindersForDate( dateStr );
   const visibleRems = fullMode ? remItems : remItems.slice( 0, Math.max( 0, 2 - visibleTasks.length ) );
-  const hiddenCount = ( dayTasks.length - visibleTasks.length ) + ( remItems.length - visibleRems.length );
+  const hiddenCount = ( tasksToShow.length - visibleTasks.length ) + ( remItems.length - visibleRems.length );
 
   dayElement.innerHTML = `
     <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
@@ -4518,7 +4525,9 @@ function createTaskElement( task, dateStr, fullName = false ) {
     amountBadge = `<span class="text-xs opacity-75 ml-1">${task.time}</span>`;
   }
 
-  const pillClass = overdue ? 'bg-red-500 text-white' : state.class;
+  const pillClass = overdue
+    ? 'bg-red-500 text-white'
+    : ( task.kind === 'horario' ? 'bg-teal-100 text-teal-900' : state.class );
   const overdueLabel = overdue ? ' · atrasada' : '';
   const timeRange = task.endTime ? `${task.time || ''}–${task.endTime}` : ( task.time || '' );
 
@@ -5792,6 +5801,29 @@ function closeDailyTaskPanel() {
 
 // ===== FORMULARIO LATERAL COLAPSABLE + FAB + MODAL DE DÍA =====
 let isFormSidebarOpen = true;
+// Filtro de calendario: solo recordatorios (oculta tareas comunes)
+let calendarShowOnlyReminders = false;
+
+function toggleRemindersView() {
+  calendarShowOnlyReminders = !calendarShowOnlyReminders;
+  const btn = document.getElementById( 'remindersViewBtn' );
+  const icon = document.getElementById( 'remindersViewIcon' );
+  if ( btn ) {
+    btn.title = calendarShowOnlyReminders ? 'Ver todo el calendario' : 'Ver solo recordatorios';
+    btn.classList.toggle( 'bg-teal-600', calendarShowOnlyReminders );
+    btn.classList.toggle( 'text-white', calendarShowOnlyReminders );
+    btn.classList.toggle( 'border-teal-600', calendarShowOnlyReminders );
+    btn.classList.toggle( 'bg-purple-50', !calendarShowOnlyReminders );
+    btn.classList.toggle( 'text-purple-600', !calendarShowOnlyReminders );
+    btn.classList.toggle( 'border-purple-200', !calendarShowOnlyReminders );
+  }
+  if ( icon ) icon.className = calendarShowOnlyReminders ? 'fas fa-calendar-day' : 'fas fa-bell';
+  renderCalendar();
+  showNotification(
+    calendarShowOnlyReminders ? 'Mostrando solo recordatorios' : 'Mostrando calendario completo',
+    'info'
+  );
+}
 
 function toggleTaskForm( forceOpen ) {
   const wantOpen = typeof forceOpen === 'boolean' ? forceOpen : !isFormSidebarOpen;

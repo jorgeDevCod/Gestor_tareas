@@ -243,9 +243,15 @@
                             </svg>
                             Nueva Tarea
                         </h2>
-                        <button type="button" id="formToggleBtn" data-action="toggle-form" class="w-8 h-8 rounded-full bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 hover:shadow transition flex items-center justify-center dark:bg-purple-900/40 dark:text-purple-300 dark:border-purple-800 dark:hover:bg-purple-900/70" title="Ocultar formulario">
-                            <i id="formToggleIcon" class="fas fa-chevron-up text-sm"></i>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="remindersViewBtn" data-action="reminders-view" class="h-8 px-3 rounded-full bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 transition flex items-center gap-1.5 text-xs font-semibold dark:bg-purple-900/40 dark:text-purple-300 dark:border-purple-800 dark:hover:bg-purple-900/70" title="Ver solo recordatorios">
+                                <i id="remindersViewIcon" class="fas fa-bell"></i>
+                                <span class="hidden sm:inline">Recordatorios</span>
+                            </button>
+                            <button type="button" id="formToggleBtn" data-action="toggle-form" class="w-8 h-8 rounded-full bg-purple-50 text-purple-600 border border-purple-200 hover:bg-purple-100 hover:shadow transition flex items-center justify-center dark:bg-purple-900/40 dark:text-purple-300 dark:border-purple-800 dark:hover:bg-purple-900/70" title="Ocultar formulario">
+                                <i id="formToggleIcon" class="fas fa-chevron-up text-sm"></i>
+                            </button>
+                        </div>
                     </div>
                     <form id="taskForm" class="space-y-6">
                         <!-- Información básica -->
