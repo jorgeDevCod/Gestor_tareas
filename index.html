@@ -54,7 +54,7 @@
     <link rel="apple-touch-icon" href="./images/favicon-192.png">
 
     <!-- Scripts -->
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.3/xlsx.full.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 
     <!-- Firebase -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.5/firebase-app-compat.min.js"></script>
@@ -148,6 +148,11 @@
                     <!-- Botón Notificaciones -->
                     <button id="notificationsBtn" class="bg-green-500 text-white px-3 py-2 rounded-lg hover:bg-green-600 transition duration-300 text-sm font-normal md:font-bold" title="Notificaciones activadas - Click para desactivar">
                         <i class="fas fa-bell mr-2"></i>Notificaciones ON
+                    </button>
+
+                    <!-- Botón Recordatorios -->
+                    <button id="recordatoriosBtn" data-action="reminders-open" class="bg-teal-500 text-white px-3 py-2 rounded-lg hover:bg-teal-600 transition duration-300 text-sm font-normal md:font-bold" title="Pagos, festividades y reuniones">
+                        <i class="fas fa-bell-concierge mr-2"></i>Recordatorios
                     </button>
 
                     <!-- Botón Sincronizar (solo visible cuando logueado) -->
@@ -582,5 +587,6 @@
 </body>
 
 <script defer src="app.js"></script>
+<script defer src="src/export-excel.js"></script>
 
 </html>

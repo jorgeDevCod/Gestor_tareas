@@ -40,10 +40,11 @@ const STATIC_FILES = [
 // 📦 IndexedDB MEJORADO
 // ==========================================
 const DB_NAME = 'TasksDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const TASKS_STORE = 'tasks';
 const USER_STORE = 'userSession'; // NUEVO: Store para sesión persistente
 const NOTIFICATIONS_STORE = 'notifications'; // NUEVO: Store para tracking de notificaciones
+const REMINDERS_STORE = 'reminders'; // Recordatorios (pagos/festividades)
 let db = null;
 
 async function initDB() {
@@ -76,6 +77,11 @@ async function initDB() {
                 const notifStore = database.createObjectStore( NOTIFICATIONS_STORE, { keyPath: 'key' } );
                 notifStore.createIndex( 'date', 'date', { unique: false } );
                 notifStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
+            }
+
+            // Recordatorios (pagos/festividades; horarios llegan como tareas)
+            if ( !database.objectStoreNames.contains( REMINDERS_STORE ) ) {
+                database.createObjectStore( REMINDERS_STORE, { keyPath: 'id' } );
             }
 
             console.log( '🔧 IndexedDB estructuras creadas/actualizadas' );
@@ -138,8 +144,124 @@ async function clearUserSession() {
 // ==========================================
 // 📝 GESTIÓN DE TAREAS
 // ==========================================
-async function saveTasksToDB( tasks ) {
+// ==========================================
+// 📝 GESTIÓN DE RECORDATORIOS (pagos/festividades)
+// ==========================================
+async function saveRemindersToDB( reminders ) {
     if ( !db ) await initDB();
+
+    const transaction = db.transaction( [ REMINDERS_STORE ], 'readwrite' );
+    const store = transaction.objectStore( REMINDERS_STORE );
+    await store.clear();
+
+    for ( const r of Object.values( reminders || {} ) ) {
+        if ( r && r.id ) await store.put( r );
+    }
+
+    console.log( `📝 ${Object.keys( reminders || {} ).length} recordatorios guardados en IndexedDB` );
+}
+
+async function getRemindersFromDB() {
+    if ( !db ) await initDB();
+
+    return new Promise( ( resolve, reject ) => {
+        const transaction = db.transaction( [ REMINDERS_STORE ], 'readonly' );
+        const store = transaction.objectStore( REMINDERS_STORE );
+        const request = store.getAll();
+
+        request.onsuccess = () => resolve( request.result || [] );
+        request.onerror = () => reject( request.error );
+    } );
+}
+
+function swDiffDays( fromStr, toStr ) {
+    const a = new Date( fromStr + 'T12:00:00' );
+    const b = new Date( toStr + 'T12:00:00' );
+    return Math.round( ( b - a ) / ( 1000 * 60 * 60 * 24 ) );
+}
+
+// Avisos de recordatorios: vencen hoy o atrasados (una vez por clave)
+async function checkReminderNotifications( today ) {
+    try {
+        const userSession = await getUserSession();
+        if ( !userSession ) return;
+
+        const list = await getRemindersFromDB();
+
+        for ( const r of list ) {
+            if ( !r ) continue;
+
+            if ( r.kind === 'pago' ) {
+                for ( const c of ( r.cuotas || [] ) ) {
+                    if ( c.fecha === today ) {
+                        const key = `rem-${r.id}-${c.fecha}`;
+                        if ( !( await wasNotificationSent( key ) ) ) {
+                            await showNotification( {
+                                title: `💰 Vence hoy: ${r.title}`,
+                                body: `${c.etiqueta} por S/ ${c.monto}`,
+                                tag: key,
+                                requireInteraction: false,
+                                vibrate: [ 300, 100, 300 ],
+                                data: { type: 'reminder' }
+                            } );
+                            await markNotificationSent( key, r.id, today );
+                        }
+                    } else if ( c.fecha < today ) {
+                        const days = swDiffDays( c.fecha, today );
+                        const key = `rem-${r.id}-${c.fecha}-late`;
+                        if ( days >= 1 && !( await wasNotificationSent( key ) ) ) {
+                            await showNotification( {
+                                title: `⚠️ Pago atrasado: ${r.title}`,
+                                body: `${c.etiqueta} lleva ${days} día(s) de retraso`,
+                                tag: key,
+                                requireInteraction: false,
+                                vibrate: [ 100, 100, 100, 100, 100 ],
+                                data: { type: 'late' }
+                            } );
+                            await markNotificationSent( key, r.id, today );
+                        }
+                    }
+                }
+            } else if ( r.kind === 'festividad' ) {
+                for ( const d of ( r.dates || [] ) ) {
+                    if ( d === today ) {
+                        const key = `rem-${r.id}-${d}`;
+                        if ( !( await wasNotificationSent( key ) ) ) {
+                            await showNotification( {
+                                title: `🎉 Hoy: ${r.title}`,
+                                body: r.description || 'Festividad programada para hoy',
+                                tag: key,
+                                requireInteraction: false,
+                                vibrate: [ 300, 100, 300 ],
+                                data: { type: 'reminder' }
+                            } );
+                            await markNotificationSent( key, r.id, today );
+                        }
+                    } else if ( d < today ) {
+                        const days = swDiffDays( d, today );
+                        const key = `rem-${r.id}-${d}-late`;
+                        if ( days >= 1 && !( await wasNotificationSent( key ) ) ) {
+                            await showNotification( {
+                                title: `⚠️ Festividad pasada: ${r.title}`,
+                                body: `${days} día(s) de retraso`,
+                                tag: key,
+                                requireInteraction: false,
+                                vibrate: [ 100, 100, 100, 100, 100 ],
+                                data: { type: 'late' }
+                            } );
+                            await markNotificationSent( key, r.id, today );
+                        }
+                    }
+                }
+            }
+            // horario avisa vía sus tareas espejo (lógica de tareas existente)
+        }
+    } catch ( error ) {
+        console.error( '❌ Error en checkReminderNotifications:', error );
+    }
+}
+
+async function saveTasksToDB( tasks ) {    if ( !db ) await initDB();
 
     const transaction = db.transaction( [ TASKS_STORE ], 'readwrite' );
     const store = transaction.objectStore( TASKS_STORE );
@@ -431,6 +553,9 @@ async function checkTaskNotifications() {
         const today = local.dateStr;
         const todayTasks = tasks[ today ] || [];
 
+        // Recordatorios (pagos/festividades) aunque no haya tareas hoy
+        await checkReminderNotifications( today );
+
         if ( todayTasks.length === 0 ) {
             console.log( '📭 No hay tareas para hoy' );
             return;
@@ -580,6 +705,12 @@ self.addEventListener( 'message', async ( event ) => {
             console.log( '📝 Tareas actualizadas en SW' );
 
             // Re-verificar notificaciones después de actualizar tareas
+            setTimeout( () => checkTaskNotifications(), 1000 );
+            break;
+
+        case 'UPDATE_REMINDERS':
+            await saveRemindersToDB( data.reminders );
+            console.log( '📝 Recordatorios actualizados en SW' );
             setTimeout( () => checkTaskNotifications(), 1000 );
             break;
 

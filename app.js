@@ -10,6 +10,22 @@ const firebaseConfig = {
 
 // Variables globales
 let tasks = {};
+// ===== MÓDULO RECORDATORIOS (pagos / festividades / horarios) =====
+// kind: 'pago' | 'festividad' | 'horario'. Las fechas efectivas van en
+// `dates[]` (pago: una por cuota; festividad/horario: ocurrencias).
+let reminders = {};
+let remindersListener = null;
+const REMINDER_LABELS = {
+  pago: 'Pago programado',
+  festividad: 'Festividad',
+  reunion: 'Reunión',
+  clase: 'Clase / estudio',
+};
+function reminderLabel( r ) {
+  if ( !r ) return '';
+  if ( r.kind === 'horario' ) return r.tipo === 'clase' ? REMINDER_LABELS.clase : REMINDER_LABELS.reunion;
+  return REMINDER_LABELS[ r.kind ] || 'Recordatorio';
+}
 let currentDate = new Date();
 let notificationsEnabled = false;
 let draggedTask = null;
@@ -1130,6 +1146,91 @@ function isDatePast( dateStr ) {
   return checkDate < today;
 }
 
+// ===== MOTOR DE RECURRENCIA COMPARTIDO (pagos / festividades / horarios) =====
+// Genera ocurrencias [YYYY-MM-DD] sin duplicados, en orden cronológico y
+// sin fechas ilógicas hacia el pasado. Máx. 120 ocurrencias por seguridad.
+const RECURRENCE_MAX = 120;
+function toDateStr( d ) {
+  return `${d.getFullYear()}-${String( d.getMonth() + 1 ).padStart( 2, '0' )}-${String( d.getDate() ).padStart( 2, '0' )}`;
+}
+function lastDayOfMonth( y, m ) {
+  return new Date( y, m + 1, 0 ).getDate();
+}
+// Suma meses conservando el día cuando existe; si no, último día del mes.
+function addMonthsSmart( d, n ) {
+  const day = d.getDate();
+  const r = new Date( d.getFullYear(), d.getMonth() + n, 1 );
+  r.setDate( Math.min( day, lastDayOfMonth( r.getFullYear(), r.getMonth() ) ) );
+  return r;
+}
+function expandRecurrence( opts ) {
+  const { start, tipo = 'ninguna', veces = 1, diasSemana = [] } = opts || {};
+  const out = [];
+  if ( !start ) return out;
+  const base = new Date( start + 'T12:00:00' );
+  if ( isNaN( base ) ) return out;
+  const today = getTodayString();
+  const push = ( d ) => {
+    const s = toDateStr( d );
+    if ( s < today ) return; // nunca hacia el pasado
+    if ( !out.includes( s ) ) out.push( s );
+  };
+
+  if ( tipo === 'ninguna' ) {
+    push( base );
+  } else if ( tipo === 'diaria' ) {
+    for ( let i = 0; i < veces && out.length < RECURRENCE_MAX; i++ ) {
+      const d = new Date( base );
+      d.setDate( d.getDate() + i );
+      push( d );
+    }
+  } else if ( tipo === 'semanal' ) {
+    for ( let i = 0; i < veces && out.length < RECURRENCE_MAX; i++ ) {
+      const d = new Date( base );
+      d.setDate( d.getDate() + i * 7 );
+      push( d );
+    }
+  } else if ( tipo === 'mensual' ) {
+    for ( let i = 0; i < veces && out.length < RECURRENCE_MAX; i++ ) {
+      push( addMonthsSmart( base, i ) );
+    }
+  } else if ( tipo === 'anual' ) {
+    // Si la fecha de este año ya pasó, arranca el siguiente año
+    let first = new Date( base );
+    if ( toDateStr( first ) < today ) {
+      first = new Date( first.getFullYear() + 1, first.getMonth(), Math.min( first.getDate(), lastDayOfMonth( first.getFullYear() + 1, first.getMonth() ) ) );
+    }
+    for ( let i = 0; i < veces && out.length < RECURRENCE_MAX; i++ ) {
+      const d = new Date( first.getFullYear() + i, first.getMonth(), Math.min( first.getDate(), lastDayOfMonth( first.getFullYear() + i, first.getMonth() ) ) );
+      push( d );
+    }
+  } else if ( tipo === 'diasSemana' && diasSemana.length > 0 ) {
+    // Semanas hacia adelante desde la fecha base (inclusive si coincide)
+    let d = new Date( base );
+    let guard = 0;
+    while ( out.length < veces && guard < veces * 7 + 14 && out.length < RECURRENCE_MAX ) {
+      if ( diasSemana.includes( d.getDay() ) ) push( d );
+      d.setDate( d.getDate() + 1 );
+      guard++;
+    }
+  }
+  return out.sort();
+}
+function validateRecurrence( opts ) {
+  const { start, tipo = 'ninguna', veces = 1, diasSemana = [] } = opts || {};
+  if ( !start ) return 'Falta la fecha inicial';
+  if ( isNaN( new Date( start + 'T12:00:00' ) ) ) return 'Fecha inicial inválida';
+  if ( tipo !== 'ninguna' && tipo !== 'diasSemana' ) {
+    if ( !Number.isInteger( veces ) || veces < 1 ) return 'Cantidad de repeticiones inválida';
+    if ( veces > RECURRENCE_MAX ) return `Máximo ${RECURRENCE_MAX} repeticiones`;
+  }
+  if ( tipo === 'diasSemana' ) {
+    if ( diasSemana.length === 0 ) return 'Selecciona al menos un día de la semana';
+    if ( !Number.isInteger( veces ) || veces < 1 ) return 'Cantidad de semanas inválida';
+  }
+  return null;
+}
+
 // Configurar input de fecha
 function setupDateInput() {
   const taskDateInput = document.getElementById( "taskDate" );
@@ -1248,11 +1349,14 @@ async function initFirebase() {
       // Listener en tiempo real también en sesión restaurada (si no,
       // este dispositivo nunca recibe borrados/cambios de otros).
       setupRealtimeSync();
+      setupRemindersRealtime();
 
       // Sync con delay
       setTimeout( () => {
         if ( isOnline && !isSyncing ) {
           syncFromFirebase();
+          syncRemindersFromFirebase();
+          flushPendingReminderDeletes();
         }
       }, 2000 );
     } else {
@@ -2059,6 +2163,8 @@ function handleOnline() {
 
     // Re-suscribir realtime al reconectar (el listener pudo caer offline)
     setupRealtimeSync();
+    setupRemindersRealtime();
+    flushPendingReminderDeletes();
 
     const syncDelay = isPWAInstalled() ? 500 : 1000;
     setTimeout( () => {
@@ -2338,6 +2444,10 @@ function signOut() {
       firestoreListener = null;
       console.log( '🔇 Listener de Firestore desconectado' );
     }
+    if ( remindersListener ) {
+      remindersListener();
+      remindersListener = null;
+    }
 
     // Limpiar token FCM
     if ( currentUser && fcmToken ) {
@@ -2612,6 +2722,82 @@ document.addEventListener( 'click', ( e ) => {
     case 'picker-today':
       pickerGoToday();
       break;
+    case 'reminders-open':
+      showRemindersModal( 'pago' );
+      break;
+    case 'reminders-tab':
+      remindersTab = el.dataset.tab || 'pago';
+      pagoDraft = [];
+      renderRemindersTab();
+      break;
+    case 'pago-generar':
+      pagoGenerarFechas();
+      break;
+    case 'pago-quitar': {
+      const idx = parseInt( el.dataset.idx, 10 );
+      // Sincronizar ediciones del preview antes de quitar
+      document.querySelectorAll( '.pago-preview-fecha' ).forEach( ( inp ) => {
+        const i = parseInt( inp.dataset.pagoIdx, 10 );
+        if ( pagoDraft[ i ] ) pagoDraft[ i ].fecha = inp.value;
+      } );
+      pagoDraft.splice( idx, 1 );
+      renderPagoPreview();
+      break;
+    }
+    case 'pago-registrar':
+      // Sincronizar ediciones del preview antes de registrar
+      document.querySelectorAll( '.pago-preview-fecha' ).forEach( ( inp ) => {
+        const i = parseInt( inp.dataset.pagoIdx, 10 );
+        if ( pagoDraft[ i ] && inp.value ) pagoDraft[ i ].fecha = inp.value;
+      } );
+      pagoRegistrar();
+      break;
+    case 'pago-reiniciar':
+      pagoDraft = [];
+      [ 'pagoTitle', 'pagoCuotas', 'pagoMonto', 'pagoDesc', 'pagoFechaIni' ].forEach( ( id ) => {
+        const n = document.getElementById( id );
+        if ( n ) n.value = id === 'pagoCuotas' ? '3' : '';
+      } );
+      renderPagoPreview();
+      showNotification( 'Formulario de pago reiniciado', 'info' );
+      break;
+    case 'fest-registrar':
+      festRegistrar();
+      break;
+    case 'fest-reiniciar':
+      [ 'festTitle', 'festDesc', 'festFecha' ].forEach( ( id ) => {
+        const n = document.getElementById( id );
+        if ( n ) n.value = '';
+      } );
+      showNotification( 'Formulario reiniciado', 'info' );
+      break;
+    case 'hor-registrar':
+      horRegistrar();
+      break;
+    case 'hor-reiniciar':
+      renderRemindersTab();
+      showNotification( 'Formulario reiniciado', 'info' );
+      break;
+    case 'reminder-edit':
+      editReminder( id );
+      break;
+    case 'reminder-delete':
+      deleteReminder( id );
+      break;
+    case 'reminder-save':
+      saveReminderEdit( id );
+      break;
+    case 'export-type':
+      exType = el.dataset.t || 'tareas';
+      renderExportOptions();
+      break;
+    case 'export-pick':
+      exSetColor( el.dataset.key, el.dataset.c );
+      exRefreshSummary();
+      break;
+    case 'export-run':
+      runExportWizard();
+      break;
   }
 } );
 
@@ -2703,7 +2889,7 @@ function setupEventListeners() {
     nextMonth: () => changeMonth( 1 ),
     taskRepeat: toggleCustomDays,
     clearOptionsBtn: showClearOptionsModal,
-    exportExcelBtn: exportToExcel,
+    exportExcelBtn: showExportWizard,
     notificationsBtn: toggleNotifications,
     syncBtn: syncToFirebase,
     loginBtn: showLoginModal,
@@ -2835,6 +3021,8 @@ function initializeTodayPanel() {
 
     // Aviso de atrasadas al ingresar (una vez por sesión)
     notifyOverdueOnEntry();
+    // Avisos de recordatorios al ingresar (vencen hoy / atrasados)
+    notifyRemindersOnEntry();
   }, 500 ); // Esperar 500ms para asegurar que las tareas estén cargadas
 }
 
@@ -2967,11 +3155,149 @@ function loadTasks() {
 
     // También cargar los logs
     loadTaskLogs();
+    // Recordatorios (módulo independiente, mismo patrón)
+    loadReminders();
   } catch ( error ) {
     tasks = {};
     dailyTaskLogs = {};
     console.warn( "Error loading tasks from localStorage:", error );
   }
+}
+
+// ===== Persistencia de recordatorios (local + Firestore + SW) =====
+function loadReminders() {
+  try {
+    const stored = localStorage.getItem( "reminders" );
+    reminders = stored ? JSON.parse( stored ) : {};
+  } catch ( error ) {
+    reminders = {};
+    console.warn( "Error loading reminders:", error );
+  }
+}
+
+function saveReminders() {
+  try {
+    localStorage.setItem( "reminders", JSON.stringify( reminders ) );
+    pushRemindersToSW();
+    renderCalendar();
+    const panelDate = selectedDateForPanel;
+    if ( panelDate ) {
+      const day = new Date( panelDate + "T12:00:00" ).getDate();
+      showDailyTaskPanel( panelDate, day );
+    }
+    updateProgress();
+  } catch ( error ) {
+    console.error( "❌ Error saving reminders:", error );
+  }
+}
+
+function pushRemindersToSW() {
+  if ( 'serviceWorker' in navigator && navigator.serviceWorker.controller ) {
+    navigator.serviceWorker.controller.postMessage( {
+      type: 'UPDATE_REMINDERS',
+      data: { reminders, timestamp: Date.now() }
+    } );
+  }
+}
+
+function remindersRef() {
+  if ( !db || !currentUser ) return null;
+  return db.collection( "users" ).doc( currentUser.uid ).collection( "reminders" );
+}
+
+function enqueueReminderSync( operation, reminder ) {
+  if ( !reminder || !reminder.id ) return;
+  if ( operation === 'delete' ) queuePendingReminderDelete( reminder.id );
+  if ( !currentUser || !isOnline || !db ) return;
+  const ref = remindersRef();
+  if ( !ref ) return;
+  const docRef = ref.doc( reminder.id );
+  const p = operation === 'delete'
+    ? docRef.delete()
+    : docRef.set( { ...reminder, lastModified: new Date() }, { merge: true } );
+  p.then( () => updateSyncIndicator( "success" ) )
+    .catch( ( e ) => {
+      console.error( "❌ Error sync reminder:", e );
+      updateSyncIndicator( "error" );
+    } );
+}
+
+const PENDING_REMINDER_DELETES_KEY = 'pending_reminder_deletes';
+function queuePendingReminderDelete( id ) {
+  try {
+    const list = JSON.parse( localStorage.getItem( PENDING_REMINDER_DELETES_KEY ) || '[]' );
+    if ( !list.includes( id ) ) {
+      list.push( id );
+      localStorage.setItem( PENDING_REMINDER_DELETES_KEY, JSON.stringify( list ) );
+    }
+  } catch ( e ) { /* noop */ }
+}
+
+async function flushPendingReminderDeletes() {
+  let list = [];
+  try {
+    list = JSON.parse( localStorage.getItem( PENDING_REMINDER_DELETES_KEY ) || '[]' );
+  } catch ( e ) {
+    list = [];
+  }
+  const ref = remindersRef();
+  if ( list.length === 0 || !currentUser || !isOnline || !ref ) return;
+  try {
+    for ( let i = 0; i < list.length; i += 400 ) {
+      const batch = db.batch();
+      list.slice( i, i + 400 ).forEach( ( id ) => batch.delete( ref.doc( id ) ) );
+      await batch.commit();
+    }
+    localStorage.setItem( PENDING_REMINDER_DELETES_KEY, '[]' );
+  } catch ( e ) {
+    console.error( '❌ Error en flushPendingReminderDeletes:', e );
+  }
+}
+
+async function syncRemindersFromFirebase() {
+  const ref = remindersRef();
+  if ( !currentUser || !isOnline || !ref ) return;
+  try {
+    const snap = await ref.get();
+    let changed = false;
+    snap.forEach( ( doc ) => {
+      const r = doc.data();
+      if ( r && r.id && JSON.stringify( reminders[ r.id ] ) !== JSON.stringify( r ) ) {
+        reminders[ r.id ] = r;
+        changed = true;
+      }
+    } );
+    if ( changed ) saveReminders();
+  } catch ( e ) {
+    console.error( '❌ Error bajando reminders:', e );
+  }
+}
+
+function setupRemindersRealtime() {
+  if ( !auth || !auth.currentUser || remindersListener ) return;
+  const ref = remindersRef();
+  if ( !ref ) return;
+  remindersListener = ref.onSnapshot( ( snapshot ) => {
+    let changed = false;
+    snapshot.docChanges().forEach( ( change ) => {
+      const r = change.doc.data();
+      const id = change.doc.id;
+      if ( change.type === 'removed' ) {
+        if ( reminders[ id ] ) {
+          delete reminders[ id ];
+          changed = true;
+        }
+      } else if ( r && r.id ) {
+        if ( JSON.stringify( reminders[ id ] ) !== JSON.stringify( r ) ) {
+          reminders[ id ] = r;
+          changed = true;
+        }
+      }
+    } );
+    if ( changed ) saveReminders();
+  }, ( error ) => {
+    console.error( '❌ Error en realtime reminders:', error );
+  } );
 }
 
 function toggleCustomDays() {
@@ -3098,42 +3424,6 @@ function calculateExactTaskCount( repeatType, durationMonths, startDateStr ) {
   }
 
   return count;
-}
-
-// Función para formatear duración
-function formatDuration( hours ) {
-  if ( !hours || hours === 0 ) return '';
-
-  const h = Math.floor( hours );
-  const m = Math.round( ( hours - h ) * 60 );
-
-  if ( h === 0 ) return `${m}min`;
-  if ( m === 0 ) return `${h}h`;
-  return `${h}h ${m}min`;
-}
-
-// Función para calcular tiempo transcurrido
-// Tiempo consumido en MINUTOS desde el acumulador persistido
-// (se congela al pausar; ya no depende de los logs).
-function calculateElapsedTime( task, dateStr ) {
-  if ( !task.duration || task.state === 'completed' ) return null;
-
-  const elapsedMin = currentElapsedMin( task );
-
-  return {
-    elapsed: elapsedMin,
-    total: task.duration,
-    percentage: task.duration > 0 ? Math.min( ( elapsedMin / task.duration ) * 100, 100 ) : 0,
-    remaining: Math.max( task.duration - elapsedMin, 0 )
-  };
-}
-
-// Función para obtener color según progreso
-function getDurationColor( percentage ) {
-  if ( percentage < 50 ) return 'bg-green-500';
-  if ( percentage < 80 ) return 'bg-yellow-500';
-  if ( percentage < 100 ) return 'bg-orange-500';
-  return 'bg-red-500';
 }
 
 //addTask con sync automático
@@ -3450,6 +3740,91 @@ function renderCalendar() {
   }
 }
 
+// ===== Recordatorios en calendario/panel: pills y tarjetas =====
+const REMINDER_PILL = {
+  pago: { cls: 'bg-amber-100 text-amber-900', icon: 'fa-money-bill-wave', border: '#f59e0b' },
+  festividad: { cls: 'bg-pink-100 text-pink-900', icon: 'fa-cake-candles', border: '#ec4899' },
+};
+
+function getRemindersForDate( dateStr ) {
+  const items = [];
+  Object.values( reminders ).forEach( ( r ) => {
+    if ( !r ) return;
+    if ( r.kind === 'pago' ) {
+      ( r.cuotas || [] ).forEach( ( c ) => {
+        if ( c.fecha === dateStr ) {
+          items.push( { reminderId: r.id, kind: 'pago', title: r.title, subtitle: `${c.etiqueta} • S/ ${c.monto}`, time: null } );
+        }
+      } );
+    } else if ( r.kind === 'festividad' ) {
+      if ( ( r.dates || [] ).includes( dateStr ) ) {
+        items.push( { reminderId: r.id, kind: 'festividad', title: r.title, subtitle: r.description || 'Festividad', time: null } );
+      }
+    }
+    // horario vive como tareas espejo (kind:'horario') → no duplicar
+  } );
+  return items;
+}
+
+function diffDaysStr( fromStr, toStr ) {
+  const a = new Date( fromStr + 'T12:00:00' );
+  const b = new Date( toStr + 'T12:00:00' );
+  return Math.round( ( b - a ) / ( 1000 * 60 * 60 * 24 ) );
+}
+
+// Días de retraso de un recordatorio en una fecha (0 = al día)
+function reminderOverdueDays( kind, dateStr ) {
+  const today = getTodayString();
+  if ( dateStr >= today ) return 0;
+  return diffDaysStr( dateStr, today );
+}
+
+function createReminderPill( item, dateStr, fullName = false ) {
+  const style = REMINDER_PILL[ item.kind ] || REMINDER_PILL.pago;
+  const late = reminderOverdueDays( item.kind, dateStr );
+  return `
+    <div class="reminder-item text-xs p-1 rounded ${late > 0 ? 'bg-red-500 text-white' : style.cls} border-l-4 ${fullName ? "break-words whitespace-normal" : "truncate"}"
+         data-reminder-id="${item.reminderId}" data-date="${dateStr}"
+         style="border-left-color: ${late > 0 ? '#b91c1c' : style.border}"
+         title="${item.title} | ${reminderLabel( reminders[ item.reminderId ] )}${late > 0 ? ` | Atrasada ${late}d` : ''}">
+      <i class="fas ${late > 0 ? 'fa-exclamation-triangle' : style.icon} mr-1 opacity-75"></i>${item.title}${late > 0 ? ' · atrasada' : ''}
+    </div>`;
+}
+
+function createReminderCard( item, dateStr ) {
+  const r = reminders[ item.reminderId ];
+  const style = REMINDER_PILL[ item.kind ] || REMINDER_PILL.pago;
+  const late = reminderOverdueDays( item.kind, dateStr );
+  const lateRibbon = late > 0 ? `
+    <div class="bg-red-500 text-white p-2 mb-3 rounded text-xs font-semibold flex items-center">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      Atrasada — ${late} día(s) de retraso
+    </div>` : '';
+  return `
+    <div class="panel-task-item bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4 border-l-4"
+         style="border-left-color: ${style.border}"
+         data-reminder-id="${item.reminderId}">
+      ${lateRibbon}
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex-1 min-w-0">
+          <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full mb-1 ${style.cls}">${reminderLabel( r )}</span>
+          <div class="font-semibold text-base text-gray-800 dark:text-gray-200 break-words">${item.title}</div>
+          <div class="text-sm text-gray-600 dark:text-gray-400 mt-1">${item.subtitle || ''}</div>
+        </div>
+        <div class="flex flex-row sm:flex-col gap-2 flex-shrink-0">
+          <button data-action="reminder-edit" data-id="${item.reminderId}"
+                  class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900 transition" title="Editar">
+            <i class="fas fa-edit text-sm"></i>
+          </button>
+          <button data-action="reminder-delete" data-id="${item.reminderId}"
+                  class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 transition" title="Eliminar">
+            <i class="fas fa-trash text-sm"></i>
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function createDayElement( day, dateStr, dayTasks ) {
   const dayElement = document.createElement( "div" );
 
@@ -3467,15 +3842,19 @@ function createDayElement( day, dateStr, dayTasks ) {
   dayElement.dataset.date = dateStr;
 
   const visibleTasks = fullMode ? dayTasks : dayTasks.slice( 0, 2 );
+  const remItems = getRemindersForDate( dateStr );
+  const visibleRems = fullMode ? remItems : remItems.slice( 0, Math.max( 0, 2 - visibleTasks.length ) );
+  const hiddenCount = ( dayTasks.length - visibleTasks.length ) + ( remItems.length - visibleRems.length );
 
   dayElement.innerHTML = `
     <div class="font-semibold text-sm mb-1 ${isToday ? "text-blue-700" : ""}">${day}</div>
     <div class="space-y-1">
       ${visibleTasks.map( ( task ) => createTaskElement( task, dateStr, fullMode ) ).join( "" )}
-      ${!fullMode && dayTasks.length > 2
+      ${visibleRems.map( ( item ) => createReminderPill( item, dateStr, fullMode ) ).join( "" )}
+      ${!fullMode && hiddenCount > 0
       ? `<div class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 transition-colors"
              data-action="day-modal" data-date="${dateStr}">
-            +${dayTasks.length - 2} más
+            +${hiddenCount} más
           </div>`
       : ""}
     </div>
@@ -3576,7 +3955,10 @@ function showDailyTaskPanel( dateStr, day ) {
 
   updatePanelDateHeader( dateStr, day, dayTasks );
 
-  if ( dayTasks.length === 0 ) {
+  const remItems = getRemindersForDate( dateStr );
+  const remOverdue = remItems.filter( ( it ) => reminderOverdueDays( it.kind, dateStr ) > 0 ).length;
+
+  if ( dayTasks.length === 0 && remItems.length === 0 ) {
     taskList.innerHTML = `
       <div class="text-center py-8 text-gray-500">
         <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
@@ -3587,13 +3969,16 @@ function showDailyTaskPanel( dateStr, day ) {
   } else {
     const sortedTasks = sortTasksByPriority( dayTasks );
     const overdueCount = dayTasks.filter( ( t ) => isTaskOverdue( dateStr, t ) ).length;
-    const overdueBanner = overdueCount > 0 ? `
+    const totalLate = overdueCount + remOverdue;
+    const overdueBanner = totalLate > 0 ? `
       <div class="bg-red-500 text-white px-4 py-2 rounded-lg shadow mb-3 text-sm font-semibold flex items-center">
         <i class="fas fa-exclamation-triangle mr-2"></i>
-        ${overdueCount} tarea(s) atrasada(s) sin iniciar
+        ${totalLate} tarea(s)/recordatorio(s) atrasada(s)
       </div>` : '';
     taskList.innerHTML = overdueBanner + sortedTasks
       .map( ( task ) => createPanelTaskElement( task, dateStr ) )
+      .join( "" ) + remItems
+      .map( ( item ) => createReminderCard( item, dateStr ) )
       .join( "" );
   }
 
@@ -3733,6 +4118,7 @@ function createPanelTaskElement( task, dateStr ) {
             </div>
 
             <div class="flex-1 min-w-0 sm:order-2">
+                ${task.kind === 'horario' ? `<span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full mb-1 bg-teal-100 text-teal-900">${task.subkind === 'clase' ? 'Clase / estudio' : 'Reunión'}</span>` : ""}
                 <div class="task-title font-semibold text-base mb-1 ${task.state === "completed" ? "line-through text-gray-500" : "text-gray-800 dark:text-gray-200"} break-words">
                     ${task.title}
                 </div>
@@ -4145,6 +4531,7 @@ function createTaskElement( task, dateStr, fullName = false ) {
            style="border-left-color: ${priority.color}"
            title="${task.title}${timeRange ? " - " + timeRange : ""} | ${state.label}${overdueLabel} | ${priority.label}${minutes ? ' | Duración: ' + formatMinutes( minutes ) : ''}">
         <i class="fas ${overdue ? 'fa-exclamation-triangle' : state.icon} mr-1 opacity-75"></i>
+        ${task.kind === 'horario' ? `<span class="font-bold">${task.subkind === 'clase' ? 'Clase' : 'Reunión'} · </span>` : ""}
         ${task.title}${overdue ? `<span class="font-bold"> · atrasada</span>` : ""}
         ${amountBadge}
       </div>
@@ -5117,6 +5504,36 @@ function formatMinutes( minutes ) {
   return `${h}h ${m}m`;
 }
 
+// Al ingresar: recordatorios que vencen hoy o están atrasados (una vez/sesión)
+let entryRemindersNotified = false;
+function notifyRemindersOnEntry() {
+  if ( entryRemindersNotified ) return;
+  entryRemindersNotified = true;
+
+  const today = getTodayString();
+  const msgs = [];
+  Object.values( reminders ).forEach( ( r ) => {
+    if ( !r ) return;
+    if ( r.kind === 'pago' ) {
+      ( r.cuotas || [] ).forEach( ( c ) => {
+        if ( c.fecha === today ) msgs.push( `Vence hoy: ${c.etiqueta} de "${r.title}" (S/ ${c.monto})` );
+        else if ( c.fecha < today ) msgs.push( `Retrasado ${diffDaysStr( c.fecha, today )}d: ${c.etiqueta} de "${r.title}"` );
+      } );
+    } else if ( r.kind === 'festividad' ) {
+      ( r.dates || [] ).forEach( ( d ) => {
+        if ( d === today ) msgs.push( `Hoy: ${r.title} 🎉` );
+        else if ( d < today ) msgs.push( `${r.title}: ${diffDaysStr( d, today )} día(s) de retraso` );
+      } );
+    }
+    // horario avisa por sus tareas espejo (lógica existente)
+  } );
+
+  if ( msgs.length === 0 ) return;
+  const msg = msgs.slice( 0, 3 ).join( ' • ' ) + ( msgs.length > 3 ? ` (+${msgs.length - 3} más)` : '' );
+  showInAppNotification( '🔔 Recordatorios', msg, 'warning' );
+  alertTask( msgs.some( ( m ) => m.includes( 'etrasa' ) ) ? 'task-late' : 'task-reminder' );
+}
+
 // Al ingresar a la plataforma: avisa UNA vez por sesión si hay atrasadas hoy.
 let entryOverdueNotified = false;
 function notifyOverdueOnEntry() {
@@ -5420,6 +5837,7 @@ function showDayTasksModal( dateStr ) {
   closeAllModals();
 
   const dayTasks = sortTasksByPriority( [ ...( tasks[ dateStr ] || [] ) ] );
+  const remItems = getRemindersForDate( dateStr );
   const date = new Date( dateStr + 'T12:00:00' );
   const label = date.toLocaleDateString( 'es-ES', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -5440,7 +5858,7 @@ function showDayTasksModal( dateStr ) {
         </button>
       </div>
       <div class="space-y-2">
-        ${dayTasks.length === 0 ? `
+        ${dayTasks.length === 0 && remItems.length === 0 ? `
           <div class="text-center py-6 text-gray-500">
             <i class="fas fa-calendar-plus text-3xl mb-2 opacity-50"></i>
             <p>No hay tareas para este día</p>
@@ -5456,6 +5874,7 @@ function showDayTasksModal( dateStr ) {
                         title="Ver en el panel inferior">
                   <i class="fas ${state.icon} text-gray-500 flex-shrink-0"></i>
                   <span class="flex-1 min-w-0">
+                    ${task.kind === 'horario' ? `<span class="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-900 mb-0.5">${task.subkind === 'clase' ? 'Clase / estudio' : 'Reunión'}</span>` : ''}
                     <span class="block font-medium text-sm text-gray-800 break-words">${task.title}</span>
                     <span class="block text-xs text-gray-500">${range} · ${state.label}</span>
                   </span>
@@ -5469,6 +5888,27 @@ function showDayTasksModal( dateStr ) {
                 <button data-action="delete-task" data-date="${dateStr}" data-id="${task.id}"
                         class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 transition flex-shrink-0"
                         title="Eliminar tarea">
+                  <i class="fas fa-trash text-sm"></i>
+                </button>
+              </div>`;
+          } ).join( '' )}
+        ${remItems.map( ( item ) => {
+            const style = REMINDER_PILL[ item.kind ] || REMINDER_PILL.pago;
+            const late = reminderOverdueDays( item.kind, dateStr );
+            return `
+              <div class="w-full ${late > 0 ? 'bg-red-50' : 'bg-gray-50'} rounded-lg p-2 border-l-4 transition flex items-center gap-1"
+                   style="border-left-color: ${late > 0 ? '#b91c1c' : style.border}">
+                <span class="flex-1 min-w-0 p-1">
+                  <span class="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full ${style.cls} mb-0.5">${reminderLabel( reminders[ item.reminderId ] )}${late > 0 ? ' · atrasada' : ''}</span>
+                  <span class="block font-medium text-sm text-gray-800 break-words">${item.title}</span>
+                  <span class="block text-xs text-gray-500">${item.subtitle || ''}${late > 0 ? ` · ${late}d retraso` : ''}</span>
+                </span>
+                <button data-action="reminder-edit" data-id="${item.reminderId}"
+                        class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-100 transition flex-shrink-0" title="Editar">
+                  <i class="fas fa-edit text-sm"></i>
+                </button>
+                <button data-action="reminder-delete" data-id="${item.reminderId}"
+                        class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-100 transition flex-shrink-0" title="Eliminar">
                   <i class="fas fa-trash text-sm"></i>
                 </button>
               </div>`;
@@ -5614,6 +6054,939 @@ function clearSpecificDates( dateList ) {
   if ( selectedDateForPanel && dateList.includes( selectedDateForPanel ) ) {
     updatePanelProgress( [] );
     closeDailyTaskPanel();
+  }
+}
+
+// ===== MÓDULO RECORDATORIOS: MODAL PRINCIPAL (3 tabs) =====
+let remindersTab = 'pago';
+let pagoDraft = []; // [{fecha, etiqueta}] editable antes de guardar
+const REMINDER_TABS = {
+  pago: { label: 'Pagos', icon: 'fa-money-bill-wave', desc: 'Programa pagos y sus cuotas para recibir recordatorios en la fecha establecida y alertas cuando exista un retraso.' },
+  festividad: { label: 'Festividades', icon: 'fa-cake-candles', desc: 'Registra cumpleaños, aniversarios, feriados u otras fechas importantes para recibir un recordatorio.' },
+  horario: { label: 'Reuniones / Clases', icon: 'fa-calendar-check', desc: 'Programa reuniones, clases, estudios u otras actividades con horario para organizarlas en el calendario y recibir recordatorios.' },
+};
+
+function showRemindersModal( tab = 'pago' ) {
+  closeAllModals();
+  remindersTab = REMINDER_TABS[ tab ] ? tab : 'pago';
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'remindersModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-bell-concierge text-teal-600 mr-2"></i>Recordatorios
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mb-3">
+        ${Object.entries( REMINDER_TABS ).map( ( [ key, t ] ) => `
+          <button data-action="reminders-tab" data-tab="${key}"
+                  class="py-2 px-1 rounded-lg text-sm font-medium transition ${key === remindersTab ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}">
+            <i class="fas ${t.icon} mr-1"></i>${t.label}
+          </button>` ).join( '' )}
+      </div>
+      <p class="text-sm text-gray-600 dark:text-gray-300 bg-teal-50 dark:bg-gray-700 border-l-4 border-teal-500 p-2.5 rounded mb-4">
+        ${REMINDER_TABS[ remindersTab ].desc}
+      </p>
+      <div id="remindersTabBody"></div>
+    </div>
+  `;
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+  document.body.appendChild( modal );
+  renderRemindersTab();
+}
+
+function renderRemindersTab() {
+  const body = document.getElementById( 'remindersTabBody' );
+  if ( !body ) return;
+  document.querySelectorAll( '#remindersModal [data-action="reminders-tab"]' ).forEach( ( b ) => {
+    const active = b.dataset.tab === remindersTab;
+    b.className = `py-2 px-1 rounded-lg text-sm font-medium transition ${active ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}`;
+  } );
+  const descEl = document.querySelector( '#remindersModal > div > p' );
+  if ( descEl ) descEl.textContent = REMINDER_TABS[ remindersTab ].desc;
+  if ( remindersTab === 'pago' ) body.innerHTML = pagoFormHTML();
+  else if ( remindersTab === 'festividad' ) body.innerHTML = festividadFormHTML();
+  else body.innerHTML = horarioFormHTML();
+  wireRemindersTab();
+}
+
+const inputCls = "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm";
+const labelCls = "block text-sm font-medium text-gray-700 mb-1";
+
+// ---------- PAGO ----------
+function pagoFormHTML() {
+  return `
+    <div class="space-y-3">
+      <div>
+        <label class="${labelCls}">Título <span class="text-red-500">*</span></label>
+        <input type="text" id="pagoTitle" placeholder="Ej: Interbank" class="${inputCls}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="${labelCls}">N.º de cuotas <span class="text-red-500">*</span></label>
+          <input type="number" id="pagoCuotas" min="1" max="120" value="3" class="${inputCls}">
+        </div>
+        <div>
+          <label class="${labelCls}">Monto por cuota <span class="text-red-500">*</span></label>
+          <input type="number" id="pagoMonto" min="0.01" step="0.01" placeholder="100.00" class="${inputCls}">
+        </div>
+      </div>
+      <div>
+        <label class="${labelCls}">Descripción <span class="text-gray-400 font-normal">(opcional)</span></label>
+        <input type="text" id="pagoDesc" maxlength="100" class="${inputCls}">
+      </div>
+      <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600 space-y-3">
+        <div>
+          <label class="${labelCls}">Modo de fechas</label>
+          <select id="pagoModo" class="${inputCls}">
+            <option value="auto">Repetir automáticamente</option>
+            <option value="manual">Fechas específicas (manual)</option>
+          </select>
+        </div>
+        <div id="pagoAutoBox" class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="${labelCls}">Fecha inicial <span class="text-red-500">*</span></label>
+            <input type="date" id="pagoFechaIni" class="${inputCls}">
+          </div>
+          <div>
+            <label class="${labelCls}">Repetir cada</label>
+            <select id="pagoUnidad" class="${inputCls}">
+              <option value="diaria">Día(s)</option>
+              <option value="semanal">Semana(s)</option>
+              <option value="mensual" selected>Mes(es)</option>
+            </select>
+          </div>
+        </div>
+        <div id="pagoManualBox" class="hidden">
+          <p class="text-xs text-gray-500 mb-2">Define la fecha de cada cuota (cambia N.º de cuotas y pulsa Generar).</p>
+          <div id="pagoManualList" class="space-y-2"></div>
+        </div>
+        <button data-action="pago-generar" class="w-full bg-teal-500 text-white py-2 rounded-lg hover:bg-teal-600 transition text-sm font-medium">
+          <i class="fas fa-rotate mr-2"></i>Generar / previsualizar fechas
+        </button>
+        <div id="pagoPreview" class="space-y-1.5"></div>
+      </div>
+      <div class="flex space-x-3 pt-1">
+        <button data-action="pago-registrar" class="flex-1 bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 transition font-medium">
+          <i class="fas fa-save mr-2"></i>Registrar
+        </button>
+        <button data-action="pago-reiniciar" class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2.5 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
+          Reiniciar
+        </button>
+      </div>
+    </div>`;
+}
+
+function getPagoForm() {
+  return {
+    title: document.getElementById( 'pagoTitle' )?.value.trim() || '',
+    cuotas: parseInt( document.getElementById( 'pagoCuotas' )?.value, 10 ),
+    monto: parseFloat( document.getElementById( 'pagoMonto' )?.value ),
+    desc: document.getElementById( 'pagoDesc' )?.value.trim() || '',
+    modo: document.getElementById( 'pagoModo' )?.value || 'auto',
+    fechaIni: document.getElementById( 'pagoFechaIni' )?.value || '',
+    unidad: document.getElementById( 'pagoUnidad' )?.value || 'mensual',
+  };
+}
+
+function pagoGenerarFechas( silent = false ) {
+  const f = getPagoForm();
+  if ( !f.cuotas || f.cuotas < 1 || f.cuotas > RECURRENCE_MAX ) {
+    if ( !silent ) showNotification( `N.º de cuotas inválido (1–${RECURRENCE_MAX})`, 'error' );
+    return false;
+  }
+  if ( f.modo === 'auto' ) {
+    if ( !f.fechaIni ) {
+      if ( !silent ) showNotification( 'Define la fecha inicial', 'error' );
+      return false;
+    }
+    const err = validateRecurrence( { start: f.fechaIni, tipo: f.unidad, veces: f.cuotas } );
+    if ( err ) {
+      if ( !silent ) showNotification( err, 'error' );
+      return false;
+    }
+    const fechas = expandRecurrence( { start: f.fechaIni, tipo: f.unidad, veces: f.cuotas } );
+    pagoDraft = fechas.map( ( fecha, i ) => ( { fecha, etiqueta: `Cuota ${i + 1}` } ) );
+  } else {
+    // Manual: leer inputs generados (o generarlos vacíos)
+    const inputs = Array.from( document.querySelectorAll( '.pago-manual-fecha' ) );
+    if ( inputs.length !== f.cuotas ) {
+      buildPagoManualInputs( f.cuotas );
+      pagoDraft = [];
+      renderPagoPreview();
+      return true;
+    }
+    pagoDraft = inputs.map( ( inp, i ) => ( { fecha: inp.value, etiqueta: `Cuota ${i + 1}` } ) ).filter( ( d ) => d.fecha );
+    if ( pagoDraft.length !== f.cuotas ) {
+      if ( !silent ) showNotification( 'Completa la fecha de cada cuota', 'error' );
+      return false;
+    }
+  }
+  const seen = new Set();
+  for ( const d of pagoDraft ) {
+    if ( seen.has( d.fecha ) ) {
+      if ( !silent ) showNotification( 'Hay fechas duplicadas, revísalas', 'error' );
+      return false;
+    }
+    seen.add( d.fecha );
+  }
+  renderPagoPreview();
+  return true;
+}
+
+function buildPagoManualInputs( n ) {
+  const list = document.getElementById( 'pagoManualList' );
+  if ( !list ) return;
+  list.innerHTML = Array.from( { length: n }, ( _, i ) => `
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-gray-600 w-16">Cuota ${i + 1}</span>
+      <input type="date" data-idx="${i}" value="${pagoDraft[ i ]?.fecha || ''}" class="${inputCls} pago-manual-fecha">
+    </div>` ).join( '' );
+}
+
+function renderPagoPreview() {
+  const box = document.getElementById( 'pagoPreview' );
+  if ( !box ) return;
+  if ( pagoDraft.length === 0 ) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = `<p class="text-xs font-semibold text-gray-600">Revisa o modifica antes de guardar:</p>` + pagoDraft.map( ( d, i ) => `
+    <div class="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5">
+      <span class="text-xs text-gray-500 w-14">${d.etiqueta}</span>
+      <input type="date" value="${d.fecha}" data-pago-idx="${i}" class="${inputCls} !py-1 text-xs pago-preview-fecha">
+      <button data-action="pago-quitar" data-idx="${i}" class="text-red-500 hover:text-red-700 p-1" title="Quitar cuota">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>` ).join( '' );
+}
+
+function pagoRegistrar() {
+  const f = getPagoForm();
+  if ( !f.title ) {
+    showNotification( 'El título es obligatorio', 'error' );
+    return;
+  }
+  if ( !( f.monto > 0 ) ) {
+    showNotification( 'Monto por cuota inválido', 'error' );
+    return;
+  }
+  if ( !pagoGenerarFechas() || pagoDraft.length === 0 ) return;
+
+  const reminder = {
+    id: `pago-${Date.now()}`,
+    kind: 'pago',
+    title: f.title,
+    description: f.desc,
+    monto: Math.round( f.monto * 100 ) / 100,
+    cuotas: pagoDraft.map( ( d ) => ( { fecha: d.fecha, etiqueta: d.etiqueta, monto: Math.round( f.monto * 100 ) / 100 } ) ),
+    dates: pagoDraft.map( ( d ) => d.fecha ).sort(),
+    createdAt: Date.now(),
+  };
+  reminders[ reminder.id ] = reminder;
+  saveReminders();
+  enqueueReminderSync( 'upsert', reminder );
+  showNotification( `Pago "${f.title}" registrado`, 'success' );
+  closeAllModals();
+}
+
+// ---------- FESTIVIDAD ----------
+function festividadFormHTML() {
+  return `
+    <div class="space-y-3">
+      <div>
+        <label class="${labelCls}">Título <span class="text-red-500">*</span></label>
+        <input type="text" id="festTitle" placeholder="Ej: Cumpleaños de Ana" class="${inputCls}">
+      </div>
+      <div>
+        <label class="${labelCls}">Descripción <span class="text-gray-400 font-normal">(opcional)</span></label>
+        <input type="text" id="festDesc" maxlength="100" class="${inputCls}">
+      </div>
+      <div>
+        <label class="${labelCls}">Fecha (día / mes / año) <span class="text-red-500">*</span></label>
+        <input type="date" id="festFecha" class="${inputCls}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="${labelCls}">Repetir</label>
+          <select id="festRepetir" class="${inputCls}">
+            <option value="ninguna">Solo una vez</option>
+            <option value="anual">Cada año</option>
+            <option value="mensual">Cada mes</option>
+            <option value="semanal">Cada semana</option>
+          </select>
+        </div>
+        <div id="festVecesBox" class="hidden">
+          <label class="${labelCls}">¿Cuántas veces?</label>
+          <input type="number" id="festVeces" min="1" max="120" value="5" class="${inputCls}">
+        </div>
+      </div>
+      <div id="festPreview" class="text-xs text-gray-600"></div>
+      <div class="flex space-x-3 pt-1">
+        <button data-action="fest-registrar" class="flex-1 bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 transition font-medium">
+          <i class="fas fa-save mr-2"></i>Registrar
+        </button>
+        <button data-action="fest-reiniciar" class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2.5 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
+          Reiniciar
+        </button>
+      </div>
+    </div>`;
+}
+
+function festRegistrar() {
+  const title = document.getElementById( 'festTitle' )?.value.trim() || '';
+  const desc = document.getElementById( 'festDesc' )?.value.trim() || '';
+  const fecha = document.getElementById( 'festFecha' )?.value || '';
+  const tipo = document.getElementById( 'festRepetir' )?.value || 'ninguna';
+  const veces = parseInt( document.getElementById( 'festVeces' )?.value, 10 ) || 1;
+
+  if ( !title ) {
+    showNotification( 'El título es obligatorio', 'error' );
+    return;
+  }
+  if ( !fecha ) {
+    showNotification( 'Define la fecha', 'error' );
+    return;
+  }
+  const err = validateRecurrence( { start: fecha, tipo, veces } );
+  if ( err ) {
+    showNotification( err, 'error' );
+    return;
+  }
+  const dates = expandRecurrence( { start: fecha, tipo, veces } );
+  if ( dates.length === 0 ) {
+    showNotification( 'Sin fechas válidas (¿fecha pasada con repetición ilógica?)', 'error' );
+    return;
+  }
+  const reminder = {
+    id: `fest-${Date.now()}`,
+    kind: 'festividad',
+    title,
+    description: desc,
+    fechaBase: fecha,
+    repetir: { tipo, veces },
+    dates,
+    createdAt: Date.now(),
+  };
+  reminders[ reminder.id ] = reminder;
+  saveReminders();
+  enqueueReminderSync( 'upsert', reminder );
+  showNotification( `Festividad "${title}" registrada`, 'success' );
+  closeAllModals();
+}
+
+// ---------- HORARIO (reunión / clase) ----------
+function horarioFormHTML() {
+  return `
+    <div class="space-y-3">
+      <div>
+        <label class="${labelCls}">Título <span class="text-red-500">*</span></label>
+        <input type="text" id="horTitle" placeholder="Ej: Reunión con cliente" class="${inputCls}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="${labelCls}">Tipo <span class="text-red-500">*</span></label>
+          <select id="horTipo" class="${inputCls}">
+            <option value="reunion">Reunión</option>
+            <option value="clase">Clase / estudio</option>
+          </select>
+        </div>
+        <div>
+          <label class="${labelCls}">Importancia</label>
+          <select id="horPriority" class="${inputCls}">
+            <option value="1">🔴 Muy Importante</option>
+            <option value="2">🟠 Importante</option>
+            <option value="3" selected>🔵 Moderado</option>
+            <option value="4">⚫ No Prioritario</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="${labelCls}">Fecha <span class="text-red-500">*</span></label>
+        <input type="date" id="horFecha" class="${inputCls}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="${labelCls}">Hora de inicio <span class="text-red-500">*</span></label>
+          <input type="time" id="horInicio" class="${inputCls}">
+        </div>
+        <div>
+          <label class="${labelCls}">Hora de fin <span class="text-red-500">*</span></label>
+          <input type="time" id="horFin" class="${inputCls}">
+        </div>
+      </div>
+      <div>
+        <label class="${labelCls}">Repetición</label>
+        <select id="horRepeat" class="${inputCls}">
+          <option value="una">Una vez</option>
+          <option value="semanal">Semanal (mismo día y horario)</option>
+          <option value="dias">Días específicos</option>
+        </select>
+      </div>
+      <div id="horWeeklyBox" class="hidden">
+        <label class="${labelCls}">¿Durante cuántas semanas?</label>
+        <input type="number" id="horSemanas" min="1" max="120" value="4" class="${inputCls}">
+      </div>
+      <div id="horDaysBox" class="hidden">
+        <label class="${labelCls}">Días de la semana</label>
+        <div class="grid grid-cols-4 gap-2 text-xs">
+          ${[ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ].map( ( n, i ) => `
+            <label class="flex items-center bg-white dark:bg-gray-800 p-2 rounded border border-gray-300 dark:border-gray-600 cursor-pointer">
+              <input type="checkbox" value="${i}" class="mr-2 rounded text-teal-600 hor-day">${n}
+            </label>` ).join( '' )}
+        </div>
+        <label class="${labelCls} mt-2">¿Durante cuántas semanas?</label>
+        <input type="number" id="horSemanasDias" min="1" max="120" value="4" class="${inputCls}">
+      </div>
+      <div id="horPreview" class="text-xs text-gray-600"></div>
+      <div class="flex space-x-3 pt-1">
+        <button data-action="hor-registrar" class="flex-1 bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 transition font-medium">
+          <i class="fas fa-save mr-2"></i>Registrar
+        </button>
+        <button data-action="hor-reiniciar" class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2.5 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition font-medium">
+          Reiniciar
+        </button>
+      </div>
+    </div>`;
+}
+
+function getHorarioForm() {
+  return {
+    title: document.getElementById( 'horTitle' )?.value.trim() || '',
+    tipo: document.getElementById( 'horTipo' )?.value || 'reunion',
+    priority: parseInt( document.getElementById( 'horPriority' )?.value, 10 ) || 3,
+    fecha: document.getElementById( 'horFecha' )?.value || '',
+    inicio: document.getElementById( 'horInicio' )?.value || '',
+    fin: document.getElementById( 'horFin' )?.value || '',
+    repeat: document.getElementById( 'horRepeat' )?.value || 'una',
+    semanas: parseInt( document.getElementById( 'horSemanas' )?.value, 10 ) || 4,
+    semanasDias: parseInt( document.getElementById( 'horSemanasDias' )?.value, 10 ) || 4,
+    dias: Array.from( document.querySelectorAll( '.hor-day:checked' ) ).map( ( cb ) => parseInt( cb.value, 10 ) ),
+  };
+}
+
+function horRegistrar() {
+  const f = getHorarioForm();
+  if ( !f.title ) {
+    showNotification( 'El título es obligatorio', 'error' );
+    return;
+  }
+  if ( !f.fecha ) {
+    showNotification( 'Define la fecha', 'error' );
+    return;
+  }
+  if ( !f.inicio ) {
+    showNotification( 'Define la hora de inicio', 'error' );
+    return;
+  }
+  if ( f.fin && f.fin <= f.inicio ) {
+    showNotification( 'La hora de fin debe ser posterior a la de inicio', 'error' );
+    return;
+  }
+
+  let rec = { start: f.fecha, tipo: 'ninguna', veces: 1 };
+  if ( f.repeat === 'semanal' ) rec = { start: f.fecha, tipo: 'semanal', veces: f.semanas };
+  else if ( f.repeat === 'dias' ) rec = { start: f.fecha, tipo: 'diasSemana', veces: f.semanasDias * 7, diasSemana: f.dias };
+  const err = validateRecurrence( rec );
+  if ( err ) {
+    showNotification( err, 'error' );
+    return;
+  }
+  // Evitar fechas duplicadas/inconsistentes
+  const dates = [ ...new Set( expandRecurrence( rec ) ) ].sort();
+  if ( dates.length === 0 ) {
+    showNotification( 'Sin fechas válidas para la repetición elegida', 'error' );
+    return;
+  }
+
+  const reminder = {
+    id: `hor-${Date.now()}`,
+    kind: 'horario',
+    tipo: f.tipo,
+    title: f.title,
+    fechaBase: f.fecha,
+    inicio: f.inicio,
+    fin: f.fin || null,
+    priority: f.priority,
+    repetir: { modo: f.repeat, semanas: f.repeat === 'dias' ? f.semanasDias : f.semanas, dias: f.dias },
+    dates,
+    estados: {},
+    createdAt: Date.now(),
+  };
+  reminders[ reminder.id ] = reminder;
+  mirrorHorarioTasks( reminder );
+  saveReminders();
+  enqueueReminderSync( 'upsert', reminder );
+  showNotification( `Horario "${f.title}" registrado (${dates.length} fecha(s))`, 'success' );
+  closeAllModals();
+}
+
+// Espeja cada ocurrencia como tarea normal (kind:'horario') para reutilizar
+// estados, timers, calendario, panel, sync y notificaciones existentes.
+function mirrorHorarioTasks( reminder ) {
+  // Borrar espejos de fechas que ya no aplican
+  Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
+    const keep = dayTasks.filter( ( t ) => t.reminderId !== reminder.id || reminder.dates.includes( dateStr ) );
+    if ( keep.length !== dayTasks.length ) {
+      tasks[ dateStr ] = keep;
+      if ( keep.length === 0 ) delete tasks[ dateStr ];
+    }
+  } );
+  // Crear/actualizar espejos
+  reminder.dates.forEach( ( dateStr ) => {
+    if ( !tasks[ dateStr ] ) tasks[ dateStr ] = [];
+    let t = tasks[ dateStr ].find( ( x ) => x.reminderId === reminder.id );
+    const prevState = t?.state || reminder.estados?.[ dateStr ] || 'pending';
+    if ( !t ) {
+      t = {
+        id: `${dateStr}-hor-${reminder.id}`,
+        reminderId: reminder.id,
+        kind: 'horario',
+        subkind: reminder.tipo,
+        title: reminder.title,
+        description: '',
+        time: reminder.inicio,
+        endTime: reminder.fin,
+        duration: computeMinutesFromRange( reminder.inicio, reminder.fin ),
+        priority: reminder.priority || 3,
+        state: prevState,
+        completed: prevState === 'completed',
+        lastModified: Date.now(),
+      };
+      tasks[ dateStr ].push( t );
+    } else {
+      Object.assign( t, {
+        title: reminder.title,
+        subkind: reminder.tipo,
+        time: reminder.inicio,
+        endTime: reminder.fin,
+        duration: computeMinutesFromRange( reminder.inicio, reminder.fin ),
+        priority: reminder.priority || 3,
+      } );
+    }
+    if ( currentUser && isOnline ) enqueueSync( 'upsert', dateStr, t );
+  } );
+  saveTasks();
+}
+
+function deleteReminderLinkedTasks( reminderId ) {
+  Object.entries( tasks ).forEach( ( [ dateStr, dayTasks ] ) => {
+    const doomed = dayTasks.filter( ( t ) => t.reminderId === reminderId );
+    if ( doomed.length > 0 ) {
+      doomed.forEach( ( t ) => {
+        if ( currentUser && isOnline ) enqueueSync( 'delete', dateStr, { id: t.id } );
+      } );
+      const keep = dayTasks.filter( ( t ) => t.reminderId !== reminderId );
+      if ( keep.length === 0 ) delete tasks[ dateStr ];
+      else tasks[ dateStr ] = keep;
+    }
+  } );
+  saveTasks();
+}
+
+function deleteReminder( id ) {
+  const r = reminders[ id ];
+  if ( !r ) return;
+  if ( !confirm( `¿Eliminar "${r.title}"?` ) ) return;
+  if ( r.kind === 'horario' ) deleteReminderLinkedTasks( id );
+  delete reminders[ id ];
+  saveReminders();
+  enqueueReminderSync( 'delete', { id } );
+  closeAllModals();
+  showNotification( 'Recordatorio eliminado', 'success' );
+}
+
+function editReminder( id ) {
+  const r = reminders[ id ];
+  if ( !r ) return;
+  closeAllModals();
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'editReminderModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+  const isHor = r.kind === 'horario';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-edit text-blue-500 mr-2"></i>Editar ${reminderLabel( r )}
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="${labelCls}">Título <span class="text-red-500">*</span></label>
+          <input type="text" id="editRemTitle" value="${r.title || ''}" class="${inputCls}">
+        </div>
+        <div>
+          <label class="${labelCls}">Descripción <span class="text-gray-400 font-normal">(opcional)</span></label>
+          <input type="text" id="editRemDesc" value="${r.description || ''}" class="${inputCls}">
+        </div>
+        ${r.kind === 'pago' ? `
+          <div>
+            <label class="${labelCls}">Monto por cuota <span class="text-red-500">*</span></label>
+            <input type="number" id="editRemMonto" min="0.01" step="0.01" value="${r.monto ?? ''}" class="${inputCls}">
+          </div>` : ''}
+        ${isHor ? `
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="${labelCls}">Hora de inicio <span class="text-red-500">*</span></label>
+              <input type="time" id="editRemInicio" value="${r.inicio || ''}" class="${inputCls}">
+            </div>
+            <div>
+              <label class="${labelCls}">Hora de fin</label>
+              <input type="time" id="editRemFin" value="${r.fin || ''}" class="${inputCls}">
+            </div>
+          </div>` : ''}
+        <p class="text-xs text-gray-500">Las fechas generadas no se modifican aquí para no romper cuotas ni repeticiones.</p>
+        <div class="flex space-x-3 pt-2">
+          <button data-action="reminder-save" data-id="${id}" class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition">
+            <i class="fas fa-save mr-2"></i>Guardar
+          </button>
+          <button data-action="close-modals" class="flex-1 bg-gray-300 text-gray-700 dark:bg-gray-700 dark:text-gray-200 py-2 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-600 transition">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+  document.body.appendChild( modal );
+}
+
+function saveReminderEdit( id ) {
+  const r = reminders[ id ];
+  if ( !r ) return;
+  const title = document.getElementById( 'editRemTitle' )?.value.trim() || '';
+  if ( !title ) {
+    showNotification( 'El título es obligatorio', 'error' );
+    return;
+  }
+  r.title = title;
+  r.description = document.getElementById( 'editRemDesc' )?.value.trim() || '';
+  if ( r.kind === 'pago' ) {
+    const monto = parseFloat( document.getElementById( 'editRemMonto' )?.value );
+    if ( !( monto > 0 ) ) {
+      showNotification( 'Monto inválido', 'error' );
+      return;
+    }
+    r.monto = Math.round( monto * 100 ) / 100;
+    r.cuotas = ( r.cuotas || [] ).map( ( c ) => ( { ...c, monto: r.monto } ) );
+  }
+  if ( r.kind === 'horario' ) {
+    const inicio = document.getElementById( 'editRemInicio' )?.value || '';
+    const fin = document.getElementById( 'editRemFin' )?.value || null;
+    if ( !inicio ) {
+      showNotification( 'Define la hora de inicio', 'error' );
+      return;
+    }
+    if ( fin && fin <= inicio ) {
+      showNotification( 'La hora de fin debe ser posterior a la de inicio', 'error' );
+      return;
+    }
+    r.inicio = inicio;
+    r.fin = fin;
+    mirrorHorarioTasks( r );
+  }
+  saveReminders();
+  enqueueReminderSync( 'upsert', r );
+  closeAllModals();
+  showNotification( 'Recordatorio actualizado', 'success' );
+}
+
+function wireRemindersTab() {
+  const modo = document.getElementById( 'pagoModo' );
+  if ( modo ) {
+    const sync = () => {
+      const isAuto = modo.value === 'auto';
+      document.getElementById( 'pagoAutoBox' )?.classList.toggle( 'hidden', !isAuto );
+      document.getElementById( 'pagoManualBox' )?.classList.toggle( 'hidden', isAuto );
+    };
+    modo.addEventListener( 'change', sync );
+    sync();
+  }
+  const cuotas = document.getElementById( 'pagoCuotas' );
+  if ( cuotas ) {
+    cuotas.addEventListener( 'change', () => {
+      if ( getPagoForm().modo === 'manual' ) buildPagoManualInputs( parseInt( cuotas.value, 10 ) || 0 );
+    } );
+  }
+  const repSel = document.getElementById( 'horRepeat' );
+  if ( repSel ) {
+    repSel.addEventListener( 'change', () => {
+      document.getElementById( 'horWeeklyBox' )?.classList.toggle( 'hidden', repSel.value !== 'semanal' );
+      document.getElementById( 'horDaysBox' )?.classList.toggle( 'hidden', repSel.value !== 'dias' );
+    } );
+  }
+  const festRep = document.getElementById( 'festRepetir' );
+  if ( festRep ) {
+    festRep.addEventListener( 'change', () => {
+      document.getElementById( 'festVecesBox' )?.classList.toggle( 'hidden', festRep.value === 'ninguna' );
+    } );
+  }
+}
+
+// ===== WIZARD DE EXPORTACIÓN EXCEL (Tareas/Pagos/Festividades/Horarios) =====
+let exType = 'tareas';
+const EX_PRESETS = [ '#ef4444', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899' ];
+const EX_TYPES = {
+  tareas: { label: 'Tareas', icon: 'fa-list-check', desc: 'Todas las tareas del calendario' },
+  pagos: { label: 'Pagos', icon: 'fa-money-bill-wave', desc: 'Cuotas agrupadas por título' },
+  festividades: { label: 'Festividades', icon: 'fa-cake-candles', desc: 'Fechas importantes ordenadas' },
+  horarios: { label: 'Horarios', icon: 'fa-calendar-week', desc: 'Matriz semanal Lun–Dom' },
+};
+
+function exColorField( key, label, def ) {
+  return `
+    <div>
+      <label class="${labelCls}">${label}</label>
+      <div class="flex items-center gap-1.5 flex-wrap" data-excolor="${key}">
+        ${EX_PRESETS.map( ( c ) => `
+          <button data-action="export-pick" data-key="${key}" data-c="${c}"
+                  class="w-6 h-6 rounded-full border-2 border-white shadow hover:scale-110 transition"
+                  style="background:${c}" title="${c}"></button>` ).join( '' )}
+        <input type="color" id="ex-${key}-pick" value="${def}" class="w-8 h-8 p-0 border rounded cursor-pointer bg-transparent" title="Paleta">
+        <input id="ex-${key}-hex" value="${def}" maxlength="7" placeholder="#rrggbb"
+               class="w-20 px-2 py-1 border border-gray-300 rounded text-xs font-mono" title="Hexadecimal">
+        <input id="ex-${key}-rgb" placeholder="r,g,b"
+               class="w-24 px-2 py-1 border border-gray-300 rounded text-xs font-mono" title="RGB (ej: 37,99,235)">
+        <span id="ex-${key}-prev" class="w-6 h-6 rounded-full border border-gray-300 inline-block" style="background:${def}" title="Vista previa"></span>
+      </div>
+    </div>`;
+}
+
+function exSetColor( key, hex ) {
+  let h = String( hex || '' ).trim();
+  if ( /^\d{1,3},\d{1,3},\d{1,3}$/.test( h.replace( /\s/g, '' ) ) ) {
+    const [ r, g, b ] = h.replace( /\s/g, '' ).split( ',' ).map( Number );
+    if ( [ r, g, b ].every( ( v ) => v >= 0 && v <= 255 ) ) {
+      h = '#' + [ r, g, b ].map( ( v ) => v.toString( 16 ).padStart( 2, '0' ) ).join( '' );
+    } else return;
+  }
+  if ( !/^#[0-9a-fA-F]{6}$/.test( h ) ) return;
+  const pick = document.getElementById( `ex-${key}-pick` );
+  const hexI = document.getElementById( `ex-${key}-hex` );
+  const prev = document.getElementById( `ex-${key}-prev` );
+  if ( pick ) pick.value = h;
+  if ( hexI ) hexI.value = h;
+  if ( prev ) prev.style.background = h;
+}
+
+function exGetColor( key, def ) {
+  const v = document.getElementById( `ex-${key}-hex` )?.value || def;
+  return /^#[0-9a-fA-F]{6}$/.test( v ) ? v : def;
+}
+
+function showExportWizard() {
+  if ( typeof ExcelJS === 'undefined' ) {
+    showNotification( 'Librería Excel no cargada (revisa tu conexión)', 'error' );
+    return;
+  }
+  closeAllModals();
+  exType = 'tareas';
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'exportWizardModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-file-excel text-green-600 mr-2"></i>Exportar a Excel
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 1 · ¿Qué deseas exportar?</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        ${Object.entries( EX_TYPES ).map( ( [ key, t ] ) => `
+          <button data-action="export-type" data-t="${key}"
+                  class="ex-type-card p-3 rounded-xl border-2 text-center transition">
+            <i class="fas ${t.icon} text-xl mb-1"></i>
+            <div class="text-sm font-semibold">${t.label}</div>
+            <div class="text-[11px] opacity-75">${t.desc}</div>
+          </button>` ).join( '' )}
+      </div>
+      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 2 · Opciones</p>
+      <div id="exOptions" class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600 mb-4"></div>
+      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 3 · Apariencia</p>
+      <div class="grid sm:grid-cols-2 gap-3 mb-3">
+        ${exColorField( 'header', 'Color de cabecera', '#2563eb' )}
+        ${exColorField( 'bg', 'Color de fondo', '#ffffff' )}
+      </div>
+      <label class="flex items-center gap-2 text-sm text-gray-700 mb-4 cursor-pointer">
+        <input type="checkbox" id="ex-borders" checked class="w-4 h-4 rounded text-green-600"> Bordes en tablas
+      </label>
+      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 4 · Resumen</p>
+      <div id="exSummary" class="text-sm text-gray-600 bg-blue-50 dark:bg-gray-700 border-l-4 border-blue-400 p-2.5 rounded mb-4"></div>
+      <button data-action="export-run" class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition font-semibold">
+        <i class="fas fa-download mr-2"></i>Paso 5 · Exportar Excel
+      </button>
+    </div>
+  `;
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
+  // Sincronizar pickers de color (nodos frescos del modal)
+  modal.querySelectorAll( '[data-excolor]' ).forEach( ( box ) => {
+    const key = box.dataset.excolor;
+    box.querySelector( 'input[type="color"]' )?.addEventListener( 'input', ( e ) => exSetColor( key, e.target.value ) );
+    box.querySelector( `#ex-${key}-hex` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
+    box.querySelector( `#ex-${key}-rgb` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
+  } );
+  modal.addEventListener( 'change', () => exRefreshSummary() );
+  document.body.appendChild( modal );
+  renderExportOptions();
+}
+
+function paintExTypeCards() {
+  document.querySelectorAll( '#exportWizardModal .ex-type-card' ).forEach( ( b ) => {
+    const active = b.dataset.t === exType;
+    b.className = `ex-type-card p-3 rounded-xl border-2 text-center transition ${active
+      ? 'border-green-600 bg-green-50 dark:bg-gray-700 text-green-800 dark:text-green-300 shadow'
+      : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-green-400'}`;
+  } );
+}
+
+function renderExportOptions() {
+  const box = document.getElementById( 'exOptions' );
+  if ( !box ) return;
+  paintExTypeCards();
+
+  if ( exType === 'tareas' ) {
+    box.innerHTML = `
+      <label class="flex items-center gap-2 text-sm cursor-pointer mb-2">
+        <input type="checkbox" id="ex-opt-completadas" checked class="w-4 h-4 rounded text-green-600"> Incluir completadas
+      </label>
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" id="ex-opt-horarios" class="w-4 h-4 rounded text-green-600"> Incluir reuniones/clases
+      </label>`;
+  } else if ( exType === 'pagos' ) {
+    const pagos = Object.values( reminders ).filter( ( r ) => r && r.kind === 'pago' );
+    box.innerHTML = `
+      <div class="space-y-2 text-sm">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="ex-pagos" value="todos" checked class="text-green-600"> Todos (${pagos.length})
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="ex-pagos" value="uno" class="text-green-600"> Un título:
+          <select id="ex-pago-one" class="flex-1 px-2 py-1 border border-gray-300 rounded text-sm">
+            ${pagos.map( ( r ) => `<option value="${r.id}">${r.title}</option>` ).join( '' )}
+          </select>
+        </label>
+        <div>
+          <p class="font-medium mb-1">Selección manual:</p>
+          <div class="max-h-32 overflow-y-auto space-y-1">
+            ${pagos.length === 0 ? '<p class="text-gray-500">No hay pagos registrados.</p>' : pagos.map( ( r ) => `
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" class="ex-pago-check w-4 h-4 rounded text-green-600" value="${r.id}"> ${r.title}
+              </label>` ).join( '' )}
+          </div>
+        </div>
+      </div>`;
+  } else if ( exType === 'festividades' ) {
+    const fests = Object.values( reminders ).filter( ( r ) => r && r.kind === 'festividad' );
+    box.innerHTML = `
+      <div class="space-y-2 text-sm">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="ex-fest" value="todas" checked class="text-green-600"> Todas (${fests.length})
+        </label>
+        <div>
+          <p class="font-medium mb-1">Selección manual:</p>
+          <div class="max-h-32 overflow-y-auto space-y-1">
+            ${fests.length === 0 ? '<p class="text-gray-500">No hay festividades registradas.</p>' : fests.map( ( r ) => `
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" class="ex-fest-check w-4 h-4 rounded text-green-600" value="${r.id}" checked> ${r.title}
+              </label>` ).join( '' )}
+          </div>
+        </div>
+      </div>`;
+  } else {
+    const hors = Object.values( reminders ).filter( ( r ) => r && r.kind === 'horario' );
+    box.innerHTML = `
+      <div class="space-y-1 text-sm max-h-40 overflow-y-auto">
+        ${hors.length === 0 ? '<p class="text-gray-500">No hay horarios registrados.</p>' : hors.map( ( r ) => `
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" class="ex-hor-check w-4 h-4 rounded text-green-600" value="${r.id}" checked>
+            ${r.title} <span class="text-xs text-gray-500">(${( r.dates || [] ).length} fecha(s))</span>
+          </label>` ).join( '' )}
+      </div>`;
+  }
+  exRefreshSummary();
+}
+
+function exReadOptions() {
+  if ( exType === 'tareas' ) {
+    return {
+      incluirCompletadas: document.getElementById( 'ex-opt-completadas' )?.checked !== false,
+      incluirHorarios: document.getElementById( 'ex-opt-horarios' )?.checked === true,
+    };
+  }
+  if ( exType === 'pagos' ) {
+    const mode = document.querySelector( 'input[name="ex-pagos"]:checked' )?.value || 'todos';
+    if ( mode === 'uno' ) return { ids: [ document.getElementById( 'ex-pago-one' )?.value ].filter( Boolean ) };
+    if ( mode === 'todos' ) return { ids: null };
+    return { ids: Array.from( document.querySelectorAll( '.ex-pago-check:checked' ) ).map( ( c ) => c.value ) };
+  }
+  if ( exType === 'festividades' ) {
+    const mode = document.querySelector( 'input[name="ex-fest"]:checked' )?.value || 'todas';
+    if ( mode === 'todas' ) return { ids: null };
+    return { ids: Array.from( document.querySelectorAll( '.ex-fest-check:checked' ) ).map( ( c ) => c.value ) };
+  }
+  return { ids: Array.from( document.querySelectorAll( '.ex-hor-check:checked' ) ).map( ( c ) => c.value ) };
+}
+
+function exReadStyle() {
+  return {
+    header: exGetColor( 'header', '#2563eb' ),
+    bg: exGetColor( 'bg', '#ffffff' ),
+    borders: document.getElementById( 'ex-borders' )?.checked !== false,
+  };
+}
+
+function exRefreshSummary() {
+  const box = document.getElementById( 'exSummary' );
+  if ( !box ) return;
+  const o = exReadOptions();
+  const s = exReadStyle();
+  let detalle = '';
+  if ( exType === 'tareas' ) detalle = `Tareas (completadas: ${o.incluirCompletadas ? 'sí' : 'no'}, horarios: ${o.incluirHorarios ? 'sí' : 'no'})`;
+  else if ( exType === 'pagos' ) detalle = `Pagos: ${!o.ids ? 'todos' : o.ids.length + ' seleccionado(s)'}`;
+  else if ( exType === 'festividades' ) detalle = `Festividades: ${!o.ids ? 'todas' : o.ids.length + ' seleccionada(s)'}`;
+  else detalle = `Horarios: ${( o.ids || [] ).length} seleccionado(s), matriz semanal`;
+  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span> · Bordes: ${s.borders ? 'sí' : 'no'}`;
+}
+
+async function runExportWizard() {
+  const o = exReadOptions();
+  const s = exReadStyle();
+  let ok = false;
+  try {
+    if ( exType === 'tareas' ) ok = await EX.tareas( s, o );
+    else if ( exType === 'pagos' ) ok = await EX.pagos( s, o.ids );
+    else if ( exType === 'festividades' ) ok = await EX.festividades( s, o.ids );
+    else ok = await EX.horarios( s, o.ids );
+  } catch ( e ) {
+    console.error( '❌ Error exportando:', e );
+    showNotification( 'Error al generar el Excel', 'error' );
+    return;
+  }
+  if ( ok ) {
+    showNotification( 'Excel exportado exitosamente', 'success' );
+    closeAllModals();
   }
 }
 
@@ -6077,6 +7450,9 @@ function closeAllModals() {
     "clearOptionsModal",
     "clearSpecificDaysModal",
     "monthYearPickerModal",
+    "remindersModal",
+    "editReminderModal",
+    "exportWizardModal",
   ];
 
   modals.forEach( ( modalId ) => {
@@ -6621,46 +7997,6 @@ function updateProgress() {
             <span class="text-gray-600">${pendingTasks} ⏸</span>
         `;
   }
-}
-
-function exportToExcel() {
-  if ( typeof XLSX === "undefined" ) {
-    showNotification( "Error: XLSX library not loaded", "error" );
-    return;
-  }
-
-  // Verificar si hay tareas en el calendario
-  const hasTasks = Object.keys( tasks ).some( date => tasks[ date ] && tasks[ date ].length > 0 );
-
-  if ( !hasTasks ) {
-    showNotification( "No hay tareas para exportar", "info" );
-    return;
-  }
-
-  const wb = XLSX.utils.book_new();
-  const data = [ [ "Fecha", "Título", "Descripción", "Hora de inicio", "Hora de fin", "Estado", "Prioridad" ] ];
-
-  Object.entries( tasks ).forEach( ( [ date, dayTasks ] ) => {
-    dayTasks.forEach( task => {
-      const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
-      const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
-      data.push( [
-        date,
-        task.title,
-        task.description || "",
-        task.time || "",
-        task.endTime || "",
-        state.label,
-        priority.label
-      ] );
-    } );
-  } );
-
-  const ws = XLSX.utils.aoa_to_sheet( data );
-  XLSX.utils.book_append_sheet( wb, ws, "Tareas" );
-  XLSX.writeFile( wb, `tareas_${getTodayString()}.xlsx` );
-
-  showNotification( "Excel exportado exitosamente", "success" );
 }
 
 function toggleNotifications() {
@@ -7495,7 +8831,11 @@ async function cleanupDuplicates() {
 }
 
 // INICIALIZACIÓN PRINCIPAL
+// Guard: el init completo corre una sola vez aunque el evento se dispare
+// más de una vez (evita re-renders que borran highlights y timers duplicados).
 document.addEventListener( "DOMContentLoaded", async function () {
+  if ( window.__appInitDone ) return;
+  window.__appInitDone = true;
   console.log( '🚀 Inicializando aplicación...' );
 
   isOnline = navigator.onLine;
@@ -7637,6 +8977,9 @@ function setupAuthListeners() {
 
         // Configurar listener en tiempo real
         setupRealtimeSync();
+        setupRemindersRealtime();
+        syncRemindersFromFirebase();
+        flushPendingReminderDeletes();
 
         // Sync bidireccional después de 3 segundos
         if ( isOnline && !isSyncing ) {
@@ -7675,6 +9018,10 @@ function setupAuthListeners() {
         if ( firestoreListener ) {
           firestoreListener();
           firestoreListener = null;
+        }
+        if ( remindersListener ) {
+          remindersListener();
+          remindersListener = null;
         }
 
         // ✅ CRÍTICO: Notificar logout al Service Worker

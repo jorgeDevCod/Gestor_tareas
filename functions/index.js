@@ -147,6 +147,64 @@ exports.checkTaskNotifications = onSchedule( 'every 1 minutes', async ( event ) 
                 }
             }
 
+            // 🔔 Recordatorios (pagos/festividades; horarios avisan por tareas espejo)
+            try {
+                const remSnap = await admin.firestore()
+                    .collection( 'users' ).doc( userId )
+                    .collection( 'reminders' ).get();
+
+                for ( const remDoc of remSnap.docs ) {
+                    const r = remDoc.data();
+                    if ( !r ) continue;
+
+                    if ( r.kind === 'pago' ) {
+                        for ( const c of ( r.cuotas || [] ) ) {
+                            if ( c.fecha === today && currentTimeInMinutes >= 9 * 60 ) {
+                                await sendOnce( userId, fcmToken, {
+                                    title: `💰 Vence hoy: ${r.title}`,
+                                    body: `${c.etiqueta} por S/ ${c.monto}`,
+                                    tag: `rem-${r.id}-${c.fecha}`,
+                                    taskId: '', dateStr: c.fecha, type: 'task-reminder'
+                                } );
+                            } else if ( c.fecha < today ) {
+                                const d = diffDaysStr( c.fecha, today );
+                                if ( d >= 1 && d <= 7 && currentTimeInMinutes >= 9 * 60 ) {
+                                    await sendOnce( userId, fcmToken, {
+                                        title: `⚠️ Pago atrasado: ${r.title}`,
+                                        body: `${c.etiqueta} lleva ${d} día(s) de retraso`,
+                                        tag: `rem-${r.id}-${c.fecha}-late`,
+                                        taskId: '', dateStr: c.fecha, type: 'task-late'
+                                    } );
+                                }
+                            }
+                        }
+                    } else if ( r.kind === 'festividad' ) {
+                        for ( const d of ( r.dates || [] ) ) {
+                            if ( d === today && currentTimeInMinutes >= 9 * 60 ) {
+                                await sendOnce( userId, fcmToken, {
+                                    title: `🎉 Hoy: ${r.title}`,
+                                    body: r.description || 'Festividad programada para hoy',
+                                    tag: `rem-${r.id}-${d}`,
+                                    taskId: '', dateStr: d, type: 'task-reminder'
+                                } );
+                            } else if ( d < today ) {
+                                const days = diffDaysStr( d, today );
+                                if ( days >= 1 && days <= 7 && currentTimeInMinutes >= 9 * 60 ) {
+                                    await sendOnce( userId, fcmToken, {
+                                        title: `⚠️ Festividad pasada: ${r.title}`,
+                                        body: `${days} día(s) de retraso`,
+                                        tag: `rem-${r.id}-${d}-late`,
+                                        taskId: '', dateStr: d, type: 'task-late'
+                                    } );
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch ( e ) {
+                console.error( '❌ Error verificando recordatorios:', e.message );
+            }
+
             await cleanupNotifLog( userId );
         }
 
@@ -192,12 +250,10 @@ async function sendNotification( token, data ) {
     }
 }
 
-// 🔥 Formatear fecha
-function formatDate( date ) {
-    const year = date.getFullYear();
-    const month = String( date.getMonth() + 1 ).padStart( 2, '0' );
-    const day = String( date.getDate() ).padStart( 2, '0' );
-    return `${year}-${month}-${day}`;
+function diffDaysStr( fromStr, toStr ) {
+    const a = new Date( fromStr + 'T12:00:00' );
+    const b = new Date( toStr + 'T12:00:00' );
+    return Math.round( ( b - a ) / ( 1000 * 60 * 60 * 24 ) );
 }
 
 // 🔥 Función de prueba
