@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v5.3';
+const CACHE_VERSION = 'v5.4';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -26,13 +26,14 @@ const STATIC_FILES = [
     './',
     './index.html',
     './app.js',
+    './src/export-excel.js',
     './manifest.json',
     './images/IconLogo.png',
     './images/favicon-192.png',
     './images/favicon-512.png',
     './favicon.png',
+    './images/og-cover.png',
     './dist/output.css',
-    './src/aditional.css',
     './src/theme.css'
 ];
 
@@ -388,7 +389,7 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v8.3 instalando...' );
+    console.log( '🔧 SW v8.4 instalando...' );
     event.waitUntil(
         Promise.all( [
             // Cache resiliente: un archivo faltante no aborta la instalación
@@ -407,7 +408,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v8.3 activándose...' );
+    console.log( '🚀 SW v8.4 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -475,13 +476,41 @@ self.addEventListener( 'fetch', ( event ) => {
         return;
     }
 
-    if ( url.pathname.match( /\.(js|css|png|jpg|jpeg|svg|woff|woff2)$/ ) ) {
+    if ( url.pathname.match( /\.(js|css)$/ ) ) {
+        // JS/CSS: stale-while-revalidate (rápido + se auto-actualiza en
+        // segundo plano para no quedarse con versiones viejas)
+        event.respondWith( staleWhileRevalidate( request ) );
+        return;
+    }
+
+    if ( url.pathname.match( /\.(png|jpg|jpeg|svg|woff|woff2)$/ ) ) {
         event.respondWith( cacheFirst( request ) );
         return;
     }
 
     event.respondWith( networkFirst( request ) );
 } );
+
+async function staleWhileRevalidate( request ) {
+    const cache = await caches.open( CACHE_DYNAMIC );
+    const cached = await cache.match( request );
+
+    const networkFetch = fetch( request ).then( ( response ) => {
+        if ( response && response.status === 200 ) {
+            cache.put( request, response.clone() );
+        }
+        return response;
+    } ).catch( () => null );
+
+    // Sirve caché al instante si existe; si no, espera la red.
+    // La red siempre refresca el caché en segundo plano (ya tiene catch).
+    if ( cached ) {
+        return cached;
+    }
+    const fresh = await networkFetch;
+    if ( fresh ) return fresh;
+    return new Response( 'Offline', { status: 503 } );
+}
 
 async function cacheFirst( request ) {
     const cached = await caches.match( request );
