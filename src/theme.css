@@ -86,6 +86,10 @@
 .dark .bg-amber-100 { background-color: #2b1c0e !important; }
 .dark .bg-pink-100 { background-color: #2d1220 !important; }
 .dark .bg-teal-100 { background-color: #0d2b2e !important; }
+.dark .bg-teal-50 { background-color: #0d2b2e !important; }
+.dark .text-teal-900 { color: #7de3e8 !important; }
+.dark .text-teal-600, .dark .text-teal-700 { color: #5eead4 !important; }
+.dark .hover\:bg-blue-50:hover { background-color: #1c2d3f !important; }
 .dark .text-amber-900 { color: #f5c86a !important; }
 .dark .text-pink-900 { color: #f5a8c8 !important; }
 .dark .text-teal-900 { color: #7de3e8 !important; }

@@ -1350,6 +1350,7 @@ async function initFirebase() {
       // este dispositivo nunca recibe borrados/cambios de otros).
       setupRealtimeSync();
       setupRemindersRealtime();
+      maybeBackfillAlerts();
 
       // Sync con delay
       setTimeout( () => {
@@ -3273,6 +3274,28 @@ async function syncRemindersFromFirebase() {
     if ( changed ) saveReminders();
   } catch ( e ) {
     console.error( '❌ Error bajando reminders:', e );
+  }
+}
+
+// Backfill único: programa en la nube las alertas de lo ya guardado.
+// Se ejecuta una sola vez por versión (flag local); usa el ID token del
+// usuario logueado, sin SDK extra.
+async function maybeBackfillAlerts() {
+  try {
+    if ( localStorage.getItem( 'backfill_alerts_v1' ) ) return;
+    if ( !currentUser || !isOnline || !auth?.currentUser ) return;
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch( 'https://us-central1-calendario-tareas-app.cloudfunctions.net/backfillAlerts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify( { data: {} } ),
+    } );
+    if ( res.ok ) {
+      localStorage.setItem( 'backfill_alerts_v1', '1' );
+      console.log( '✅ Backfill de alertas programado' );
+    }
+  } catch ( e ) {
+    console.warn( '⚠️ Backfill pendiente (reintentará al entrar):', e?.message || e );
   }
 }
 
@@ -6471,7 +6494,7 @@ function horarioFormHTML() {
         <label class="${labelCls}">Días de la semana</label>
         <div class="grid grid-cols-4 gap-2 text-xs">
           ${[ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ].map( ( n, i ) => `
-            <label class="flex items-center bg-white dark:bg-gray-800 p-2 rounded border border-gray-300 dark:border-gray-600 cursor-pointer">
+            <label class="flex items-center bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 p-2 rounded-lg border border-gray-300 dark:border-gray-500 cursor-pointer hover:border-teal-500 transition">
               <input type="checkbox" value="${i}" class="mr-2 rounded text-teal-600 hor-day">${n}
             </label>` ).join( '' )}
         </div>
@@ -6889,7 +6912,7 @@ function paintExTypeCards() {
     const active = b.dataset.t === exType;
     b.className = `ex-type-card p-3 rounded-xl border-2 text-center transition ${active
       ? 'border-green-600 bg-green-50 dark:bg-gray-700 text-green-800 dark:text-green-300 shadow'
-      : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-green-400'}`;
+      : 'border-gray-200 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:border-green-400'}`;
   } );
 }
 
@@ -9012,6 +9035,7 @@ function setupAuthListeners() {
         setupRemindersRealtime();
         syncRemindersFromFirebase();
         flushPendingReminderDeletes();
+        maybeBackfillAlerts();
 
         // Sync bidireccional después de 3 segundos
         if ( isOnline && !isSyncing ) {
