@@ -6141,7 +6141,8 @@ function showRemindersModal( tab = 'pago' ) {
       <div class="grid grid-cols-3 gap-2 mb-3">
         ${Object.entries( REMINDER_TABS ).map( ( [ key, t ] ) => `
           <button data-action="reminders-tab" data-tab="${key}"
-                  class="py-2 px-1 rounded-lg text-sm font-medium transition ${key === remindersTab ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}">
+                  class="py-2 px-1 rounded-lg text-sm font-medium transition ${key === remindersTab ? 'text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}"
+                  ${key === remindersTab ? 'style="background-color:#0d9488;color:#ffffff;"' : ''}>
             <i class="fas ${t.icon} mr-1"></i>${t.label}
           </button>` ).join( '' )}
       </div>
@@ -6163,7 +6164,15 @@ function renderRemindersTab() {
   if ( !body ) return;
   document.querySelectorAll( '#remindersModal [data-action="reminders-tab"]' ).forEach( ( b ) => {
     const active = b.dataset.tab === remindersTab;
-    b.className = `py-2 px-1 rounded-lg text-sm font-medium transition ${active ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}`;
+    b.className = `py-2 px-1 rounded-lg text-sm font-medium transition ${active ? 'text-white shadow' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-teal-100'}`;
+    if ( active ) {
+      // Inline a propósito: el estado seleccionado debe verse incluso con CSS cacheado viejo
+      b.style.backgroundColor = '#0d9488';
+      b.style.color = '#ffffff';
+    } else {
+      b.style.backgroundColor = '';
+      b.style.color = '';
+    }
   } );
   const descEl = document.querySelector( '#remindersModal > div > p' );
   if ( descEl ) descEl.textContent = REMINDER_TABS[ remindersTab ].desc;
