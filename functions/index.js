@@ -94,7 +94,10 @@ function zonedTimeToUtc( dateStr, timeStr, tz ) {
 }
 
 async function enqueueAlert( uid, name, atDate, payload ) {
-    if ( atDate.getTime() <= Date.now() + 30000 ) return false; // ya pasó
+    if ( atDate.getTime() <= Date.now() + 30000 ) {
+        console.log( `⏭️ Hora pasada, no se programa: ${name}` );
+        return false;
+    }
     await getTasksClient().createTask( {
         parent: alertsParent(),
         task: {
@@ -108,6 +111,7 @@ async function enqueueAlert( uid, name, atDate, payload ) {
             scheduleTime: { seconds: Math.floor( atDate.getTime() / 1000 ) },
         },
     } );
+    console.log( `📅 Alerta programada: ${name} → ${atDate.toISOString()}` );
     return true;
 }
 
@@ -187,12 +191,14 @@ async function userTz( uid ) {
 exports.onTaskWrite = onDocumentWritten( 'users/{uid}/tasks/{taskId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
+    console.log( `📝 onTaskWrite ${uid}/${event.params.taskId} existe=${!!after} hora=${after?.time} estado=${after?.state}` );
     await scheduleForTask( uid, event.params.taskId, after, await userTz( uid ) );
 } );
 
 exports.onReminderWrite = onDocumentWritten( 'users/{uid}/reminders/{remId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
+    console.log( `📝 onReminderWrite ${uid}/${event.params.remId} existe=${!!after} kind=${after?.kind}` );
     await scheduleForReminder( uid, after ? { ...after, id: event.params.remId } : null, await userTz( uid ) );
 } );
 
@@ -207,10 +213,12 @@ exports.dispatchAlert = onRequest( async ( req, res ) => {
         return;
     }
     const p = req.body || {};
+    console.log( `📨 dispatch ${p.kind} tag=${p.tag} uid=${p.uid}` );
     try {
         const userDoc = await admin.firestore().collection( 'users' ).doc( p.uid ).get();
         const token = userDoc.data()?.fcmToken;
         if ( !token ) {
+            console.log( `⚠️ dispatch sin token: ${p.tag}` );
             res.status( 200 ).send( 'no-token' );
             return;
         }
@@ -219,20 +227,24 @@ exports.dispatchAlert = onRequest( async ( req, res ) => {
             const snap = await admin.firestore().collection( 'users' ).doc( p.uid ).collection( 'tasks' ).doc( p.docId ).get();
             const t = snap.data();
             if ( !t || t.state === 'completed' ) {
+                console.log( `⏭️ dispatch obsoleto (borrada/completada): ${p.tag}` );
                 res.status( 200 ).send( 'stale' );
                 return;
             }
             if ( t.time !== p.expectTime ) {
+                console.log( `⏭️ dispatch reprogramado, hora cambió: ${p.tag}` );
                 res.status( 200 ).send( 'rescheduled' );
                 return;
             }
         }
         const claimed = await claimNotification( p.uid, p.tag );
         if ( !claimed ) {
+            console.log( `⏭️ dispatch duplicado evitado: ${p.tag}` );
             res.status( 200 ).send( 'duplicate' );
             return;
         }
         await sendNotification( token, p );
+        console.log( `✅ dispatch enviado: ${p.tag}` );
         res.status( 200 ).send( 'sent' );
     } catch ( e ) {
         console.error( '❌ dispatchAlert:', e.message );

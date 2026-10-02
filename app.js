@@ -149,10 +149,48 @@ if ( 'serviceWorker' in navigator ) {
         if ( document.visibilityState === 'visible' ) checkSwUpdate();
       } );
 
+      // Empujar estado completo al SW cuando esté listo. Sin esto, si la
+      // primera carga ocurrió sin controller, el SW jamás recibe las tareas
+      // y su scheduler local no tiene nada que avisar.
+      pushStateToSW();
+
     } catch ( error ) {
       console.error( '❌ Error al registrar el Service Worker:', error );
     }
   } );
+}
+
+// Envía tareas + recordatorios + sesión al SW (con reintento si aún no hay controller)
+async function pushStateToSW( retries = 5 ) {
+  try {
+    await navigator.serviceWorker.ready;
+    if ( navigator.serviceWorker.controller ) {
+      if ( currentUser && !currentUser.isOffline ) {
+        navigator.serviceWorker.controller.postMessage( {
+          type: 'SET_USER_ID',
+          data: {
+            userId: currentUser.uid,
+            email: currentUser.email,
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL
+          }
+        } );
+      }
+      navigator.serviceWorker.controller.postMessage( {
+        type: 'UPDATE_TASKS',
+        data: { tasks, timestamp: Date.now() }
+      } );
+      navigator.serviceWorker.controller.postMessage( {
+        type: 'UPDATE_REMINDERS',
+        data: { reminders, timestamp: Date.now() }
+      } );
+      console.log( '📤 Estado completo enviado al SW' );
+    } else if ( retries > 0 ) {
+      setTimeout( () => pushStateToSW( retries - 1 ), 2000 );
+    }
+  } catch ( e ) {
+    console.warn( '⚠️ pushStateToSW:', e?.message || e );
+  }
 }
 
 window.addEventListener( 'beforeinstallprompt', ( e ) => {
@@ -1345,6 +1383,16 @@ async function initFirebase() {
 
       updateUI();
       updateSyncIndicator( 'success' );
+
+      // Si hay permiso pero no hay token FCM, el push es imposible:
+      // reintentar obtenerlo (pudo fallar por SW no listo, red, etc.)
+      console.log( '🔑 FCM token:', fcmToken ? 'OK' : 'AUSENTE (push imposible)' );
+      if ( !fcmToken && messaging && 'Notification' in window && Notification.permission === 'granted' ) {
+        console.log( '🔑 Reintentando obtener token FCM...' );
+        setTimeout( () => {
+          requestFCMToken().catch( () => {} );
+        }, 4000 );
+      }
 
       // Listener en tiempo real también en sesión restaurada (si no,
       // este dispositivo nunca recibe borrados/cambios de otros).
