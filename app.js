@@ -3561,7 +3561,9 @@ function addTask( e ) {
   let focusDateStr = null;
 
   if ( formData.date && formData.repeat === "none" ) {
-    addTaskToDate( formData.date, task );
+    // Usar la tarea devuelta (con su ID final): si se sincroniza el objeto
+    // previo, el eco realtime lo registra como otra tarea → duplicado.
+    const created = addTaskToDate( formData.date, task );
     focusDateStr = formData.date;
 
     // ✅ Verificar si se creó hoy
@@ -3571,10 +3573,10 @@ function addTask( e ) {
 
     // Sync solo si hay conexión
     if ( currentUser && isOnline ) {
-      enqueueSync( "upsert", formData.date, task );
+      enqueueSync( "upsert", formData.date, created );
     }
 
-    addToChangeLog( "created", task.title, formData.date );
+    addToChangeLog( "created", created.title, formData.date );
   } else if ( formData.repeat !== "none" ) {
     const startDate = formData.date
       ? new Date( formData.date + "T00:00:00" )
@@ -7527,13 +7529,15 @@ function showQuickAddTask( dateStr ) {
       completed: false,
     };
 
-    addTaskToDate( targetDate, task );
+    // Usar la tarea devuelta (con su ID final) para que el eco realtime
+    // coincida por ID y no la duplique.
+    const createdTask = addTaskToDate( targetDate, task );
     saveTasks();
     updateProgress();
 
     // Sync solo si hay conexión
     if ( currentUser && isOnline ) {
-      enqueueSync( "upsert", targetDate, task );
+      enqueueSync( "upsert", targetDate, createdTask );
     }
 
     closeAllModals();
@@ -8911,18 +8915,27 @@ async function cleanupDuplicates() {
   Object.keys( tasks ).forEach( dateStr => {
     if ( !tasks[ dateStr ] ) return;
 
-    const seen = new Map();
-    const uniqueTasks = [];
-
+    const groups = new Map();
     tasks[ dateStr ].forEach( task => {
       const key = `${task.title}:${task.time}`;
+      if ( !groups.has( key ) ) groups.set( key, [] );
+      groups.get( key ).push( task );
+    } );
 
-      if ( !seen.has( key ) ) {
-        seen.set( key, task );
-        uniqueTasks.push( task );
-      } else {
-        console.log( `🗑️ Duplicado eliminado: ${task.title}` );
-        cleaned++;
+    const uniqueTasks = [];
+    groups.forEach( ( group ) => {
+      uniqueTasks.push( group[ 0 ] );
+      if ( group.length > 1 ) {
+        console.log( `🗑️ ${group.length - 1} duplicado(s) eliminados: ${group[ 0 ].title}` );
+        // Borrar TODAS las copias remotas del grupo y re-subir solo la
+        // conservada; si no, el sync las resucita en el siguiente arranque.
+        if ( currentUser ) {
+          group.forEach( ( t ) => {
+            if ( t.id ) enqueueSync( "delete", dateStr, { id: t.id } );
+          } );
+          enqueueSync( "upsert", dateStr, group[ 0 ] );
+        }
+        cleaned += group.length - 1;
       }
     } );
 
