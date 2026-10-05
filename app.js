@@ -1769,10 +1769,27 @@ async function saveFCMToken( token ) {
       timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
     } catch ( e ) { /* valor por defecto */ }
 
+    // Mapa por dispositivo (no pisa otros aparatos) + campo único legado.
+    // Se conservan como máximo los 5 más recientes.
+    let tokenMap = {};
+    try {
+      const snap = await db.collection( 'users' ).doc( currentUser.uid ).get();
+      tokenMap = { ...( snap.data()?.fcmTokens || {} ) };
+      if ( snap.data()?.fcmToken && !tokenMap[ snap.data().fcmToken ] ) {
+        tokenMap[ snap.data().fcmToken ] = { updatedAt: new Date( 0 ) };
+      }
+    } catch ( e ) { /* sigue con mapa vacío */ }
+    tokenMap[ token ] = { updatedAt: new Date() };
+    const sorted = Object.entries( tokenMap ).sort( ( a, b ) =>
+      new Date( b[ 1 ]?.updatedAt || 0 ) - new Date( a[ 1 ]?.updatedAt || 0 )
+    ).slice( 0, 5 );
+    tokenMap = Object.fromEntries( sorted );
+
     await db.collection( 'users' )
       .doc( currentUser.uid )
       .set( {
         fcmToken: token,
+        fcmTokens: tokenMap,
         lastTokenUpdate: new Date(),
         email: currentUser.email,
         timezone
@@ -1783,6 +1800,58 @@ async function saveFCMToken( token ) {
     console.error( '❌ Error guardando token FCM:', error );
   }
 }
+
+// Diagnóstico push en consola: window.pushDiagnostics()
+// Muestra permiso, token, SW y si el SW tiene sesión + tareas para avisar.
+async function pushDiagnostics() {
+  const out = {
+    permiso: ( 'Notification' in window ) ? Notification.permission : 'sin-soporte',
+    tokenFCM: fcmToken ? fcmToken.slice( 0, 20 ) + '...' : 'AUSENTE',
+    swController: !!( 'serviceWorker' in navigator && navigator.serviceWorker.controller ),
+    swListo: false,
+    sesionSW: 'desconocida',
+    tareasEnSW: '?',
+    recordatoriosEnSW: '?',
+  };
+  try {
+    if ( 'serviceWorker' in navigator ) {
+      await navigator.serviceWorker.ready;
+      out.swListo = true;
+    }
+    const openReq = indexedDB.open( 'TasksDB' );
+    const dbh = await new Promise( ( resolve, reject ) => {
+      openReq.onsuccess = () => resolve( openReq.result );
+      openReq.onerror = () => reject( openReq.error );
+    } );
+    if ( dbh.objectStoreNames.contains( 'userSession' ) ) {
+      const tx = dbh.transaction( [ 'userSession' ], 'readonly' );
+      const ses = await new Promise( ( resolve ) => {
+        const q = tx.objectStore( 'userSession' ).get( 'currentUser' );
+        q.onsuccess = () => resolve( q.result );
+        q.onerror = () => resolve( null );
+      } );
+      out.sesionSW = ses ? ses.email : 'SIN SESIÓN (los avisos locales no corren)';
+    }
+    const count = ( store ) => new Promise( ( resolve ) => {
+      try {
+        const tx = dbh.transaction( [ store ], 'readonly' );
+        const q = tx.objectStore( store ).getAll();
+        q.onsuccess = () => resolve( ( q.result || [] ).length );
+        q.onerror = () => resolve( '?' );
+      } catch ( e ) {
+        resolve( '?' );
+      }
+    } );
+    if ( dbh.objectStoreNames.contains( 'tasks' ) ) out.tareasEnSW = await count( 'tasks' );
+    if ( dbh.objectStoreNames.contains( 'reminders' ) ) out.recordatoriosEnSW = await count( 'reminders' );
+    dbh.close();
+  } catch ( e ) {
+    out.error = e?.message || String( e );
+  }
+  console.table( out );
+  return out;
+}
+window.pushDiagnostics = pushDiagnostics;
 
 // FUNCIÓN: Escuchar mensajes en foreground
 function setupFCMListeners() {

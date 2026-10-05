@@ -1,7 +1,13 @@
 const { onCall, HttpsError } = require( 'firebase-functions/v2/https' );
+const { defineSecret } = require( 'firebase-functions/params' );
 const admin = require( 'firebase-admin' );
 
 admin.initializeApp();
+
+// Huella de versión en cold starts: permite saber qué código corre en nube
+console.log( 'push-model v2.1 activo' );
+
+const ALERT_SECRET = defineSecret( 'ALERT_SECRET' );
 
 // Idempotencia: reclama el tag en notifLog con create() (falla si existe).
 // Evita duplicados si Cloud Tasks reintenta una alerta.
@@ -105,7 +111,7 @@ async function enqueueAlert( uid, name, atDate, payload ) {
             httpRequest: {
                 httpMethod: 'POST',
                 url: `https://${ALERTS_LOCATION}-${process.env.GCLOUD_PROJECT}.cloudfunctions.net/dispatchAlert`,
-                headers: { 'Content-Type': 'application/json', 'x-alert-secret': process.env.ALERT_SECRET || '' },
+                headers: { 'Content-Type': 'application/json', 'x-alert-secret': ALERT_SECRET.value() },
                 body: Buffer.from( JSON.stringify( payload ) ).toString( 'base64' ),
             },
             scheduleTime: { seconds: Math.floor( atDate.getTime() / 1000 ) },
@@ -113,6 +119,79 @@ async function enqueueAlert( uid, name, atDate, payload ) {
     } );
     console.log( `📅 Alerta programada: ${name} → ${atDate.toISOString()}` );
     return true;
+}
+
+// ¿Merece envío inmediato? La hora es inminente (≤60s futuro) o pasó hace
+// poco (dentro de la gracia): cubre tareas creadas minutos antes de su hora.
+function shouldCatchUp( atMs, nowMs, graceMs ) {
+    return atMs - 60000 <= nowMs && nowMs - atMs < graceMs;
+}
+
+// Lee doc de usuario una vez: zona + todos sus tokens (mapa nuevo o campo único viejo)
+async function getUserCtx( uid ) {
+    try {
+        const data = ( await admin.firestore().collection( 'users' ).doc( uid ).get() ).data() || {};
+        const map = data.fcmTokens || {};
+        const tokens = Object.keys( map );
+        if ( data.fcmToken && !tokens.includes( data.fcmToken ) ) tokens.push( data.fcmToken );
+        return { tz: data.timezone || 'America/Lima', tokens };
+    } catch ( e ) {
+        return { tz: 'America/Lima', tokens: [] };
+    }
+}
+
+// Borra un token muerto para cortar reintentos inútiles
+async function purgeDeadToken( uid, token ) {
+    try {
+        const ref = admin.firestore().collection( 'users' ).doc( uid );
+        const data = ( await ref.get() ).data() || {};
+        const updates = {};
+        if ( data.fcmToken === token ) updates.fcmToken = admin.firestore.FieldValue.delete();
+        let map = { ...( data.fcmTokens || {} ) };
+        let changed = false;
+        for ( const k of Object.keys( map ) ) {
+            if ( k === token ) {
+                delete map[ k ];
+                changed = true;
+            }
+        }
+        if ( changed ) updates.fcmTokens = map;
+        if ( Object.keys( updates ).length > 0 ) {
+            await ref.update( updates );
+            console.log( `🧹 Token muerto purgado para ${uid}` );
+        }
+    } catch ( e ) {
+        console.warn( '⚠️ purgeDeadToken:', e.message );
+    }
+}
+
+function isDeadTokenError( e ) {
+    return e?.code === 'messaging/registration-token-not-registered' ||
+        e?.code === 'messaging/invalid-registration-token';
+}
+
+// Envía a los tokens del usuario (purga muertos). Devuelve 'sent' | 'no-token' | 'gone'
+async function sendToTokens( uid, tokens, payload ) {
+    if ( !tokens || tokens.length === 0 ) {
+        console.log( `⚠️ dispatch sin token: ${payload.tag}` );
+        return 'no-token';
+    }
+    let sent = 0;
+    for ( const token of tokens ) {
+        try {
+            await sendNotification( token, payload );
+            sent++;
+        } catch ( e ) {
+            console.error( `❌ Envío a token falló (${e.code}): ${payload.tag}` );
+            if ( isDeadTokenError( e ) ) await purgeDeadToken( uid, token );
+            else throw e;
+        }
+    }
+    if ( sent > 0 ) {
+        console.log( `✅ dispatch enviado (${sent}/${tokens.length}): ${payload.tag}` );
+        return 'sent';
+    }
+    return 'gone';
 }
 
 async function cancelAlerts( uid, names ) {
@@ -130,26 +209,43 @@ function taskAlertNames( uid, docId ) {
     return TASK_ALERT_KINDS.map( ( k ) => alertTaskName( uid, docId, k ) );
 }
 
-// Programa (o cancela si se borró/completó) las 3 alertas de una tarea
-async function scheduleForTask( uid, docId, task, userTz ) {
+// Programa (o cancela si se borró/completó) las 3 alertas de una tarea.
+// Si la hora es inminente o acaba de pasar (tarea creada minutos antes),
+// envía de inmediato en vez de programar.
+async function scheduleForTask( uid, docId, task, userTz, tokens = [] ) {
     const names = taskAlertNames( uid, docId );
     await cancelAlerts( uid, names );
     if ( !task || !task.time || task.state === 'completed' ) return;
     const tz = userTz || 'America/Lima';
+    const now = Date.now();
     const at = ( mins ) => new Date( zonedTimeToUtc( task.date, task.time, tz ).getTime() + mins * 60000 );
     const jobs = [
-        [ '5min', -5, { title: `⏰ Recordatorio: ${task.title}`, body: `Tu tarea inicia en 5 minutos (${task.time})`, type: 'task-reminder' } ],
-        [ 'start', 0, { title: `🔔 Es hora de: ${task.title}`, body: `Tu tarea programada para ${task.time}`, type: 'task-start', requiresAction: 'true' } ],
-        [ 'late', 30, { title: `⚠️ Tarea Retrasada: ${task.title}`, body: 'Han pasado 30 minutos desde la hora programada', type: 'task-late' } ],
+        [ '5min', -5, 15 * 60000, { title: `⏰ Recordatorio: ${task.title}`, body: `Tu tarea inicia en 5 minutos (${task.time})`, type: 'task-reminder' } ],
+        [ 'start', 0, 15 * 60000, { title: `🔔 Es hora de: ${task.title}`, body: `Tu tarea programada para ${task.time}`, type: 'task-start', requiresAction: 'true' } ],
+        [ 'late', 30, 60 * 60000, { title: `⚠️ Tarea Retrasada: ${task.title}`, body: 'Han pasado 30 minutos desde la hora programada', type: 'task-late' } ],
     ];
-    for ( const [ kind, offset, text ] of jobs ) {
-        await enqueueAlert( uid, alertTaskName( uid, docId, kind ), at( offset ), {
+    for ( const [ kind, offset, grace, text ] of jobs ) {
+        const atDate = at( offset );
+        const payload = {
             uid, kind: `task-${kind}`, docId, dateStr: task.date, taskId: task.id || '',
             title: text.title, body: text.body, type: text.type,
             requiresAction: text.requiresAction || 'false',
             tag: `${task.id}-${kind === '5min' ? '5min' : kind}`,
             expectTime: task.time,
-        } );
+            notAfter: atDate.getTime() + grace,
+        };
+        if ( atDate.getTime() <= now + 30000 ) {
+            // Inminente o recién pasada: catch-up inmediato (con idempotencia)
+            if ( shouldCatchUp( atDate.getTime(), now, grace ) ) {
+                const claimed = await claimNotification( uid, payload.tag );
+                if ( claimed ) await sendToTokens( uid, tokens, payload );
+                else console.log( `⏭️ catch-up duplicado evitado: ${payload.tag}` );
+            } else {
+                console.log( `⏭️ Fuera de ventana, no se avisa: ${payload.tag}` );
+            }
+            continue;
+        }
+        await enqueueAlert( uid, alertTaskName( uid, docId, kind ), atDate, payload );
     }
 }
 
@@ -166,36 +262,35 @@ async function scheduleForReminder( uid, rem, userTz ) {
     const first = dates.filter( ( x ) => x.fecha ).sort( ( a, b ) => ( a.fecha < b.fecha ? -1 : 1 ) )[ 0 ];
     if ( !first ) return;
     // Aviso el mismo día 09:00 + primer día de retraso 09:00
-    await enqueueAlert( uid, names[ 0 ], zonedTimeToUtc( first.fecha, '09:00', tz ), {
+    const dueAt = zonedTimeToUtc( first.fecha, '09:00', tz );
+    await enqueueAlert( uid, names[ 0 ], dueAt, {
         uid, kind: 'rem-due', docId: rem.id, dateStr: first.fecha, taskId: '',
         title: first.title, body: first.body, type: first.type,
         tag: `rem-${rem.id}-${first.fecha}`,
+        notAfter: dueAt.getTime() + 2 * 3600 * 1000,
     } );
-    const lateDay = new Date( zonedTimeToUtc( first.fecha, '09:00', tz ).getTime() + 24 * 3600 * 1000 );
+    const lateDay = new Date( dueAt.getTime() + 24 * 3600 * 1000 );
     await enqueueAlert( uid, names[ 1 ], lateDay, {
         uid, kind: 'rem-late', docId: rem.id, dateStr: first.fecha, taskId: '',
         title: `⚠️ Atrasado: ${rem.title}`, body: 'Ya pasó su fecha programada',
         type: 'task-late', tag: `rem-${rem.id}-${first.fecha}-late`,
+        notAfter: lateDay.getTime() + 2 * 3600 * 1000,
     } );
 }
 
 async function userTz( uid ) {
-    try {
-        const doc = await admin.firestore().collection( 'users' ).doc( uid ).get();
-        return doc.data()?.timezone || 'America/Lima';
-    } catch ( e ) {
-        return 'America/Lima';
-    }
+    return ( await getUserCtx( uid ) ).tz;
 }
 
-exports.onTaskWrite = onDocumentWritten( 'users/{uid}/tasks/{taskId}', async ( event ) => {
+exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ] }, 'users/{uid}/tasks/{taskId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onTaskWrite ${uid}/${event.params.taskId} existe=${!!after} hora=${after?.time} estado=${after?.state}` );
-    await scheduleForTask( uid, event.params.taskId, after, await userTz( uid ) );
+    const ctx = await getUserCtx( uid );
+    await scheduleForTask( uid, event.params.taskId, after, ctx.tz, ctx.tokens );
 } );
 
-exports.onReminderWrite = onDocumentWritten( 'users/{uid}/reminders/{remId}', async ( event ) => {
+exports.onReminderWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ] }, 'users/{uid}/reminders/{remId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onReminderWrite ${uid}/${event.params.remId} existe=${!!after} kind=${after?.kind}` );
@@ -203,21 +298,28 @@ exports.onReminderWrite = onDocumentWritten( 'users/{uid}/reminders/{remId}', as
 } );
 
 // Ejecuta la alerta programada: valida estado actual + idempotencia y envía
-exports.dispatchAlert = onRequest( async ( req, res ) => {
+exports.dispatchAlert = onRequest( { secrets: [ ALERT_SECRET ] }, async ( req, res ) => {
     if ( req.method !== 'POST' ) {
         res.status( 405 ).send( 'Method Not Allowed' );
         return;
     }
-    if ( !process.env.ALERT_SECRET || req.get( 'x-alert-secret' ) !== process.env.ALERT_SECRET ) {
+    const secret = ALERT_SECRET.value();
+    if ( !secret || req.get( 'x-alert-secret' ) !== secret ) {
+        console.warn( `🔒 dispatch 403: secreto inválido tag=${req.body?.tag}` );
         res.status( 403 ).send( 'Forbidden' );
         return;
     }
     const p = req.body || {};
     console.log( `📨 dispatch ${p.kind} tag=${p.tag} uid=${p.uid}` );
     try {
-        const userDoc = await admin.firestore().collection( 'users' ).doc( p.uid ).get();
-        const token = userDoc.data()?.fcmToken;
-        if ( !token ) {
+        // Caducidad: un reintento viejo no debe avisar fuera de hora
+        if ( p.notAfter && Date.now() > p.notAfter ) {
+            console.log( `⏭️ dispatch caducado: ${p.tag}` );
+            res.status( 200 ).send( 'expired' );
+            return;
+        }
+        const ctx = await getUserCtx( p.uid );
+        if ( ctx.tokens.length === 0 ) {
             console.log( `⚠️ dispatch sin token: ${p.tag}` );
             res.status( 200 ).send( 'no-token' );
             return;
@@ -243,9 +345,8 @@ exports.dispatchAlert = onRequest( async ( req, res ) => {
             res.status( 200 ).send( 'duplicate' );
             return;
         }
-        await sendNotification( token, p );
-        console.log( `✅ dispatch enviado: ${p.tag}` );
-        res.status( 200 ).send( 'sent' );
+        const outcome = await sendToTokens( p.uid, ctx.tokens, p );
+        res.status( 200 ).send( outcome );
     } catch ( e ) {
         console.error( '❌ dispatchAlert:', e.message );
         res.status( 500 ).send( 'error' );
@@ -261,10 +362,10 @@ exports.backfillAlerts = onCall( async ( request ) => {
     let n = 0;
     for ( const userDoc of usersSnap.docs ) {
         const uid = userDoc.id;
-        const tz = userDoc.data()?.timezone || 'America/Lima';
+        const ctx = await getUserCtx( uid );
         const tasksSnap = await admin.firestore().collection( 'users' ).doc( uid ).collection( 'tasks' ).get();
         for ( const d of tasksSnap.docs ) {
-            await scheduleForTask( uid, d.id, d.data(), tz );
+            await scheduleForTask( uid, d.id, d.data(), ctx.tz, ctx.tokens );
             n++;
         }
         const remSnap = await admin.firestore().collection( 'users' ).doc( uid ).collection( 'reminders' ).get();
@@ -319,14 +420,13 @@ exports.sendTestNotification = onCall( async ( request ) => {
 
     const userId = request.auth.uid;
 
-    const userDoc = await admin.firestore().collection( 'users' ).doc( userId ).get();
-    const fcmToken = userDoc.data()?.fcmToken;
+    const ctx = await getUserCtx( userId );
 
-    if ( !fcmToken ) {
+    if ( ctx.tokens.length === 0 ) {
         throw new HttpsError( 'not-found', 'Token FCM no encontrado' );
     }
 
-    await sendNotification( fcmToken, {
+    await sendToTokens( userId, ctx.tokens, {
         title: '🧪 Notificación de Prueba',
         body: 'Si ves esto, las notificaciones funcionan correctamente',
         tag: 'test-notification',
