@@ -10,6 +10,9 @@ const firebaseConfig = {
 
 // Variables globales
 let tasks = {};
+// Huella de build visible (consola + diagnóstico): permite saber qué
+// código corre realmente en cada dispositivo.
+const APP_BUILD = '2026-10-06-pushfix-v1';
 // ===== MÓDULO RECORDATORIOS (pagos / festividades / horarios) =====
 // kind: 'pago' | 'festividad' | 'horario'. Las fechas efectivas van en
 // `dates[]` (pago: una por cuota; festividad/horario: ocurrencias).
@@ -1643,6 +1646,7 @@ async function requestFCMToken() {
     if ( token ) {
       console.log( 'Token FCM obtenido:', token.substring( 0, 20 ) + '...' );
       fcmToken = token;
+      updateNotificationButton();
 
       // Guardar token en Firestore
       await saveFCMToken( token );
@@ -1805,8 +1809,11 @@ async function saveFCMToken( token ) {
 // Muestra permiso, token, SW y si el SW tiene sesión + tareas para avisar.
 async function pushDiagnostics() {
   const out = {
+    build: ( typeof APP_BUILD !== 'undefined' ) ? APP_BUILD : 'desconocido',
     permiso: ( 'Notification' in window ) ? Notification.permission : 'sin-soporte',
     tokenFCM: fcmToken ? fcmToken.slice( 0, 20 ) + '...' : 'AUSENTE',
+    sesionApp: currentUser ? ( currentUser.email || 'logueado' ) : 'SIN SESIÓN (push imposible)',
+    colaPendiente: ( typeof syncQueue !== 'undefined' ) ? syncQueue.size : '?',
     swController: !!( 'serviceWorker' in navigator && navigator.serviceWorker.controller ),
     swListo: false,
     sesionSW: 'desconocida',
@@ -8191,6 +8198,15 @@ function toggleNotifications() {
   }
 
   if ( Notification.permission === "granted" ) {
+    // Si falta el token, el click reintenta registrarlo en vez de alternar
+    if ( !fcmToken && currentUser && !currentUser.isOffline && messaging ) {
+      showNotification( "Registrando push...", "info" );
+      requestFCMToken().then( ( t ) => {
+        if ( t ) showNotification( "Push registrado correctamente", "success" );
+        updateNotificationButton();
+      } );
+      return;
+    }
     notificationsEnabled = !notificationsEnabled;
 
     // CRÍTICO: Guardar preferencia inmediatamente
@@ -8278,9 +8294,20 @@ function updateNotificationButton() {
     "text-white px-3 py-2 rounded-lg transition duration-300 text-xs md:text-sm font-normal md:font-bold";
 
   if ( notificationsEnabled && hasPermission ) {
-    btn.className = `bg-green-500 hover:bg-green-600 ${baseClasses}`;
-    btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
-    btn.title = "Notificaciones activadas - Click para desactivar";
+    // Estado real del push: permiso no basta, hace falta sesión + token
+    const pushListo = currentUser && !currentUser.isOffline && !!fcmToken;
+    if ( pushListo ) {
+      btn.className = `bg-green-500 hover:bg-green-600 ${baseClasses}`;
+      btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
+      btn.title = "Push listo (permiso + sesión + token) - Click para desactivar";
+    } else {
+      const motivo = !currentUser || currentUser.isOffline
+        ? 'sin sesión: inicia sesión para activar el push'
+        : 'sin token FCM: reabre la app con internet para registrarlo';
+      btn.className = `bg-yellow-500 hover:bg-yellow-600 ${baseClasses}`;
+      btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Push incompleto';
+      btn.title = `Notificaciones incompletas (${motivo}) - Click para reintentar`;
+    }
   } else if ( hasPermission ) {
     btn.className = `bg-gray-500 hover:bg-gray-600 ${baseClasses}`;
     btn.innerHTML = '<i class="fas fa-bell-slash mr-2"></i>Notificaciones OFF';
@@ -9030,7 +9057,7 @@ async function cleanupDuplicates() {
 document.addEventListener( "DOMContentLoaded", async function () {
   if ( window.__appInitDone ) return;
   window.__appInitDone = true;
-  console.log( '🚀 Inicializando aplicación...' );
+  console.log( '🚀 Inicializando aplicación... build', APP_BUILD );
 
   isOnline = navigator.onLine;
   setupNetworkListeners();

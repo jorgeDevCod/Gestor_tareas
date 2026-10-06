@@ -5,7 +5,7 @@ const admin = require( 'firebase-admin' );
 admin.initializeApp();
 
 // Huella de versión en cold starts: permite saber qué código corre en nube
-console.log( 'push-model v2.1 activo' );
+console.log( 'push-model v2.2 activo' );
 
 const ALERT_SECRET = defineSecret( 'ALERT_SECRET' );
 
@@ -282,7 +282,7 @@ async function userTz( uid ) {
     return ( await getUserCtx( uid ) ).tz;
 }
 
-exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ] }, 'users/{uid}/tasks/{taskId}', async ( event ) => {
+exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ], retry: true }, 'users/{uid}/tasks/{taskId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onTaskWrite ${uid}/${event.params.taskId} existe=${!!after} hora=${after?.time} estado=${after?.state}` );
@@ -290,7 +290,7 @@ exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ] }, 'users/{
     await scheduleForTask( uid, event.params.taskId, after, ctx.tz, ctx.tokens );
 } );
 
-exports.onReminderWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ] }, 'users/{uid}/reminders/{remId}', async ( event ) => {
+exports.onReminderWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ], retry: true }, 'users/{uid}/reminders/{remId}', async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onReminderWrite ${uid}/${event.params.remId} existe=${!!after} kind=${after?.kind}` );
@@ -312,6 +312,16 @@ exports.dispatchAlert = onRequest( { secrets: [ ALERT_SECRET ] }, async ( req, r
     const p = req.body || {};
     console.log( `📨 dispatch ${p.kind} tag=${p.tag} uid=${p.uid}` );
     try {
+        // Cap de reintentos: Cloud Tasks reintenta sin cota por defecto.
+        // Pasados 8 intentos se da por vencida (notAfter ya cubre lo obsoleto).
+        const retryCount = parseInt( req.get( 'x-cloudtasks-taskretrycount' ) || '0', 10 );
+        if ( retryCount > 8 ) {
+            console.log( `⏭️ dispatch max-reintentos: ${p.tag}` );
+            res.status( 200 ).send( 'max-retries' );
+            return;
+        }
+        // Limpieza best-effort de notifLog (sin bloquear el envío)
+        if ( p.uid ) cleanupNotifLog( p.uid ).catch( () => {} );
         // Caducidad: un reintento viejo no debe avisar fuera de hora
         if ( p.notAfter && Date.now() > p.notAfter ) {
             console.log( `⏭️ dispatch caducado: ${p.tag}` );
