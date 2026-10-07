@@ -3433,8 +3433,11 @@ async function testPushNotification() {
     return;
   }
   showNotification( 'Enviando push de prueba... revisa la bandeja', 'info' );
+  let paso = 'inicio';
   try {
+    paso = 'obteniendo sesión (getIdToken)';
     const token = await auth.currentUser.getIdToken();
+    paso = 'contactando la nube (fetch)';
     const res = await fetch( 'https://us-central1-calendario-tareas-app.cloudfunctions.net/sendTestNotification', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -3443,11 +3446,12 @@ async function testPushNotification() {
     if ( res.ok ) {
       console.log( '✅ Push de prueba solicitado a la nube' );
     } else {
-      showNotification( 'La nube rechazó la prueba (revisa login)', 'error' );
+      showNotification( `La nube respondió ${res.status}: revisa tu login`, 'error' );
     }
   } catch ( e ) {
-    console.error( '❌ Error pidiendo push de prueba:', e );
-    showNotification( 'Sin conexión con la nube', 'error' );
+    const detalle = String( e?.message || e ).slice( 0, 120 );
+    console.error( `❌ Push de prueba falló en paso [${paso}]:`, e );
+    showNotification( `Fallo en [${paso}]: ${detalle}`, 'error' );
   }
 }
 
