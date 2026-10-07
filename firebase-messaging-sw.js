@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v5.5';
+const CACHE_VERSION = 'v5.6';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -389,7 +389,7 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v8.5 instalando...' );
+    console.log( '🔧 SW v8.6 instalando...' );
     event.waitUntil(
         Promise.all( [
             // Cache resiliente: un archivo faltante no aborta la instalación
@@ -408,7 +408,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v8.5 activándose...' );
+    console.log( '🚀 SW v8.6 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -468,11 +468,22 @@ messaging.onBackgroundMessage( ( payload ) => {
 // ==========================================
 self.addEventListener( 'fetch', ( event ) => {
     const { request } = event;
+
+    // NUNCA interceptar non-GET: Cache.put() rechaza POST/PUT/DELETE y los
+    // preflight OPTIONS deben pasar directo. Sin esto, los POST a
+    // cloudfunctions.net devolvían un 503 sintético sin cabeceras CORS y el
+    // navegador los reportaba como error CORS ("Failed to fetch").
+    if ( request.method !== 'GET' ) {
+        return;
+    }
+
     const url = new URL( request.url );
 
     if ( url.hostname.includes( 'googleapis.com' ) ||
         url.hostname.includes( 'firebaseapp.com' ) ||
-        url.hostname.includes( 'google.com' ) ) {
+        url.hostname.includes( 'google.com' ) ||
+        url.hostname.includes( 'cloudfunctions.net' ) ||
+        url.hostname.includes( 'firebaseio.com' ) ) {
         return;
     }
 
