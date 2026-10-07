@@ -421,27 +421,3 @@ async function sendNotification( token, data ) {
         throw error;
     }
 }
-
-// 🔥 Función de prueba
-exports.sendTestNotification = onCall( async ( request ) => {
-    if ( !request.auth ) {
-        throw new HttpsError( 'unauthenticated', 'Usuario no autenticado' );
-    }
-
-    const userId = request.auth.uid;
-
-    const ctx = await getUserCtx( userId );
-
-    if ( ctx.tokens.length === 0 ) {
-        throw new HttpsError( 'not-found', 'Token FCM no encontrado' );
-    }
-
-    await sendToTokens( userId, ctx.tokens, {
-        title: '🧪 Notificación de Prueba',
-        body: 'Si ves esto, las notificaciones funcionan correctamente',
-        tag: 'test-notification',
-        type: 'test'
-    } );
-
-    return { success: true, message: 'Notificación de prueba enviada' };
-} );

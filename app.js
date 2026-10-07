@@ -2777,9 +2777,6 @@ window.addEventListener( 'appinstalled', () => {
 
   installButtonShown = false;
   deferredPrompt = null;
-
-  // Opcional: mostrar mensaje de éxito
-  showNotification( 'Aplicación instalada correctamente', 'success' );
 } );
 
 // ===== DELEGACIÓN GLOBAL DE ACCIONES DINÁMICAS =====
@@ -2843,9 +2840,6 @@ document.addEventListener( 'click', ( e ) => {
     case 'fab-create':
       openCreateTaskModal();
       break;
-    case 'test-push':
-      testPushNotification();
-      break;
     case 'month-year-picker':
       showMonthYearPicker();
       break;
@@ -2898,7 +2892,6 @@ document.addEventListener( 'click', ( e ) => {
         if ( n ) n.value = id === 'pagoCuotas' ? '3' : '';
       } );
       renderPagoPreview();
-      showNotification( 'Formulario de pago reiniciado', 'info' );
       break;
     case 'fest-registrar':
       festRegistrar();
@@ -2908,14 +2901,12 @@ document.addEventListener( 'click', ( e ) => {
         const n = document.getElementById( id );
         if ( n ) n.value = '';
       } );
-      showNotification( 'Formulario reiniciado', 'info' );
       break;
     case 'hor-registrar':
       horRegistrar();
       break;
     case 'hor-reiniciar':
       renderRemindersTab();
-      showNotification( 'Formulario reiniciado', 'info' );
       break;
     case 'reminder-edit':
       editReminder( id );
@@ -3187,7 +3178,6 @@ function resetForm() {
   } );
 
   setupDateInput();
-  showNotification( "Formulario reiniciado", "info" );
 
   const taskTimeInput = document.getElementById( "taskTime" );
   if ( taskTimeInput ) {
@@ -3431,36 +3421,6 @@ async function maybeBackfillAlerts() {
     }
   } catch ( e ) {
     console.warn( '⚠️ Backfill pendiente (reintentará al entrar):', e?.message || e );
-  }
-}
-
-// Prueba punta a punta del push: invoca sendTestNotification en la nube.
-// Si llega a la bandeja, todo el tubo FCM funciona en este aparato.
-async function testPushNotification() {
-  if ( !currentUser || !isOnline || !auth?.currentUser ) {
-    showNotification( 'Inicia sesión con internet para probar', 'error' );
-    return;
-  }
-  showNotification( 'Enviando push de prueba... revisa la bandeja', 'info' );
-  let paso = 'inicio';
-  try {
-    paso = 'obteniendo sesión (getIdToken)';
-    const token = await auth.currentUser.getIdToken();
-    paso = 'contactando la nube (fetch)';
-    const res = await fetch( 'https://us-central1-calendario-tareas-app.cloudfunctions.net/sendTestNotification', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify( { data: {} } ),
-    } );
-    if ( res.ok ) {
-      console.log( '✅ Push de prueba solicitado a la nube' );
-    } else {
-      showNotification( `La nube respondió ${res.status}: revisa tu login`, 'error' );
-    }
-  } catch ( e ) {
-    const detalle = String( e?.message || e ).slice( 0, 120 );
-    console.error( `❌ Push de prueba falló en paso [${paso}]:`, e );
-    showNotification( `Fallo en [${paso}]: ${detalle}`, 'error' );
   }
 }
 
@@ -4497,8 +4457,6 @@ function pauseTask( dateStr, taskId ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
   }
-
-  showNotification( "Tarea pausada", "info" );
 }
 
 function resumeTask( dateStr, taskId ) {
@@ -4533,8 +4491,6 @@ function resumeTask( dateStr, taskId ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
   }
-
-  showNotification( "Tarea reanudada", "success" );
 }
 
 function showDeletedTasksModal() {
@@ -5697,6 +5653,14 @@ function formatMinutes( minutes ) {
   return `${h}h ${m}m`;
 }
 
+// Al ingresar: un solo audio por sesión aunque haya varios avisos
+let entryAudioDone = false;
+function entryAlert( type ) {
+  if ( entryAudioDone ) return;
+  entryAudioDone = true;
+  alertTask( type );
+}
+
 // Al ingresar: recordatorios que vencen hoy o están atrasados (una vez/sesión)
 let entryRemindersNotified = false;
 function notifyRemindersOnEntry() {
@@ -5724,7 +5688,7 @@ function notifyRemindersOnEntry() {
   if ( msgs.length === 0 ) return;
   const msg = msgs.slice( 0, 3 ).join( ' • ' ) + ( msgs.length > 3 ? ` (+${msgs.length - 3} más)` : '' );
   showInAppNotification( '🔔 Recordatorios', msg, 'warning' );
-  alertTask( msgs.some( ( m ) => m.includes( 'etrasa' ) ) ? 'task-late' : 'task-reminder' );
+  entryAlert( msgs.some( ( m ) => m.includes( 'etrasa' ) ) ? 'task-late' : 'task-reminder' );
 }
 
 // Al ingresar a la plataforma: avisa UNA vez por sesión si hay atrasadas hoy.
@@ -5742,7 +5706,7 @@ function notifyOverdueOnEntry() {
     : `Tienes ${overdue.length} tareas atrasadas sin iniciar`;
 
   showInAppNotification( '⚠️ Tareas atrasadas', msg, 'warning' );
-  alertTask( 'task-late' );
+  entryAlert( 'task-late' );
 
   if ( notificationsEnabled && 'Notification' in window && Notification.permission === 'granted' ) {
     showDesktopNotificationPWA( '⚠️ Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );
