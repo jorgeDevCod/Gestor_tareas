@@ -227,16 +227,19 @@ const EX = ( () => {
   }
 
   // ---------- HORARIOS (matriz semanal) ----------
-  async function horarios( style, ids ) {
-    const list = Object.values( reminders ).filter( ( r ) => r && r.kind === 'horario' && ( !ids || ids.includes( r.id ) ) );
-    // Celda: día semana (0-6) -> hora inicio bloque -> [textos]
+  // Colector puro (testeable): agrupa por día de semana y bloque de 1h.
+  // El MISMO recordatorio aparece UNA sola vez por celda aunque tenga
+  // varias fechas el mismo día de semana (repeticiones semanales);
+  // actividades DISTINTAS sí se apilan con '---'.
+  function collectHorarioMatrix( list ) {
     const grid = {};
     let minH = 24, maxH = -1;
     const toMin = ( t ) => {
       const [ h, m ] = String( t || '0:0' ).split( ':' ).map( Number );
       return h * 60 + ( m || 0 );
     };
-    list.forEach( ( r ) => {
+    ( list || [] ).forEach( ( r ) => {
+      if ( !r ) return;
       ( r.dates || [] ).forEach( ( dateStr ) => {
         const wd = new Date( dateStr + 'T12:00:00' ).getDay(); // 0 Dom
         const startMin = toMin( r.inicio );
@@ -247,12 +250,22 @@ const EX = ( () => {
           minH = Math.min( minH, h );
           maxH = Math.max( maxH, h );
           const key = `${wd}|${h}`;
-          ( grid[ key ] = grid[ key ] || [] ).push(
-            `${r.title}\n${r.inicio || ''}${r.fin ? `–${r.fin}` : ''}`
-          );
+          const cell = ( grid[ key ] = grid[ key ] || [] );
+          if ( !cell.some( ( e ) => e.id === r.id ) ) {
+            cell.push( {
+              id: r.id,
+              text: `${r.title}\n${r.inicio || ''}${r.fin ? `–${r.fin}` : ''}`,
+            } );
+          }
         }
       } );
     } );
+    return { grid, minH, maxH };
+  }
+
+  async function horarios( style, ids ) {
+    const list = Object.values( reminders ).filter( ( r ) => r && r.kind === 'horario' && ( !ids || ids.includes( r.id ) ) );
+    const { grid, minH, maxH } = collectHorarioMatrix( list );
     if ( maxH < 0 ) {
       showNotification( 'No hay horarios para exportar', 'info' );
       return false;
@@ -268,7 +281,7 @@ const EX = ( () => {
       const row = [ label ];
       order.forEach( ( wd ) => {
         const items = grid[ `${wd}|${h}` ] || [];
-        row.push( items.join( '\n---\n' ) );
+        row.push( items.map( ( e ) => e.text ).join( '\n---\n' ) );
       } );
       ws.addRow( row );
     }
@@ -302,5 +315,5 @@ const EX = ( () => {
     return true;
   }
 
-  return { tareas, pagos, festividades, horarios, hexToArgb };
+  return { tareas, pagos, festividades, horarios, hexToArgb, collectHorarioMatrix };
 } )();
