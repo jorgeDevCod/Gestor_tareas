@@ -2799,7 +2799,6 @@ document.addEventListener( 'click', ( e ) => {
       goToTask( date, id );
       break;
     case 'edit-task':
-      closeAllModals();
       quickEditTaskAdvanced( date, id );
       break;
     case 'delete-task':
@@ -5058,6 +5057,9 @@ function executeSingleDelete( dateStr, taskId, task ) {
     showDailyTaskPanel( dateStr, day );
   }
 
+  // 6b. Refrescar el modal de día si sigue abierto
+  refreshDayModal( dateStr );
+
   showNotification( "Tarea eliminada exitosamente", "success" );
 
   // 7. CRÍTICO: Procesar cola inmediatamente
@@ -5068,9 +5070,8 @@ function executeSingleDelete( dateStr, taskId, task ) {
   }
 }
 
-// MODAL DE ELIMINACIÓN MASIVA
+// MODAL DE ELIMINACIÓN MASIVA (se abre ENCIMA del modal que la invocó)
 function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
-  closeAllModals();
 
   const modal = document.createElement( "div" );
   modal.id = "bulkDeleteModal";
@@ -5173,12 +5174,10 @@ function showBulkDeleteModal( dateStr, taskId, task, similarTasks ) {
   document.body.appendChild( modal );
 }
 
-// OPCIÓN 1: ELIMINAR SOLO UNA TAREA
+// OPCIÓN 1: ELIMINAR SOLO UNA TAREA (el modal de borrado queda debajo)
 function deleteSingleTaskFromBulk( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
-
-  closeAllModals();
 
   if ( confirm( `¿Confirmas eliminar esta tarea solo del día seleccionado?\n\n"${task.title}"\n\nEsta acción no se puede deshacer.` ) ) {
     executeSingleDelete( dateStr, taskId, task );
@@ -5190,11 +5189,7 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
 
-  closeAllModals();
-
-  // Buscar todas las fechas con esta tarea
-  const similarTasks = findSimilarTasksForDelete( task.title, task.time );
-
+  // Se abre ENCIMA del modal que la invocó
   const modal = document.createElement( "div" );
   modal.id = "bulkDeleteConfirmModal";
   modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
@@ -5257,12 +5252,10 @@ function showBulkDeleteConfirmation( dateStr, taskId, mode ) {
   document.body.appendChild( modal );
 }
 
-// OPCIÓN 3: SELECTOR DE DÍAS PERSONALIZADOS
+// OPCIÓN 3: SELECTOR DE DÍAS PERSONALIZADOS (se abre ENCIMA)
 function showCustomDatesDeleteSelector( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
-
-  closeAllModals();
 
   // Encontrar todas las fechas con esta tarea
   const matchingDates = [];
@@ -5375,9 +5368,7 @@ function proceedWithCustomDelete( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( t => t.id === taskId );
   if ( !task ) return;
 
-  closeAllModals();
-
-  // Confirmación final
+  // Confirmación final (el selector queda debajo)
   const confirmMsg = `¿Eliminar "${task.title}" en ${selectedDates.length} día${selectedDates.length > 1 ? 's' : ''}?\n\nEsta acción no se puede deshacer.`;
   if ( !confirm( confirmMsg ) ) {
     return;
@@ -5471,7 +5462,11 @@ function executeBulkDelete( dateStr, taskId, mode ) {
   renderCalendar();
   updateProgress();
 
-  closeAllModals();
+  // Cerrar solo los modales de borrado y refrescar el día si sigue abierto
+  [ "bulkDeleteModal", "bulkDeleteConfirmModal", "customDatesDeleteModal" ].forEach( ( id ) => {
+    document.getElementById( id )?.remove();
+  } );
+  refreshDayModal( dateStr );
   showNotification(
     ` ${deletedCount} tarea${deletedCount > 1 ? 's' : ''} eliminada${deletedCount > 1 ? 's' : ''} en ${targetDates.length} día${targetDates.length > 1 ? 's' : ''}`,
     "success"
@@ -5492,10 +5487,8 @@ function showAdvancedEditModal( dateStr, taskId ) {
     return;
   }
 
-  // Cerrar cualquier modal existente
-  closeAllModals();
-
   //  NUEVO: Buscar si hay tareas repetidas (mismo título y hora)
+  // (se abre ENCIMA del modal que la invocó)
   const similarTasks = findSimilarTasks( task.title, task.time );
   const hasRecurring = similarTasks.count > 1;
 
@@ -5781,8 +5774,8 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
   updateProgress();
   enqueueSync( "upsert", dateStr, updatedTask );
 
-  // Cerrar modal y actualizar UI
-  closeAllModals();
+  // Cerrar solo este modal y actualizar UI
+  document.getElementById( "advancedEditModal" )?.remove();
   showNotification( "Tarea actualizada exitosamente", "success" );
 
   // Actualizar panel si está abierto para esta fecha
@@ -5790,18 +5783,18 @@ function updateAdvancedTaskFromPanelImproved( dateStr, taskId ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
   }
+
+  // Refrescar el modal de día si sigue abierto
+  refreshDayModal( dateStr );
 }
 
-// Edición rápida mejorada
+// Edición rápida mejorada (se abre ENCIMA del modal que la invocó)
 function quickEditTaskAdvanced( dateStr, taskId ) {
   const task = tasks[ dateStr ]?.find( ( t ) => t.id === taskId );
   if ( !task ) {
     showNotification( "Tarea no encontrada", "error" );
     return;
   }
-
-  // Cerrar cualquier modal existente
-  closeAllModals();
 
   const modal = document.createElement( "div" );
   modal.id = "quickEditModal";
@@ -5917,8 +5910,8 @@ function saveQuickEditImproved( dateStr, taskId ) {
   updateProgress();
   enqueueSync( "upsert", dateStr, task );
 
-  // Cerrar modal y mostrar notificación
-  closeAllModals();
+  // Cerrar solo este modal y mostrar notificación
+  document.getElementById( "quickEditModal" )?.remove();
   showNotification( "Tarea actualizada exitosamente", "success" );
 
   // Actualizar panel si está abierto
@@ -5926,6 +5919,9 @@ function saveQuickEditImproved( dateStr, taskId ) {
     const day = new Date( dateStr + "T12:00:00" ).getDate();
     showDailyTaskPanel( dateStr, day );
   }
+
+  // Refrescar el modal de día si sigue abierto
+  refreshDayModal( dateStr );
 }
 
 //addQuickTaskToSelectedDay con sync automático
@@ -6107,6 +6103,15 @@ function showDayTasksModal( dateStr ) {
   } );
 
   document.body.appendChild( modal );
+}
+
+// Re-renderiza el modal de día si está abierto (tras editar/eliminar).
+// Sin esto el modal queda con la lista vieja aunque calendario y panel ya cambiaron.
+function refreshDayModal( dateStr ) {
+  if ( !dateStr ) return;
+  if ( document.getElementById( 'dayTasksModal' ) ) {
+    showDayTasksModal( dateStr );
+  }
 }
 
 // ===== MODAL TRIPLE DE LIMPIEZA (semana / mes / días específicos) =====
@@ -6786,18 +6791,29 @@ function deleteReminder( id ) {
   const r = reminders[ id ];
   if ( !r ) return;
   if ( !confirm( `¿Eliminar "${r.title}"?` ) ) return;
+  const focusDate = reminderFocusDate( r );
   if ( r.kind === 'horario' ) deleteReminderLinkedTasks( id );
   delete reminders[ id ];
   saveReminders();
   enqueueReminderSync( 'delete', { id } );
-  closeAllModals();
+  refreshDayModal( focusDate );
   showNotification( 'Recordatorio eliminado', 'success' );
+}
+
+// Fecha representativa para refrescar el modal de día tras operar
+function reminderFocusDate( r ) {
+  if ( !r ) return null;
+  if ( r.kind === 'pago' && r.cuotas?.length ) {
+    return [ ...r.cuotas ].map( ( c ) => c.fecha ).sort()[ 0 ] || null;
+  }
+  if ( r.dates?.length ) return [ ...r.dates ].sort()[ 0 ];
+  return r.fechaBase || null;
 }
 
 function editReminder( id ) {
   const r = reminders[ id ];
   if ( !r ) return;
-  closeAllModals();
+  // Se abre ENCIMA del modal que la invocó
 
   const modal = document.createElement( 'div' );
   modal.id = 'editReminderModal';
@@ -6892,7 +6908,8 @@ function saveReminderEdit( id ) {
   }
   saveReminders();
   enqueueReminderSync( 'upsert', r );
-  closeAllModals();
+  document.getElementById( "editReminderModal" )?.remove();
+  refreshDayModal( reminderFocusDate( r ) );
   showNotification( 'Recordatorio actualizado', 'success' );
 }
 
@@ -8294,19 +8311,19 @@ function updateNotificationButton() {
     "text-white px-3 py-2 rounded-lg transition duration-300 text-xs md:text-sm font-normal md:font-bold";
 
   if ( notificationsEnabled && hasPermission ) {
-    // Estado real del push: permiso no basta, hace falta sesión + token
-    const pushListo = currentUser && !currentUser.isOffline && !!fcmToken;
-    if ( pushListo ) {
+    // Estado real del push: sin sesión solo hay notificaciones locales;
+    // el aviso "incompleto" aplica únicamente logueado sin token.
+    const sesionOk = !currentUser || currentUser.isOffline || !!fcmToken;
+    if ( sesionOk ) {
       btn.className = `bg-green-500 hover:bg-green-600 ${baseClasses}`;
       btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Notificaciones ON';
-      btn.title = "Push listo (permiso + sesión + token) - Click para desactivar";
+      btn.title = currentUser && !currentUser.isOffline
+        ? "Push listo (permiso + sesión + token) - Click para desactivar"
+        : "Notificaciones locales activadas - Inicia sesión para push en la nube";
     } else {
-      const motivo = !currentUser || currentUser.isOffline
-        ? 'sin sesión: inicia sesión para activar el push'
-        : 'sin token FCM: reabre la app con internet para registrarlo';
       btn.className = `bg-yellow-500 hover:bg-yellow-600 ${baseClasses}`;
       btn.innerHTML = '<i class="fas fa-bell mr-2"></i>Push incompleto';
-      btn.title = `Notificaciones incompletas (${motivo}) - Click para reintentar`;
+      btn.title = "Sin token FCM: reabre la app con internet para registrarlo - Click para reintentar";
     }
   } else if ( hasPermission ) {
     btn.className = `bg-gray-500 hover:bg-gray-600 ${baseClasses}`;
