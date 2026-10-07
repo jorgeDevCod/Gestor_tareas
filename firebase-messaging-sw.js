@@ -1,6 +1,20 @@
-// 🔥 SERVICE WORKER CON FCM BACKGROUND v8.0 - NOTIFICACIONES PERSISTENTES
-importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js' );
-importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js' );
+// 🔥 SERVICE WORKER CON FCM BACKGROUND v8.7 - NOTIFICACIONES PERSISTENTES
+// importScripts con reintento: si gstatic falla (red/bloqueador), el SW igual
+// instala y el scheduler LOCAL sigue avisando; solo el push FCM queda inactivo.
+let messaging = null;
+async function loadFirebaseScripts( retries = 3 ) {
+    for ( let i = 1; i <= retries; i++ ) {
+        try {
+            importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js' );
+            importScripts( 'https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js' );
+            return true;
+        } catch ( e ) {
+            console.warn( `⚠️ Intento ${i}/${retries} cargando Firebase en SW:`, e?.message || e );
+            if ( i < retries ) await new Promise( ( r ) => setTimeout( r, 2000 * i ) );
+        }
+    }
+    return false;
+}
 
 // Configuración Firebase
 const firebaseConfig = {
@@ -12,10 +26,10 @@ const firebaseConfig = {
     appId: "1:646091363424:web:d923bbcc0224bd1bed5f05",
 };
 
-firebase.initializeApp( firebaseConfig );
-const messaging = firebase.messaging();
+// El init real (initializeApp + messaging) ocurre en initFirebaseSW() de
+// forma asíncrona para no tumbar el registro si gstatic falla.
 
-const CACHE_VERSION = 'v5.6';
+const CACHE_VERSION = 'v5.7';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -389,7 +403,7 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v8.6 instalando...' );
+    console.log( '🔧 SW v8.7 instalando...' );
     event.waitUntil(
         Promise.all( [
             // Cache resiliente: un archivo faltante no aborta la instalación
@@ -431,8 +445,10 @@ self.addEventListener( 'activate', ( event ) => {
 } );
 
 // ==========================================
-// 🔥 FCM BACKGROUND MESSAGING
-// ==========================================
+// 🔥 FCM BACKGROUND MESSAGING (se registra cuando Firebase carga OK;
+// si gstatic falla, el scheduler local sigue funcionando sin FCM)
+function setupBackgroundMessaging() {
+if ( !messaging ) return;
 messaging.onBackgroundMessage( ( payload ) => {
     console.log( '📨 Mensaje FCM en background:', payload );
 
@@ -462,6 +478,28 @@ messaging.onBackgroundMessage( ( payload ) => {
 
     return self.registration.showNotification( notificationTitle, notificationOptions );
 } );
+} // fin setupBackgroundMessaging
+
+async function initFirebaseSW() {
+    if ( !( await loadFirebaseScripts() ) ) {
+        console.warn( '⚠️ SW sin FCM (gstatic inaccesible): solo scheduler local activo' );
+        return false;
+    }
+    try {
+        firebase.initializeApp( firebaseConfig );
+        if ( firebase.messaging && firebase.messaging.isSupported() ) {
+            messaging = firebase.messaging();
+            setupBackgroundMessaging();
+            console.log( '✅ FCM en SW listo' );
+        }
+        return true;
+    } catch ( e ) {
+        console.warn( '⚠️ FCM en SW no disponible:', e?.message || e );
+        messaging = null;
+        return false;
+    }
+}
+initFirebaseSW();
 
 // ==========================================
 // FETCH

@@ -128,39 +128,48 @@ if ( 'serviceWorker' in navigator ) {
   } );
 
   window.addEventListener( 'load', async () => {
-    try {
-      // Verificar si ya hay un SW registrado
-      const existingRegistration = await navigator.serviceWorker.getRegistration( '/firebase-messaging-sw.js' );
-
-      const registration = existingRegistration || await navigator.serviceWorker.register( '/firebase-messaging-sw.js', {
-        scope: '/',
-        updateViaCache: 'none' // Forzar actualización sin caché
-      } );
-
-      console.log( existingRegistration ? 'Service Worker ya registrado:' : 'Service Worker registrado con éxito:', registration.scope );
-
-      // Chequeo inicial + polling: vital en PWA instalada móvil, donde el
-      // SW puede quedar desactualizado y servir JS viejo (funciones "muertas").
-      const checkSwUpdate = () => {
-        registration.update().then( () => {
-          console.log( '🔄 Chequeo de SW completado' );
-        } ).catch( () => {} );
-      };
-      checkSwUpdate();
-      setInterval( checkSwUpdate, 30 * 60 * 1000 );
-      document.addEventListener( 'visibilitychange', () => {
-        if ( document.visibilityState === 'visible' ) checkSwUpdate();
-      } );
-
-      // Empujar estado completo al SW cuando esté listo. Sin esto, si la
-      // primera carga ocurrió sin controller, el SW jamás recibe las tareas
-      // y su scheduler local no tiene nada que avisar.
-      pushStateToSW();
-
-    } catch ( error ) {
-      console.error( '❌ Error al registrar el Service Worker:', error );
+    // Reintentos: si la red falla al primer intento (p. ej. gstatic caído),
+    // el SW quedaría sin registrar y no habría push ni scheduler local.
+    for ( let attempt = 1; attempt <= 3; attempt++ ) {
+      try {
+        await registerServiceWorkerOnce();
+        break;
+      } catch ( error ) {
+        console.error( `❌ Error al registrar el Service Worker (intento ${attempt}/3):`, error );
+        if ( attempt < 3 ) await new Promise( ( r ) => setTimeout( r, 5000 * attempt ) );
+      }
     }
   } );
+}
+
+async function registerServiceWorkerOnce() {
+  // Verificar si ya hay un SW registrado
+  const existingRegistration = await navigator.serviceWorker.getRegistration( '/firebase-messaging-sw.js' );
+
+  const registration = existingRegistration || await navigator.serviceWorker.register( '/firebase-messaging-sw.js', {
+    scope: '/',
+    updateViaCache: 'none' // Forzar actualización sin caché
+  } );
+
+  console.log( existingRegistration ? 'Service Worker ya registrado:' : 'Service Worker registrado con éxito:', registration.scope );
+
+  // Chequeo inicial + polling: vital en PWA instalada móvil, donde el
+  // SW puede quedar desactualizado y servir JS viejo (funciones "muertas").
+  const checkSwUpdate = () => {
+    registration.update().then( () => {
+      console.log( '🔄 Chequeo de SW completado' );
+    } ).catch( () => {} );
+  };
+  checkSwUpdate();
+  setInterval( checkSwUpdate, 30 * 60 * 1000 );
+  document.addEventListener( 'visibilitychange', () => {
+    if ( document.visibilityState === 'visible' ) checkSwUpdate();
+  } );
+
+  // Empujar estado completo al SW cuando esté listo. Sin esto, si la
+  // primera carga ocurrió sin controller, el SW jamás recibe las tareas
+  // y su scheduler local no tiene nada que avisar.
+  pushStateToSW();
 }
 
 // Envía tareas + recordatorios + sesión al SW (con reintento si aún no hay controller)
