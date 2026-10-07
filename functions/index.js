@@ -282,7 +282,7 @@ async function userTz( uid ) {
     return ( await getUserCtx( uid ) ).tz;
 }
 
-exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ], retry: true }, 'users/{uid}/tasks/{taskId}', async ( event ) => {
+exports.onTaskWrite = onDocumentWritten( { document: 'users/{uid}/tasks/{taskId}', secrets: [ ALERT_SECRET ], retry: true }, async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onTaskWrite ${uid}/${event.params.taskId} existe=${!!after} hora=${after?.time} estado=${after?.state}` );
@@ -290,7 +290,7 @@ exports.onTaskWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ], retry: tru
     await scheduleForTask( uid, event.params.taskId, after, ctx.tz, ctx.tokens );
 } );
 
-exports.onReminderWrite = onDocumentWritten( { secrets: [ ALERT_SECRET ], retry: true }, 'users/{uid}/reminders/{remId}', async ( event ) => {
+exports.onReminderWrite = onDocumentWritten( { document: 'users/{uid}/reminders/{remId}', secrets: [ ALERT_SECRET ], retry: true }, async ( event ) => {
     const uid = event.params.uid;
     const after = event.data?.after?.data() || null;
     console.log( `📝 onReminderWrite ${uid}/${event.params.remId} existe=${!!after} kind=${after?.kind}` );
