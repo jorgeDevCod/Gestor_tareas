@@ -6963,21 +6963,43 @@ const EX_TYPES = {
 
 function exColorField( key, label, def ) {
   return `
-    <div>
-      <label class="${labelCls}">${label}</label>
-      <div class="flex items-center gap-1.5 flex-wrap" data-excolor="${key}">
+    <div class="rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-3 space-y-2.5" data-excolor="${key}">
+      <div class="flex items-center justify-between gap-2">
+        <label class="${labelCls} !mb-0">${label}</label>
+        <span class="flex items-center gap-2 text-[11px] text-gray-500">
+          Elegido
+          <span id="ex-${key}-prev" class="w-8 h-8 rounded-full border-2 border-white shadow-md inline-block" style="background:${def}" title="Vista previa"></span>
+        </span>
+      </div>
+      <p class="text-[11px] text-gray-500">Toca un color:</p>
+      <div class="grid grid-cols-8 gap-2">
         ${EX_PRESETS.map( ( c ) => `
           <button data-action="export-pick" data-key="${key}" data-c="${c}"
-                  class="w-6 h-6 rounded-full border-2 border-white shadow hover:scale-110 transition"
-                  style="background:${c}" title="${c}"></button>` ).join( '' )}
-        <input type="color" id="ex-${key}-pick" value="${def}" class="w-8 h-8 p-0 border rounded cursor-pointer bg-transparent" title="Paleta">
-        <input id="ex-${key}-hex" value="${def}" maxlength="7" placeholder="#rrggbb"
-               class="w-20 px-2 py-1 border border-gray-300 rounded text-xs font-mono" title="Hexadecimal">
-        <input id="ex-${key}-rgb" placeholder="r,g,b"
-               class="w-24 px-2 py-1 border border-gray-300 rounded text-xs font-mono" title="RGB (ej: 37,99,235)">
-        <span id="ex-${key}-prev" class="w-6 h-6 rounded-full border border-gray-300 inline-block" style="background:${def}" title="Vista previa"></span>
+                  class="ex-preset w-full aspect-square min-h-[36px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
+                  style="background:${c}" title="${c}" aria-label="Color ${c}"></button>` ).join( '' )}
+      </div>
+      <p class="text-[11px] text-gray-500">O crea el tuyo:</p>
+      <div class="flex items-center gap-2">
+        <input type="color" id="ex-${key}-pick" value="${def}" class="w-11 h-11 p-1 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer bg-white dark:bg-gray-800 shrink-0" title="Paleta personalizada">
+        <input id="ex-${key}-hex" value="${def}" maxlength="7" placeholder="#rrggbb" autocomplete="off"
+               class="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="Hexadecimal">
+        <input id="ex-${key}-rgb" placeholder="r,g,b" autocomplete="off" inputmode="numeric"
+               class="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="RGB (ej: 37,99,235)">
       </div>
     </div>`;
+}
+
+function exMarkPreset( key, hex ) {
+  const box = document.querySelector( `[data-excolor="${key}"]` );
+  if ( !box ) return;
+  const want = String( hex || '' ).toLowerCase();
+  box.querySelectorAll( '.ex-preset' ).forEach( ( b ) => {
+    const on = String( b.dataset.c || '' ).toLowerCase() === want;
+    b.classList.toggle( 'ring-2', on );
+    b.classList.toggle( 'ring-offset-2', on );
+    b.classList.toggle( 'ring-gray-800', on );
+    b.classList.toggle( 'dark:ring-white', on );
+  } );
 }
 
 function exSetColor( key, hex ) {
@@ -6991,10 +7013,16 @@ function exSetColor( key, hex ) {
   if ( !/^#[0-9a-fA-F]{6}$/.test( h ) ) return;
   const pick = document.getElementById( `ex-${key}-pick` );
   const hexI = document.getElementById( `ex-${key}-hex` );
+  const rgbI = document.getElementById( `ex-${key}-rgb` );
   const prev = document.getElementById( `ex-${key}-prev` );
   if ( pick ) pick.value = h;
   if ( hexI ) hexI.value = h;
+  if ( rgbI ) {
+    const n = [ 1, 3, 5 ].map( ( i ) => parseInt( h.slice( i, i + 2 ), 16 ) );
+    rgbI.value = n.join( ',' );
+  }
   if ( prev ) prev.style.background = h;
+  exMarkPreset( key, h );
 }
 
 function exGetColor( key, def ) {

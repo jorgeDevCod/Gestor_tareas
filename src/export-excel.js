@@ -292,7 +292,8 @@ const EX = ( () => {
         if ( n === 1 ) {
           paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
         } else if ( colNumber === 1 ) {
-          paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
+          // Columna Hora: color de CUERPO (no de cabecera), en negrita como rótulo
+          paint( cell, { bg: style.bg, bold: true, hAlign: 'center' } );
         } else {
           paint( cell, { bg: style.bg, hAlign: 'center', vAlign: 'middle' } );
         }
