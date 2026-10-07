@@ -1,12 +1,21 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Cada usuario solo accede a su propio documento y subtareas.
-    // Coincide con app.js: users/{uid}/tasks/{date_taskId} + campo fcmToken.
+    // Cada usuario solo accede a su propio documento y subcolecciones.
+    // Coincide con app.js: users/{uid}, tasks, reminders, taskLogs + campo fcmToken.
+    // (notifLog solo lo toca el Admin SDK, que ignora las reglas.)
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
 
       match /tasks/{taskId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /reminders/{reminderId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /taskLogs/{logId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
     }
