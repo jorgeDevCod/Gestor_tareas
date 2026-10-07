@@ -15,7 +15,7 @@ const firebaseConfig = {
 firebase.initializeApp( firebaseConfig );
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = 'v5.4';
+const CACHE_VERSION = 'v5.5';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -389,7 +389,7 @@ async function clearTaskNotifications( taskId ) {
 // INSTALL / ACTIVATE
 // ==========================================
 self.addEventListener( 'install', ( event ) => {
-    console.log( '🔧 SW v8.4 instalando...' );
+    console.log( '🔧 SW v8.5 instalando...' );
     event.waitUntil(
         Promise.all( [
             // Cache resiliente: un archivo faltante no aborta la instalación
@@ -408,7 +408,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v8.4 activándose...' );
+    console.log( '🚀 SW v8.5 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -672,8 +672,21 @@ async function checkTaskNotifications() {
     }
 }
 
-async function showNotification( options ) {
-    try {
+// Patrones de vibración por tipo (duplicado de app.js: el SW no comparte scope)
+function getVibrationPattern( type ) {
+    const patterns = {
+        'default': [ 200, 100, 200 ],
+        'task-reminder': [ 300, 100, 300 ],
+        'reminder': [ 300, 100, 300 ],
+        'task-start': [ 200, 50, 200, 50, 400 ],
+        'start': [ 200, 50, 200, 50, 400 ],
+        'task-late': [ 100, 100, 100, 100, 100 ],
+        'late': [ 100, 100, 100, 100, 100 ]
+    };
+    return patterns[ type ] || patterns.default;
+}
+
+async function showNotification( options ) {    try {
         await self.registration.showNotification( options.title, {
             body: options.body,
             icon: options.icon || '/images/IconLogo.png',
@@ -771,6 +784,19 @@ self.addEventListener( 'message', async ( event ) => {
 
         case 'CLEAR_TASK_NOTIFICATION':
             await clearTaskNotifications( data.taskId );
+            break;
+
+        case 'SHOW_NOTIFICATION':
+            // La app en primer plano (PWA) delega aquí el aviso del sistema.
+            // Sin este caso el mensaje se perdía y solo quedaba el toast in-app.
+            await showNotification( {
+                title: data.title || 'Recordatorio',
+                body: data.body || '',
+                tag: data.tag || `app-${Date.now()}`,
+                requireInteraction: !!data.requiresAction,
+                vibrate: getVibrationPattern( data.notificationType ),
+                data: { type: data.notificationType || 'default' }
+            } );
             break;
 
         case 'FORCE_CHECK':

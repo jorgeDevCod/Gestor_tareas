@@ -2834,6 +2834,9 @@ document.addEventListener( 'click', ( e ) => {
     case 'fab-create':
       openCreateTaskModal();
       break;
+    case 'test-push':
+      testPushNotification();
+      break;
     case 'month-year-picker':
       showMonthYearPicker();
       break;
@@ -3419,6 +3422,32 @@ async function maybeBackfillAlerts() {
     }
   } catch ( e ) {
     console.warn( '⚠️ Backfill pendiente (reintentará al entrar):', e?.message || e );
+  }
+}
+
+// Prueba punta a punta del push: invoca sendTestNotification en la nube.
+// Si llega a la bandeja, todo el tubo FCM funciona en este aparato.
+async function testPushNotification() {
+  if ( !currentUser || !isOnline || !auth?.currentUser ) {
+    showNotification( 'Inicia sesión con internet para probar', 'error' );
+    return;
+  }
+  showNotification( 'Enviando push de prueba... revisa la bandeja', 'info' );
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch( 'https://us-central1-calendario-tareas-app.cloudfunctions.net/sendTestNotification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify( { data: {} } ),
+    } );
+    if ( res.ok ) {
+      console.log( '✅ Push de prueba solicitado a la nube' );
+    } else {
+      showNotification( 'La nube rechazó la prueba (revisa login)', 'error' );
+    }
+  } catch ( e ) {
+    console.error( '❌ Error pidiendo push de prueba:', e );
+    showNotification( 'Sin conexión con la nube', 'error' );
   }
 }
 
