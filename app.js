@@ -2925,6 +2925,25 @@ document.addEventListener( 'click', ( e ) => {
       exSetColor( el.dataset.key, el.dataset.c );
       exRefreshSummary();
       break;
+    case 'hsv-open':
+      openHsvPicker( el.dataset.key );
+      break;
+    case 'hsv-cancel':
+      document.getElementById( 'hsvPickerModal' )?.remove();
+      break;
+    case 'hsv-suggest': {
+      const c = hexToHsv( el.dataset.c || '#000000' );
+      hsvState = { ...( hsvState || { key: '' } ), ...c };
+      hsvRefresh();
+      break;
+    }
+    case 'hsv-apply':
+      if ( hsvState?.key ) {
+        exSetColor( hsvState.key, hsvCurrentHex() );
+        exRefreshSummary();
+      }
+      document.getElementById( 'hsvPickerModal' )?.remove();
+      break;
     case 'export-run':
       runExportWizard();
       break;
@@ -6953,7 +6972,9 @@ function wireRemindersTab() {
 
 // ===== WIZARD DE EXPORTACIÓN EXCEL (Tareas/Pagos/Festividades/Horarios) =====
 let exType = 'tareas';
-const EX_PRESETS = [ '#ef4444', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899' ];
+// Paleta suave y elegante (tonos empolvados): la vista por defecto del picker
+const EX_PRESETS = [ '#94a3b8', '#7fa3c0', '#8fc3e8', '#6fc2b8', '#9adcc3', '#9caf88',
+  '#b5b784', '#d9c39a', '#d99a86', '#d4a0a7', '#c39abd', '#b3a7d6' ];
 const EX_TYPES = {
   tareas: { label: 'Tareas', icon: 'fa-list-check', desc: 'Todas las tareas del calendario' },
   pagos: { label: 'Pagos', icon: 'fa-money-bill-wave', desc: 'Cuotas agrupadas por título' },
@@ -6972,7 +6993,7 @@ function exColorField( key, label, def ) {
         </span>
       </div>
       <p class="text-[11px] text-gray-500">Toca un color:</p>
-      <div class="grid grid-cols-8 gap-2">
+      <div class="grid grid-cols-6 gap-2">
         ${EX_PRESETS.map( ( c ) => `
           <button data-action="export-pick" data-key="${key}" data-c="${c}"
                   class="ex-preset w-full aspect-square min-h-[36px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
@@ -6980,7 +7001,13 @@ function exColorField( key, label, def ) {
       </div>
       <p class="text-[11px] text-gray-500">O crea el tuyo:</p>
       <div class="flex items-center gap-2">
-        <input type="color" id="ex-${key}-pick" value="${def}" class="w-11 h-11 p-1 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer bg-white dark:bg-gray-800 shrink-0" title="Paleta personalizada">
+        <button data-action="hsv-open" data-key="${key}"
+                class="flex-1 h-11 rounded-lg text-sm font-semibold text-white shadow transition hover:brightness-110 active:scale-[0.98] flex items-center justify-center gap-2"
+                style="background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)">
+          <i class="fas fa-sliders-h"></i> Personalizar
+        </button>
+      </div>
+      <div class="flex items-center gap-2">
         <input id="ex-${key}-hex" value="${def}" maxlength="7" placeholder="#rrggbb" autocomplete="off"
                class="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="Hexadecimal">
         <input id="ex-${key}-rgb" placeholder="r,g,b" autocomplete="off" inputmode="numeric"
@@ -7011,11 +7038,9 @@ function exSetColor( key, hex ) {
     } else return;
   }
   if ( !/^#[0-9a-fA-F]{6}$/.test( h ) ) return;
-  const pick = document.getElementById( `ex-${key}-pick` );
   const hexI = document.getElementById( `ex-${key}-hex` );
   const rgbI = document.getElementById( `ex-${key}-rgb` );
   const prev = document.getElementById( `ex-${key}-prev` );
-  if ( pick ) pick.value = h;
   if ( hexI ) hexI.value = h;
   if ( rgbI ) {
     const n = [ 1, 3, 5 ].map( ( i ) => parseInt( h.slice( i, i + 2 ), 16 ) );
@@ -7084,7 +7109,6 @@ function showExportWizard() {
   // Sincronizar pickers de color (nodos frescos del modal)
   modal.querySelectorAll( '[data-excolor]' ).forEach( ( box ) => {
     const key = box.dataset.excolor;
-    box.querySelector( 'input[type="color"]' )?.addEventListener( 'input', ( e ) => exSetColor( key, e.target.value ) );
     box.querySelector( `#ex-${key}-hex` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
     box.querySelector( `#ex-${key}-rgb` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
   } );
@@ -7229,6 +7253,167 @@ async function runExportWizard() {
     showNotification( 'Excel exportado exitosamente', 'success' );
     closeAllModals();
   }
+}
+
+// ===== SELECTOR HSV PROPIO (reemplaza al diálogo nativo del sistema) =====
+let hsvState = null; // { key, h (0-360), s (0-100), v (0-100) }
+
+function hexToHsv( hex ) {
+  let h = String( hex || '' ).trim().replace( '#', '' );
+  if ( /^[0-9a-fA-F]{3}$/.test( h ) ) h = h.split( '' ).map( ( c ) => c + c ).join( '' );
+  if ( !/^[0-9a-fA-F]{6}$/.test( h ) ) return { h: 210, s: 70, v: 90 };
+  const r = parseInt( h.slice( 0, 2 ), 16 ) / 255;
+  const g = parseInt( h.slice( 2, 4 ), 16 ) / 255;
+  const b = parseInt( h.slice( 4, 6 ), 16 ) / 255;
+  const max = Math.max( r, g, b ), min = Math.min( r, g, b );
+  const d = max - min;
+  let hh = 0;
+  if ( d !== 0 ) {
+    if ( max === r ) hh = ( ( g - b ) / d + ( g < b ? 6 : 0 ) ) * 60;
+    else if ( max === g ) hh = ( ( b - r ) / d + 2 ) * 60;
+    else hh = ( ( r - g ) / d + 4 ) * 60;
+  }
+  return { h: Math.round( hh ), s: max === 0 ? 0 : Math.round( d / max * 100 ), v: Math.round( max * 100 ) };
+}
+
+function hsvToHex( h, s, v ) {
+  h = ( ( h % 360 ) + 360 ) % 360;
+  s = Math.min( 100, Math.max( 0, s ) ) / 100;
+  v = Math.min( 100, Math.max( 0, v ) ) / 100;
+  const c = v * s;
+  const x = c * ( 1 - Math.abs( ( h / 60 ) % 2 - 1 ) );
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if ( h < 60 ) { r = c; g = x; }
+  else if ( h < 120 ) { r = x; g = c; }
+  else if ( h < 180 ) { g = c; b = x; }
+  else if ( h < 240 ) { g = x; b = c; }
+  else if ( h < 300 ) { r = x; b = c; }
+  else { r = c; b = x; }
+  const to2 = ( n ) => Math.round( ( n + m ) * 255 ).toString( 16 ).padStart( 2, '0' );
+  return `#${to2( r )}${to2( g )}${to2( b )}`;
+}
+
+function ensureHsvStyles() {
+  if ( document.getElementById( 'hsv-range-styles' ) ) return;
+  const st = document.createElement( 'style' );
+  st.id = 'hsv-range-styles';
+  st.textContent = `
+    .hsv-range { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; border-radius: 9999px; outline: none; cursor: pointer; border: 1px solid rgba(0,0,0,.15); }
+    .hsv-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 3px solid rgba(15,23,42,.35); box-shadow: 0 2px 6px rgba(0,0,0,.45); cursor: grab; }
+    .hsv-range::-moz-range-thumb { width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 3px solid rgba(15,23,42,.35); box-shadow: 0 2px 6px rgba(0,0,0,.45); cursor: grab; }
+    .hsv-hue-bg { background: linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+  `;
+  document.head.appendChild( st );
+}
+
+function openHsvPicker( key ) {
+  document.getElementById( 'hsvPickerModal' )?.remove();
+  ensureHsvStyles();
+  const current = exGetColor( key, '#2563eb' );
+  const { h, s, v } = hexToHsv( current );
+  hsvState = { key, h, s, v };
+
+  const modal = document.createElement( 'div' );
+  modal.id = 'hsvPickerModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-60 z-50 flex items-end sm:items-center justify-center sm:p-4';
+  modal.innerHTML = `
+    <div class="bg-white dark:bg-gray-800 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100">Personalizar color</h3>
+        <div id="hsv-prev" class="w-12 h-12 rounded-2xl border-2 border-white shadow-lg" style="background:${current}"></div>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <div class="flex justify-between text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1.5">
+            <span>Tono</span><span id="hsv-h-val">${h}°</span>
+          </div>
+          <input type="range" id="hsv-h" min="0" max="360" value="${h}" class="hsv-range hsv-hue-bg" aria-label="Tono">
+        </div>
+        <div>
+          <div class="flex justify-between text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1.5">
+            <span>Saturación</span><span id="hsv-s-val">${s}%</span>
+          </div>
+          <input type="range" id="hsv-s" min="0" max="100" value="${s}" class="hsv-range" aria-label="Saturación">
+        </div>
+        <div>
+          <div class="flex justify-between text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1.5">
+            <span>Brillo</span><span id="hsv-v-val">${v}%</span>
+          </div>
+          <input type="range" id="hsv-v" min="0" max="100" value="${v}" class="hsv-range" aria-label="Brillo">
+        </div>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Sugerencias suaves</p>
+        <div class="grid grid-cols-6 gap-2">
+          ${EX_PRESETS.map( ( c ) => `
+            <button data-action="hsv-suggest" data-c="${c}"
+                    class="w-full aspect-square min-h-[38px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
+                    style="background:${c}" title="${c}" aria-label="Sugerencia ${c}"></button>` ).join( '' )}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input id="hsv-hex" value="${current}" maxlength="7" autocomplete="off"
+               class="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono dark:bg-gray-900" title="Hexadecimal">
+        <input id="hsv-rgb" placeholder="r,g,b" autocomplete="off" inputmode="numeric"
+               class="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono dark:bg-gray-900" title="RGB">
+      </div>
+      <div class="grid grid-cols-2 gap-3 pt-1">
+        <button data-action="hsv-cancel" class="py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-semibold hover:brightness-95 transition">Cancelar</button>
+        <button data-action="hsv-apply" class="py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition shadow">Establecer</button>
+      </div>
+    </div>
+  `;
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) modal.remove();
+  } );
+  const on = ( id, evt, fn ) => modal.querySelector( id )?.addEventListener( evt, fn );
+  on( '#hsv-h', 'input', ( e ) => { hsvState.h = +e.target.value; hsvRefresh(); } );
+  on( '#hsv-s', 'input', ( e ) => { hsvState.s = +e.target.value; hsvRefresh(); } );
+  on( '#hsv-v', 'input', ( e ) => { hsvState.v = +e.target.value; hsvRefresh(); } );
+  on( '#hsv-hex', 'change', ( e ) => {
+    const c = hexToHsv( e.target.value );
+    if ( /^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test( e.target.value.trim() ) ) {
+      hsvState = { ...hsvState, ...c };
+      hsvRefresh();
+    }
+  } );
+  on( '#hsv-rgb', 'change', ( e ) => {
+    const m = e.target.value.replace( /\s/g, '' ).match( /^(\d{1,3}),(\d{1,3}),(\d{1,3})$/ );
+    if ( m && [ +m[ 1 ], +m[ 2 ], +m[ 3 ] ].every( ( v ) => v >= 0 && v <= 255 ) ) {
+      const hex = '#' + [ +m[ 1 ], +m[ 2 ], +m[ 3 ] ].map( ( v ) => v.toString( 16 ).padStart( 2, '0' ) ).join( '' );
+      hsvState = { ...hsvState, ...hexToHsv( hex ) };
+      hsvRefresh();
+    }
+  } );
+  document.body.appendChild( modal );
+  hsvRefresh();
+}
+
+function hsvCurrentHex() {
+  if ( !hsvState ) return '#000000';
+  return hsvToHex( hsvState.h, hsvState.s, hsvState.v );
+}
+
+function hsvRefresh() {
+  if ( !hsvState ) return;
+  const hex = hsvCurrentHex();
+  const { h, s } = hsvState;
+  const set = ( sel, fn ) => {
+    const el = document.querySelector( `#hsvPickerModal ${sel}` );
+    if ( el ) fn( el );
+  };
+  set( '#hsv-prev', ( el ) => { el.style.background = hex; } );
+  set( '#hsv-h-val', ( el ) => { el.textContent = `${h}°`; } );
+  set( '#hsv-s-val', ( el ) => { el.textContent = `${hsvState.s}%`; } );
+  set( '#hsv-v-val', ( el ) => { el.textContent = `${hsvState.v}%`; } );
+  set( '#hsv-hex', ( el ) => { if ( document.activeElement !== el ) el.value = hex; } );
+  set( '#hsv-s', ( el ) => {
+    el.style.background = `linear-gradient(90deg,#fff,hsl(${h},100%,50%))`;
+  } );
+  set( '#hsv-v', ( el ) => {
+    el.style.background = `linear-gradient(90deg,#000,hsl(${h},${s}%,50%))`;
+  } );
 }
 
 // ===== SELECTOR RÁPIDO DE MES / AÑO =====
@@ -7696,6 +7881,7 @@ function closeAllModals() {
     "remindersModal",
     "editReminderModal",
     "exportWizardModal",
+    "hsvPickerModal",
   ];
 
   modals.forEach( ( modalId ) => {
