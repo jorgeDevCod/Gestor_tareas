@@ -6972,9 +6972,14 @@ function wireRemindersTab() {
 
 // ===== WIZARD DE EXPORTACIÓN EXCEL (Tareas/Pagos/Festividades/Horarios) =====
 let exType = 'tareas';
-// Paleta suave y elegante (tonos empolvados): la vista por defecto del picker
-const EX_PRESETS = [ '#94a3b8', '#7fa3c0', '#8fc3e8', '#6fc2b8', '#9adcc3', '#9caf88',
-  '#b5b784', '#d9c39a', '#d99a86', '#d4a0a7', '#c39abd', '#b3a7d6' ];
+// Listas de paletas suaves por nombre (vista previa del picker)
+const EX_PALETTES = {
+  elegante: [ '#3b4a6b', '#5b3a5e', '#2f5d50', '#6b4f2a', '#434343', '#7a2e2e', '#1f3a5f', '#4a6741' ],
+  pastel: [ '#f4c7c3', '#f9e2ae', '#c5e8c8', '#bde0fe', '#d6c8f5', '#f9dcc4', '#c8f2e7', '#f3d1f4' ],
+  suave: [ '#94a3b8', '#7fa3c0', '#9caf88', '#d9c39a', '#b3a7d6', '#9adcc3', '#d99a86', '#8fc3e8' ],
+  natural: [ '#6b8e5a', '#a9805e', '#c2b280', '#7d9b76', '#b0714f', '#8a9a5b', '#5f7a61', '#d4a574' ],
+};
+const EX_PALETTE_NAMES = { elegante: 'Elegante', pastel: 'Pastel', suave: 'Suave', natural: 'Natural' };
 const EX_TYPES = {
   tareas: { label: 'Tareas', icon: 'fa-list-check', desc: 'Todas las tareas del calendario' },
   pagos: { label: 'Pagos', icon: 'fa-money-bill-wave', desc: 'Cuotas agrupadas por título' },
@@ -6982,38 +6987,58 @@ const EX_TYPES = {
   horarios: { label: 'Horarios', icon: 'fa-calendar-week', desc: 'Matriz semanal Lun–Dom' },
 };
 
-function exColorField( key, label, def ) {
+function exColorField( key, label, def, paleta = 'elegante' ) {
   return `
-    <div class="rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-3 space-y-2.5" data-excolor="${key}">
+    <div class="rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-2.5 space-y-2" data-excolor="${key}" data-paleta="${paleta}">
       <div class="flex items-center justify-between gap-2">
         <label class="${labelCls} !mb-0">${label}</label>
         <span class="flex items-center gap-2 text-[11px] text-gray-500">
-          Elegido
-          <span id="ex-${key}-prev" class="w-8 h-8 rounded-full border-2 border-white shadow-md inline-block" style="background:${def}" title="Vista previa"></span>
+          <span id="ex-${key}-prev" class="w-7 h-7 rounded-full border-2 border-white shadow-md inline-block" style="background:${def}" title="Vista previa"></span>
         </span>
       </div>
-      <p class="text-[11px] text-gray-500">Toca un color:</p>
-      <div class="grid grid-cols-6 gap-2">
-        ${EX_PRESETS.map( ( c ) => `
+      <select class="ex-paleta-sel w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs dark:bg-gray-900" title="Lista de paletas">
+        ${Object.entries( EX_PALETTE_NAMES ).map( ( [ k, n ] ) => `<option value="${k}" ${k === paleta ? 'selected' : ''}>${n}</option>` ).join( '' )}
+      </select>
+      <div class="ex-preset-grid grid grid-cols-8 sm:grid-cols-4 gap-1.5">
+        ${EX_PALETTES[ paleta ].map( ( c ) => `
           <button data-action="export-pick" data-key="${key}" data-c="${c}"
-                  class="ex-preset w-full aspect-square min-h-[36px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
+                  class="ex-preset w-full aspect-square min-h-[32px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
                   style="background:${c}" title="${c}" aria-label="Color ${c}"></button>` ).join( '' )}
       </div>
-      <p class="text-[11px] text-gray-500">O crea el tuyo:</p>
-      <div class="flex items-center gap-2">
-        <button data-action="hsv-open" data-key="${key}"
-                class="flex-1 h-11 rounded-lg text-sm font-semibold text-white shadow transition hover:brightness-110 active:scale-[0.98] flex items-center justify-center gap-2"
-                style="background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)">
-          <i class="fas fa-sliders-h"></i> Personalizar
-        </button>
-      </div>
+      <button data-action="hsv-open" data-key="${key}"
+              class="w-full h-10 rounded-lg text-sm font-semibold bg-slate-700 dark:bg-slate-200 text-white dark:text-slate-900 shadow transition hover:brightness-110 active:scale-[0.98] flex items-center justify-center gap-2">
+        <span class="w-4 h-4 rounded-full inline-block border border-white/40" style="background: conic-gradient(from 0deg, #f87171, #fbbf24, #34d399, #60a5fa, #a78bfa, #f87171)"></span>
+        Personalizar
+      </button>
       <div class="flex items-center gap-2">
         <input id="ex-${key}-hex" value="${def}" maxlength="7" placeholder="#rrggbb" autocomplete="off"
-               class="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="Hexadecimal">
+               class="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="Hexadecimal">
         <input id="ex-${key}-rgb" placeholder="r,g,b" autocomplete="off" inputmode="numeric"
-               class="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="RGB (ej: 37,99,235)">
+               class="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="RGB (ej: 37,99,235)">
       </div>
     </div>`;
+}
+
+function renderExPalette( key ) {
+  const box = document.querySelector( `[data-excolor="${key}"]` );
+  if ( !box ) return;
+  const name = box.dataset.paleta || 'elegante';
+  const grid = box.querySelector( '.ex-preset-grid' );
+  if ( !grid ) return;
+  grid.innerHTML = ( EX_PALETTES[ name ] || EX_PALETTES.elegante ).map( ( c ) => `
+    <button data-action="export-pick" data-key="${key}" data-c="${c}"
+            class="ex-preset w-full aspect-square min-h-[32px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
+            style="background:${c}" title="${c}" aria-label="Color ${c}"></button>` ).join( '' );
+  exMarkPreset( key, exGetColor( key, '#ffffff' ) );
+}
+
+// Suaviza un color mezclándolo con blanco (el fondo de cuerpo no debe saturar)
+function softenHex( hex, amount = 0.55 ) {
+  const { s } = hexToHsv( hex );
+  if ( s <= 45 ) return hex;
+  const n = [ 1, 3, 5 ].map( ( i ) => parseInt( hex.slice( i, i + 2 ), 16 ) );
+  const soft = n.map( ( v ) => Math.round( v + ( 255 - v ) * amount ) );
+  return '#' + soft.map( ( v ) => v.toString( 16 ).padStart( 2, '0' ) ).join( '' );
 }
 
 function exMarkPreset( key, hex ) {
@@ -7090,8 +7115,27 @@ function showExportWizard() {
       <div id="exOptions" class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600 mb-4"></div>
       <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 3 · Apariencia</p>
       <div class="grid sm:grid-cols-2 gap-3 mb-3">
-        ${exColorField( 'header', 'Color de cabecera', '#2563eb' )}
-        ${exColorField( 'bg', 'Color de fondo', '#ffffff' )}
+        ${exColorField( 'header', 'Color de cabecera', '#2563eb', 'elegante' )}
+        ${exColorField( 'bg', 'Color de fondo', '#ffffff', 'pastel' )}
+      </div>
+      <div class="grid sm:grid-cols-2 gap-3 mb-3">
+        ${exColorField( 'hcolor', 'Letra de cabecera', '#ffffff', 'elegante' )}
+        ${exColorField( 'bcolor', 'Letra de cuerpo', '#1f2937', 'natural' )}
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 text-sm">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="ex-hbold" checked class="w-4 h-4 rounded text-green-600"> Negrita cabecera
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="ex-bbold" class="w-4 h-4 rounded text-green-600"> Negrita cuerpo
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer col-span-2">
+          <span class="text-gray-600">Letra</span>
+          <select id="ex-font" class="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-900">
+            <option value="Poppins" selected>Poppins</option>
+            <option value="Open Sans">Open Sans</option>
+          </select>
+        </label>
       </div>
       <label class="flex items-center gap-2 text-sm text-gray-700 mb-4 cursor-pointer">
         <input type="checkbox" id="ex-borders" checked class="w-4 h-4 rounded text-green-600"> Bordes en tablas
@@ -7111,6 +7155,10 @@ function showExportWizard() {
     const key = box.dataset.excolor;
     box.querySelector( `#ex-${key}-hex` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
     box.querySelector( `#ex-${key}-rgb` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
+    box.querySelector( '.ex-paleta-sel' )?.addEventListener( 'change', ( e ) => {
+      box.dataset.paleta = e.target.value;
+      renderExPalette( key );
+    } );
   } );
   modal.addEventListener( 'change', () => exRefreshSummary() );
   document.body.appendChild( modal );
@@ -7215,9 +7263,17 @@ function exReadOptions() {
 }
 
 function exReadStyle() {
+  const bgRaw = exGetColor( 'bg', '#ffffff' );
+  const bg = softenHex( bgRaw );
   return {
     header: exGetColor( 'header', '#2563eb' ),
-    bg: exGetColor( 'bg', '#ffffff' ),
+    bg,
+    bgSuavizado: bg.toLowerCase() !== bgRaw.toLowerCase(),
+    hcolor: exGetColor( 'hcolor', '#ffffff' ),
+    bcolor: exGetColor( 'bcolor', '#1f2937' ),
+    hbold: document.getElementById( 'ex-hbold' )?.checked !== false,
+    bbold: document.getElementById( 'ex-bbold' )?.checked === true,
+    font: document.getElementById( 'ex-font' )?.value || 'Poppins',
     borders: document.getElementById( 'ex-borders' )?.checked !== false,
   };
 }
@@ -7232,7 +7288,7 @@ function exRefreshSummary() {
   else if ( exType === 'pagos' ) detalle = `Pagos: ${!o.ids ? 'todos' : o.ids.length + ' seleccionado(s)'}`;
   else if ( exType === 'festividades' ) detalle = `Festividades: ${!o.ids ? 'todas' : o.ids.length + ' seleccionada(s)'}`;
   else detalle = `Horarios: ${( o.ids || [] ).length} seleccionado(s), matriz semanal`;
-  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span> · Bordes: ${s.borders ? 'sí' : 'no'}`;
+  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font}${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
 }
 
 async function runExportWizard() {
@@ -7313,6 +7369,7 @@ function openHsvPicker( key ) {
   const current = exGetColor( key, '#2563eb' );
   const { h, s, v } = hexToHsv( current );
   hsvState = { key, h, s, v };
+  const sugerencias = EX_PALETTES[ document.querySelector( `[data-excolor="${key}"]` )?.dataset.paleta ] || EX_PALETTES.suave;
 
   const modal = document.createElement( 'div' );
   modal.id = 'hsvPickerModal';
@@ -7346,7 +7403,7 @@ function openHsvPicker( key ) {
       <div>
         <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Sugerencias suaves</p>
         <div class="grid grid-cols-6 gap-2">
-          ${EX_PRESETS.map( ( c ) => `
+          ${sugerencias.map( ( c ) => `
             <button data-action="hsv-suggest" data-c="${c}"
                     class="w-full aspect-square min-h-[38px] rounded-full border border-black/10 shadow-sm hover:scale-110 active:scale-95 transition"
                     style="background:${c}" title="${c}" aria-label="Sugerencia ${c}"></button>` ).join( '' )}

@@ -13,12 +13,24 @@ const EX = ( () => {
     return 'FF' + h.toUpperCase();
   }
 
-  function paint( cell, { bg = null, bold = false, color = 'FF1F2937', size = 11, hAlign = 'left', vAlign = 'middle', wrap = true } = {} ) {
+  // Nota: la fuente (Poppins/Open Sans) se aplica por nombre; Excel usa
+  // la instalada en el equipo y alterna si no existe.
+  function paint( cell, { bg = null, bold = false, color = 'FF1F2937', size = 11, hAlign = 'left', vAlign = 'middle', wrap = true, name = null } = {} ) {
     cell.font = { bold, color: { argb: color }, size };
+    if ( name ) cell.font.name = name;
     if ( bg ) {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb( bg ) } };
     }
     cell.alignment = { horizontal: hAlign, vertical: vAlign, wrapText: wrap };
+  }
+
+  // Estilos resueltos desde la apariencia del wizard (colores/grosor/fuente
+  // configurados por el usuario; nada hardcodeado aquí)
+  function headStyle( style ) {
+    return { bg: style.header, bold: style.hbold !== false, color: hexToArgb( style.hcolor || '#ffffff' ), size: 11, hAlign: 'center', name: style.font || null };
+  }
+  function bodyStyle( style, hAlign = 'left' ) {
+    return { bg: style.bg, bold: style.bbold === true, color: hexToArgb( style.bcolor || '#1f2937' ), size: 11, hAlign, name: style.font || null };
   }
 
   function borderAll( cell, color = 'FF000000' ) {
@@ -105,8 +117,8 @@ const EX = ( () => {
     ws.eachRow( ( row, n ) => {
       row.height = n === 1 ? 24 : 20;
       row.eachCell( ( cell ) => {
-        if ( n === 1 ) paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
-        else paint( cell, { bg: style.bg } );
+        if ( n === 1 ) paint( cell, headStyle( style ) );
+        else paint( cell, bodyStyle( style ) );
         if ( style.borders ) borderAll( cell );
       } );
     } );
@@ -139,14 +151,14 @@ const EX = ( () => {
       ws.mergeCells( row, col, row, col + W - 1 );
       const titleCell = ws.getRow( row ).getCell( col );
       titleCell.value = r.title;
-      paint( titleCell, { bg: style.header, bold: true, color: 'FFFFFFFF', size: 13, hAlign: 'center' } );
+      paint( titleCell, { ...headStyle( style ), size: 13 } );
       if ( style.borders ) borderAll( titleCell );
       row++;
       // Cabecera
       headers.forEach( ( h, i ) => {
         const cell = ws.getRow( row ).getCell( col + i );
         cell.value = h;
-        paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
+        paint( cell, headStyle( style ) );
         if ( style.borders ) borderAll( cell );
       } );
       ws.getRow( row ).height = 22;
@@ -161,7 +173,7 @@ const EX = ( () => {
           cell.value = v;
           const isMonto = ( withDesc && i === 2 ) || ( !withDesc && i === 1 );
           if ( isMonto && typeof v === 'number' ) cell.numFmt = '"S/"#,##0.00';
-          paint( cell, { bg: style.bg, hAlign: isMonto ? 'right' : 'left' } );
+          paint( cell, bodyStyle( style, isMonto ? 'right' : 'left' ) );
           if ( style.borders ) borderAll( cell );
         } );
         ws.getRow( row ).height = 20;
@@ -216,8 +228,8 @@ const EX = ( () => {
     ws.eachRow( ( row, n ) => {
       row.height = n === 1 ? 24 : 22;
       row.eachCell( ( cell ) => {
-        if ( n === 1 ) paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
-        else paint( cell, { bg: style.bg } );
+        if ( n === 1 ) paint( cell, headStyle( style ) );
+        else paint( cell, bodyStyle( style ) );
         if ( style.borders ) borderAll( cell );
       } );
     } );
@@ -290,12 +302,12 @@ const EX = ( () => {
       row.height = n === 1 ? 26 : Math.max( 45, lines * 15 );
       row.eachCell( ( cell, colNumber ) => {
         if ( n === 1 ) {
-          paint( cell, { bg: style.header, bold: true, color: 'FFFFFFFF', hAlign: 'center' } );
+          paint( cell, headStyle( style ) );
         } else if ( colNumber === 1 ) {
           // Columna Hora: color de CUERPO (no de cabecera), en negrita como rótulo
-          paint( cell, { bg: style.bg, bold: true, hAlign: 'center' } );
+          paint( cell, { ...bodyStyle( style, 'center' ), bold: true } );
         } else {
-          paint( cell, { bg: style.bg, hAlign: 'center', vAlign: 'middle' } );
+          paint( cell, { ...bodyStyle( style, 'center' ), vAlign: 'middle' } );
         }
         if ( style.borders ) borderAll( cell );
       } );
