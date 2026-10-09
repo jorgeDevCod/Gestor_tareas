@@ -197,3 +197,16 @@
   background-color: #2b3646;
   border-radius: 6px;
 }
+
+/* ---------- Wizard exportación: pasos con ritmo uniforme ---------- */
+.ex-step {
+  letter-spacing: 0.08em;
+  color: #0f766e !important;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.4rem;
+}
+
+.dark .ex-step {
+  color: #5eead4 !important;
+  border-color: var(--border-dark) !important;
+}

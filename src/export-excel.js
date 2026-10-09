@@ -22,6 +22,7 @@ const EX = ( () => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb( bg ) } };
     }
     cell.alignment = { horizontal: hAlign, vertical: vAlign, wrapText: wrap };
+    if ( hAlign === 'left' ) cell.alignment.indent = 1;
   }
 
   // Estilos resueltos desde la apariencia del wizard (colores/grosor/fuente

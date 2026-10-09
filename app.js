@@ -2921,6 +2921,9 @@ document.addEventListener( 'click', ( e ) => {
       exType = el.dataset.t || 'tareas';
       renderExportOptions();
       break;
+    case 'export-theme':
+      applyExTheme( el.dataset.theme );
+      break;
     case 'export-pick':
       exSetColor( el.dataset.key, el.dataset.c );
       exRefreshSummary();
@@ -6980,6 +6983,60 @@ const EX_PALETTES = {
   natural: [ '#6b8e5a', '#a9805e', '#c2b280', '#7d9b76', '#b0714f', '#8a9a5b', '#5f7a61', '#d4a574' ],
 };
 const EX_PALETTE_NAMES = { elegante: 'Elegante', pastel: 'Pastel', suave: 'Suave', natural: 'Natural' };
+
+// Temas curados de un toque (cabecera + fondo + fuente + grosores).
+// El color de letra SIEMPRE se calcula por contraste (nunca a mano),
+// así un fondo oscuro jamás lleva letra oscura y viceversa.
+const EX_THEMES = {
+  elegante: { nombre: 'Elegante', header: '#1e3a5f', bg: '#e9edf3', font: 'Poppins', hbold: true, bbold: false },
+  pastel: { nombre: 'Pastel', header: '#d9a7b0', bg: '#fdf3ec', font: 'Poppins', hbold: true, bbold: false },
+  natural: { nombre: 'Natural', header: '#5f7a61', bg: '#f0ebdd', font: 'Open Sans', hbold: true, bbold: false },
+  nocturno: { nombre: 'Nocturno', header: '#1f2937', bg: '#d7dce3', font: 'Open Sans', hbold: true, bbold: false },
+};
+let exTheme = 'elegante';
+
+// Luminancia 0-255 → letra legible garantizada
+function autoContrast( hex ) {
+  const n = [ 1, 3, 5 ].map( ( i ) => parseInt( String( hex || '' ).slice( i, i + 2 ), 16 ) || 0 );
+  const lum = 0.2126 * n[ 0 ] + 0.7152 * n[ 1 ] + 0.0722 * n[ 2 ];
+  return lum > 140 ? '#1f2937' : '#ffffff';
+}
+
+function applyExTheme( name ) {
+  const t = EX_THEMES[ name ];
+  if ( !t ) return;
+  exTheme = name;
+  exSetColor( 'header', t.header );
+  exSetColor( 'bg', t.bg );
+  const fontSel = document.getElementById( 'ex-font' );
+  if ( fontSel ) fontSel.value = t.font;
+  const hb = document.getElementById( 'ex-hbold' );
+  if ( hb ) hb.checked = t.hbold;
+  const bb = document.getElementById( 'ex-bbold' );
+  if ( bb ) bb.checked = t.bbold;
+  paintExThemeCards();
+  exRefreshSummary();
+}
+
+function paintExThemeCards() {
+  document.querySelectorAll( '#exportWizardModal .ex-theme-card' ).forEach( ( b ) => {
+    const active = b.dataset.theme === exTheme;
+    b.classList.toggle( 'ring-2', active );
+    b.classList.toggle( 'ring-offset-2', active );
+    b.classList.toggle( 'ring-green-600', active );
+  } );
+}
+
+function detectExTheme( s ) {
+  const hit = Object.entries( EX_THEMES ).find( ( [ , t ] ) =>
+    t.header.toLowerCase() === String( s.header ).toLowerCase() &&
+    t.bg.toLowerCase() === String( s.bg ).toLowerCase() &&
+    t.font === s.font && !!t.hbold === !!s.hbold && !!t.bbold === !!s.bbold
+  );
+  exTheme = hit ? hit[ 0 ] : 'personalizado';
+  paintExThemeCards();
+  return exTheme;
+}
 const EX_TYPES = {
   tareas: { label: 'Tareas', icon: 'fa-list-check', desc: 'Todas las tareas del calendario' },
   pagos: { label: 'Pagos', icon: 'fa-money-bill-wave', desc: 'Cuotas agrupadas por título' },
@@ -7087,6 +7144,7 @@ function showExportWizard() {
   }
   closeAllModals();
   exType = 'tareas';
+  exTheme = 'elegante';
 
   const modal = document.createElement( 'div' );
   modal.id = 'exportWizardModal';
@@ -7101,7 +7159,7 @@ function showExportWizard() {
           <i class="fas fa-times"></i>
         </button>
       </div>
-      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 1 · ¿Qué deseas exportar?</p>
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 1 · ¿Qué deseas exportar?</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         ${Object.entries( EX_TYPES ).map( ( [ key, t ] ) => `
           <button data-action="export-type" data-t="${key}"
@@ -7111,36 +7169,46 @@ function showExportWizard() {
             <div class="text-[11px] opacity-75">${t.desc}</div>
           </button>` ).join( '' )}
       </div>
-      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 2 · Opciones</p>
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 2 · Opciones</p>
       <div id="exOptions" class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600 mb-4"></div>
-      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 3 · Apariencia</p>
-      <div class="grid sm:grid-cols-2 gap-3 mb-3">
-        ${exColorField( 'header', 'Color de cabecera', '#2563eb', 'elegante' )}
-        ${exColorField( 'bg', 'Color de fondo', '#ffffff', 'pastel' )}
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 3 · Apariencia</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        ${Object.entries( EX_THEMES ).map( ( [ key, t ] ) => `
+          <button data-action="export-theme" data-theme="${key}"
+                  class="ex-theme-card rounded-xl border border-gray-200 dark:border-gray-600 overflow-hidden text-left transition hover:shadow-md">
+            <div class="px-2 py-1.5 text-[11px] font-bold" style="background:${t.header};color:${autoContrast( t.header ) === '#ffffff' ? '#ffffff' : '#1f2937'}">${t.nombre}</div>
+            <div class="px-2 py-1.5 text-[11px]" style="background:${t.bg};color:${autoContrast( t.bg ) === '#ffffff' ? '#ffffff' : '#1f2937'}">Aa 123</div>
+          </button>` ).join( '' )}
       </div>
-      <div class="grid sm:grid-cols-2 gap-3 mb-3">
-        ${exColorField( 'hcolor', 'Letra de cabecera', '#ffffff', 'elegante' )}
-        ${exColorField( 'bcolor', 'Letra de cuerpo', '#1f2937', 'natural' )}
-      </div>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 text-sm">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" id="ex-hbold" checked class="w-4 h-4 rounded text-green-600"> Negrita cabecera
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" id="ex-bbold" class="w-4 h-4 rounded text-green-600"> Negrita cuerpo
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer col-span-2">
-          <span class="text-gray-600">Letra</span>
-          <select id="ex-font" class="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-900">
-            <option value="Poppins" selected>Poppins</option>
-            <option value="Open Sans">Open Sans</option>
-          </select>
-        </label>
-      </div>
-      <label class="flex items-center gap-2 text-sm text-gray-700 mb-4 cursor-pointer">
-        <input type="checkbox" id="ex-borders" checked class="w-4 h-4 rounded text-green-600"> Bordes en tablas
-      </label>
-      <p class="text-xs font-bold text-gray-500 uppercase mb-2">Paso 4 · Resumen</p>
+      <details class="rounded-xl border border-gray-200 dark:border-gray-600 mb-4">
+        <summary class="px-3 py-2.5 text-sm font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none">Ajuste fino (opcional)</summary>
+        <div class="px-3 pb-3 space-y-3">
+          <div class="grid sm:grid-cols-2 gap-3">
+            ${exColorField( 'header', 'Color de cabecera', '#1e3a5f', 'elegante' )}
+            ${exColorField( 'bg', 'Color de fondo', '#e9edf3', 'pastel' )}
+          </div>
+          <p class="text-[11px] text-gray-500">La letra se ajusta sola por contraste para que siempre se lea bien.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+            <label class="flex items-center gap-2 cursor-pointer col-span-2">
+              <span class="text-gray-600">Letra</span>
+              <select id="ex-font" class="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-900">
+                <option value="Poppins" selected>Poppins</option>
+                <option value="Open Sans">Open Sans</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="ex-hbold" checked class="w-4 h-4 rounded text-green-600"> Negrita cabecera
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="ex-bbold" class="w-4 h-4 rounded text-green-600"> Negrita cuerpo
+            </label>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="checkbox" id="ex-borders" checked class="w-4 h-4 rounded text-green-600"> Bordes en tablas
+          </label>
+        </div>
+      </details>
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 4 · Resumen</p>
       <div id="exSummary" class="text-sm text-gray-600 bg-blue-50 dark:bg-gray-700 border-l-4 border-blue-400 p-2.5 rounded mb-4"></div>
       <button data-action="export-run" class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition font-semibold">
         <i class="fas fa-download mr-2"></i>Paso 5 · Exportar Excel
@@ -7263,14 +7331,15 @@ function exReadOptions() {
 }
 
 function exReadStyle() {
-  const bgRaw = exGetColor( 'bg', '#ffffff' );
+  const header = exGetColor( 'header', '#1e3a5f' );
+  const bgRaw = exGetColor( 'bg', '#e9edf3' );
   const bg = softenHex( bgRaw );
   return {
-    header: exGetColor( 'header', '#2563eb' ),
+    header,
     bg,
     bgSuavizado: bg.toLowerCase() !== bgRaw.toLowerCase(),
-    hcolor: exGetColor( 'hcolor', '#ffffff' ),
-    bcolor: exGetColor( 'bcolor', '#1f2937' ),
+    hcolor: autoContrast( header ),
+    bcolor: autoContrast( bg ),
     hbold: document.getElementById( 'ex-hbold' )?.checked !== false,
     bbold: document.getElementById( 'ex-bbold' )?.checked === true,
     font: document.getElementById( 'ex-font' )?.value || 'Poppins',
@@ -7283,12 +7352,13 @@ function exRefreshSummary() {
   if ( !box ) return;
   const o = exReadOptions();
   const s = exReadStyle();
+  detectExTheme( s );
   let detalle = '';
   if ( exType === 'tareas' ) detalle = `Tareas (completadas: ${o.incluirCompletadas ? 'sí' : 'no'}, horarios: ${o.incluirHorarios ? 'sí' : 'no'})`;
   else if ( exType === 'pagos' ) detalle = `Pagos: ${!o.ids ? 'todos' : o.ids.length + ' seleccionado(s)'}`;
   else if ( exType === 'festividades' ) detalle = `Festividades: ${!o.ids ? 'todas' : o.ids.length + ' seleccionada(s)'}`;
   else detalle = `Horarios: ${( o.ids || [] ).length} seleccionado(s), matriz semanal`;
-  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font}${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
+  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Tema ${exTheme === 'personalizado' ? 'personalizado' : EX_THEMES[ exTheme ].nombre} · Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font} (auto contraste)${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
 }
 
 async function runExportWizard() {
