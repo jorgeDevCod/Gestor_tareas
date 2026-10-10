@@ -25,10 +25,16 @@ const EX = ( () => {
     if ( hAlign === 'left' ) cell.alignment.indent = 1;
   }
 
+  // Texto legible sobre cualquier fondo (misma regla que autoContrast en app)
+  function textOn( hex ) {
+    const n = [ 1, 3, 5 ].map( ( i ) => parseInt( String( hex || '' ).slice( i, i + 2 ), 16 ) || 0 );
+    const lum = 0.2126 * n[ 0 ] + 0.7152 * n[ 1 ] + 0.0722 * n[ 2 ];
+    return lum > 140 ? 'FF1F2937' : 'FFFFFFFF';
+  }
+
   // Estilos resueltos desde la apariencia del wizard (colores/grosor/fuente
   // configurados por el usuario; nada hardcodeado aquí)
-  function headStyle( style ) {
-    return { bg: style.header, bold: style.hbold !== false, color: hexToArgb( style.hcolor || '#ffffff' ), size: 11, hAlign: 'center', name: style.font || null };
+  function headStyle( style ) {    return { bg: style.header, bold: style.hbold !== false, color: hexToArgb( style.hcolor || '#ffffff' ), size: 11, hAlign: 'center', name: style.font || null };
   }
   function bodyStyle( style, hAlign = 'left' ) {
     return { bg: style.bg, bold: style.bbold === true, color: hexToArgb( style.bcolor || '#1f2937' ), size: 11, hAlign, name: style.font || null };
@@ -158,11 +164,11 @@ const EX = ( () => {
       const view = viewOf( r );
       const cuotas = [ ...( r.cuotas || [] ) ].sort( ( a, b ) => ( a.fecha < b.fecha ? -1 : 1 ) );
       let row = 1;
-      // Título fusionado en la primera fila del grupo
+      // Título fusionado en la primera fila del grupo (fondo propio, no el de cabecera)
       ws.mergeCells( row, col, row, col + W - 1 );
       const titleCell = ws.getRow( row ).getCell( col );
-      titleCell.value = view.title;
-      paint( titleCell, { ...headStyle( style ), size: 13 } );
+      titleCell.value = r.title;
+      paint( titleCell, { bg: style.titlebg || style.header, bold: style.hbold !== false, color: textOn( style.titlebg || style.header ), size: 13, hAlign: 'center', name: style.font || null } );
       if ( style.borders ) borderAll( titleCell );
       row++;
       // Cabecera (personalizable por tabla; respeta el ancho del grupo)

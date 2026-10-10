@@ -7137,6 +7137,19 @@ function exGetColor( key, def ) {
   return /^#[0-9a-fA-F]{6}$/.test( v ) ? v : def;
 }
 
+// Cablea un bloque de color (inputs hex/rgb + selector de paleta).
+// Se usa tanto al abrir el wizard como tras re-renderizar opciones.
+function wireExColorBox( box ) {
+  const key = box.dataset.excolor;
+  if ( !key ) return;
+  box.querySelector( `#ex-${key}-hex` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
+  box.querySelector( `#ex-${key}-rgb` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
+  box.querySelector( '.ex-paleta-sel' )?.addEventListener( 'change', ( e ) => {
+    box.dataset.paleta = e.target.value;
+    renderExPalette( key );
+  } );
+}
+
 function showExportWizard() {
   if ( typeof ExcelJS === 'undefined' ) {
     showNotification( 'Librería Excel no cargada (revisa tu conexión)', 'error' );
@@ -7145,8 +7158,6 @@ function showExportWizard() {
   closeAllModals();
   exType = 'tareas';
   exTheme = 'elegante';
-  exPagoCustom = {};
-  exCustomSelKey = '';
 
   const modal = document.createElement( 'div' );
   modal.id = 'exportWizardModal';
@@ -7225,15 +7236,7 @@ function showExportWizard() {
     if ( e.target === modal ) closeAllModals();
   } );
   // Sincronizar pickers de color (nodos frescos del modal)
-  modal.querySelectorAll( '[data-excolor]' ).forEach( ( box ) => {
-    const key = box.dataset.excolor;
-    box.querySelector( `#ex-${key}-hex` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
-    box.querySelector( `#ex-${key}-rgb` )?.addEventListener( 'change', ( e ) => exSetColor( key, e.target.value ) );
-    box.querySelector( '.ex-paleta-sel' )?.addEventListener( 'change', ( e ) => {
-      box.dataset.paleta = e.target.value;
-      renderExPalette( key );
-    } );
-  } );
+  modal.querySelectorAll( '[data-excolor]' ).forEach( wireExColorBox );
   modal.addEventListener( 'change', () => exRefreshSummary() );
   document.body.appendChild( modal );
   renderExportOptions();
@@ -7248,10 +7251,6 @@ function paintExTypeCards() {
   } );
 }
 
-// Personalización por tabla de pago: { pagoId: { title, headers: [h0,h1,h2] } }
-let exPagoCustom = {};
-let exCustomSelKey = '';
-
 function exPagosSeleccionados() {
   const mode = document.querySelector( 'input[name="ex-pagos"]:checked' )?.value || 'todos';
   const pagos = Object.values( reminders ).filter( ( r ) => r && r.kind === 'pago' );
@@ -7264,68 +7263,10 @@ function exPagosSeleccionados() {
   return pagos.filter( ( r ) => checked.has( r.id ) );
 }
 
-// Vista efectiva de un grupo (título + cabecera), con valores por defecto
-function exPagoGroupView( r ) {
-  const c = exPagoCustom[ r.id ] || {};
-  const title = String( c.title || '' ).trim() || r.title;
-  const hs = Array.isArray( c.headers ) ? c.headers.map( ( h ) => String( h || '' ).trim() ) : [];
-  return {
-    title,
-    headers: [ hs[ 0 ] || 'Fecha', hs[ 1 ] || 'Descripción', hs[ 2 ] || 'Monto' ],
-  };
-}
-
-function wireExPagoCustom() {
-  const sel = document.getElementById( 'ex-pago-custom-sel' );
-  if ( !sel ) return;
-  const syncInputs = () => {
-    const c = exPagoCustom[ sel.value ] || {};
-    const t = document.getElementById( 'ex-pago-custom-title' );
-    if ( t ) t.value = c.title || '';
-    [ 'ex-pago-h0', 'ex-pago-h1', 'ex-pago-h2' ].forEach( ( id, i ) => {
-      const n = document.getElementById( id );
-      if ( n ) n.value = ( exPagoCustom[ sel.value ]?.headers || [] )[ i ] || '';
-    } );
-  };
-  const saveInputs = () => {
-    if ( !sel.value ) return;
-    const t = document.getElementById( 'ex-pago-custom-title' )?.value || '';
-    const hs = [ 'ex-pago-h0', 'ex-pago-h1', 'ex-pago-h2' ].map( ( id ) => document.getElementById( id )?.value || '' );
-    if ( !t.trim() && hs.every( ( h ) => !h.trim() ) ) {
-      delete exPagoCustom[ sel.value ];
-    } else {
-      exPagoCustom[ sel.value ] = { title: t, headers: hs };
-    }
-    exRefreshSummary(); // preview + resumen en vivo
-  };
-  sel.addEventListener( 'change', syncInputs );
-  [ 'ex-pago-custom-title', 'ex-pago-h0', 'ex-pago-h1', 'ex-pago-h2' ].forEach( ( id ) => {
-    document.getElementById( id )?.addEventListener( 'input', saveInputs );
-  } );
-  syncInputs();
-}
-
-// Refresca el desplegable de personalización según la selección vigente
-function refreshExPagoCustomSel() {
-  const sel = document.getElementById( 'ex-pago-custom-sel' );
-  if ( !sel ) return;
-  const list = exPagosSeleccionados();
-  const key = list.map( ( r ) => r.id ).join( ',' );
-  if ( key === exCustomSelKey ) return;
-  exCustomSelKey = key;
-  const prev = sel.value;
-  sel.innerHTML = list.length === 0
-    ? '<option value="">(sin pagos seleccionados)</option>'
-    : list.map( ( r ) => `<option value="${r.id}">${r.title}</option>` ).join( '' );
-  if ( list.some( ( r ) => r.id === prev ) ) sel.value = prev;
-  sel.dispatchEvent( new Event( 'change' ) );
-}
-
 function renderExportOptions() {
   const box = document.getElementById( 'exOptions' );
   if ( !box ) return;
   paintExTypeCards();
-
   if ( exType === 'tareas' ) {
     box.innerHTML = `
       <label class="flex items-center gap-2 text-sm cursor-pointer mb-2">
@@ -7356,20 +7297,12 @@ function renderExportOptions() {
               </label>` ).join( '' )}
           </div>
         </div>
-        <div class="rounded-lg border border-gray-200 dark:border-gray-600 p-2.5 space-y-2">
-          <p class="font-medium">Personalizar tabla:</p>
-          <select id="ex-pago-custom-sel" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-900"></select>
-          <input id="ex-pago-custom-title" maxlength="60" placeholder="Título del grupo"
-                 class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-900">
-          <div class="grid grid-cols-3 gap-2">
-            <input id="ex-pago-h0" maxlength="24" placeholder="Columna 1" class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs dark:bg-gray-900">
-            <input id="ex-pago-h1" maxlength="24" placeholder="Columna 2" class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs dark:bg-gray-900">
-            <input id="ex-pago-h2" maxlength="24" placeholder="Columna 3" class="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs dark:bg-gray-900">
-          </div>
-          <p class="text-[11px] text-gray-500">Vale para la tabla elegida; el resto usa sus valores.</p>
+        <div class="rounded-lg border border-gray-200 dark:border-gray-600 p-2.5">
+          <p class="font-medium mb-2">Fondo del título de cada tabla:</p>
+          ${exColorField( 'titlebg', 'Color de fondo del título', '#1e3a5f', 'elegante' )}
+          <p class="text-[11px] text-gray-500 mt-2">Independiente del color de cabecera.</p>
         </div>
       </div>`;
-    wireExPagoCustom();
   } else if ( exType === 'festividades' ) {
     const fests = Object.values( reminders ).filter( ( r ) => r && r.kind === 'festividad' );
     box.innerHTML = `
@@ -7409,20 +7342,10 @@ function exReadOptions() {
     };
   }
   if ( exType === 'pagos' ) {
-    const custom = {};
-    Object.entries( exPagoCustom ).forEach( ( [ id, c ] ) => {
-      const r = ( reminders || {} )[ id ];
-      if ( !r ) return;
-      const v = exPagoGroupView( r );
-      // Solo guardar si cambia algo respecto a los valores
-      if ( v.title !== r.title || v.headers[ 0 ] !== 'Fecha' || v.headers[ 1 ] !== 'Descripción' || v.headers[ 2 ] !== 'Monto' ) {
-        custom[ id ] = v;
-      }
-    } );
     const mode = document.querySelector( 'input[name="ex-pagos"]:checked' )?.value || 'todos';
-    if ( mode === 'uno' ) return { ids: [ document.getElementById( 'ex-pago-one' )?.value ].filter( Boolean ), custom };
-    if ( mode === 'todos' ) return { ids: null, custom };
-    return { ids: Array.from( document.querySelectorAll( '.ex-pago-check:checked' ) ).map( ( c ) => c.value ), custom };
+    if ( mode === 'uno' ) return { ids: [ document.getElementById( 'ex-pago-one' )?.value ].filter( Boolean ) };
+    if ( mode === 'todos' ) return { ids: null };
+    return { ids: Array.from( document.querySelectorAll( '.ex-pago-check:checked' ) ).map( ( c ) => c.value ) };
   }
   if ( exType === 'festividades' ) {
     const mode = document.querySelector( 'input[name="ex-fest"]:checked' )?.value || 'todas';
@@ -7436,10 +7359,14 @@ function exReadStyle() {
   const header = exGetColor( 'header', '#1e3a5f' );
   const bgRaw = exGetColor( 'bg', '#e9edf3' );
   const bg = softenHex( bgRaw );
+  // Fondo de la fila de título (solo pagos): independiente de la cabecera;
+  // si el campo no existe (otros tipos), hereda la cabecera.
+  const titlebg = exGetColor( 'titlebg', header );
   return {
     header,
     bg,
     bgSuavizado: bg.toLowerCase() !== bgRaw.toLowerCase(),
+    titlebg,
     hcolor: autoContrast( header ),
     bcolor: autoContrast( bg ),
     hbold: document.getElementById( 'ex-hbold' )?.checked !== false,
@@ -7462,12 +7389,15 @@ function exPreviewHTML() {
   const table = ( inner ) => `<table style="border-collapse:collapse;width:100%;font-size:12px;">${inner}</table>`;
 
   if ( exType === 'pagos' ) {
-    // Previsualiza el primer pago seleccionado con su título/cabecera propios
-    const o = exReadOptions();
+    // Previsualiza el primer pago seleccionado (título y cabecera reales)
+    // con el fondo de título elegido
     const first = exPagosSeleccionados()[ 0 ];
-    const v = first ? exPagoGroupView( first ) : { title: 'INTERBANK', headers: [ 'Fecha', 'Descripción', 'Monto' ] };
+    const v = first
+      ? { title: first.title, headers: [ 'Fecha', 'Descripción', 'Monto' ] }
+      : { title: 'INTERBANK', headers: [ 'Fecha', 'Descripción', 'Monto' ] };
+    const titleBg = s.titlebg;
     return table(
-      `<tr><td colspan="3" style="background:${s.header};color:${s.hcolor};font-weight:${hb};${font};padding:6px 10px;border:${bd};text-align:center;">${v.title}</td></tr>` +
+      `<tr><td colspan="3" style="background:${titleBg};color:${autoContrast( titleBg )};font-weight:${hb};${font};padding:6px 10px;border:${bd};text-align:center;">${v.title}</td></tr>` +
       `<tr>${v.headers.map( th ).join( '' )}</tr>` +
       `<tr>${[ td( '01/10' ), td( 'Cuota 1' ), td( 'S/ 100', 'right' ) ].join( '' )}</tr>` +
       `<tr>${[ td( '01/11' ), td( 'Cuota 2' ), td( 'S/ 100', 'right' ) ].join( '' )}</tr>`
@@ -7497,16 +7427,15 @@ function exPreviewHTML() {
 function exRefreshSummary() {
   const box = document.getElementById( 'exSummary' );
   if ( !box ) return;
-  if ( exType === 'pagos' ) refreshExPagoCustomSel();
   const o = exReadOptions();
   const s = exReadStyle();
   detectExTheme( s );
   let detalle = '';
   if ( exType === 'tareas' ) detalle = `Tareas (completadas: ${o.incluirCompletadas ? 'sí' : 'no'}, horarios: ${o.incluirHorarios ? 'sí' : 'no'})`;
-  else if ( exType === 'pagos' ) detalle = `Pagos: ${!o.ids ? 'todos' : o.ids.length + ' seleccionado(s)'}${o.custom && Object.keys( o.custom ).length ? ` · ${Object.keys( o.custom ).length} tabla(s) personalizada(s)` : ''}`;
+  else if ( exType === 'pagos' ) detalle = `Pagos: ${!o.ids ? 'todos' : o.ids.length + ' seleccionado(s)'}`;
   else if ( exType === 'festividades' ) detalle = `Festividades: ${!o.ids ? 'todas' : o.ids.length + ' seleccionada(s)'}`;
   else detalle = `Horarios: ${( o.ids || [] ).length} seleccionado(s), matriz semanal`;
-  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Tema ${exTheme === 'personalizado' ? 'personalizado' : EX_THEMES[ exTheme ].nombre} · Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font} (auto contraste)${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
+  box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Tema ${exTheme === 'personalizado' ? 'personalizado' : EX_THEMES[ exTheme ].nombre} · Cabecera <span class="font-mono">${s.header}</span>${exType === 'pagos' ? ` · Título <span class="font-mono">${s.titlebg}</span>` : ''} · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font} (auto contraste)${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
   const pv = document.getElementById( 'exPreview' );
   if ( pv ) pv.innerHTML = exPreviewHTML();
 }
@@ -7517,7 +7446,7 @@ async function runExportWizard() {
   let ok = false;
   try {
     if ( exType === 'tareas' ) ok = await EX.tareas( s, o );
-    else if ( exType === 'pagos' ) ok = await EX.pagos( s, o.ids, o.custom );
+    else if ( exType === 'pagos' ) ok = await EX.pagos( s, o.ids );
     else if ( exType === 'festividades' ) ok = await EX.festividades( s, o.ids );
     else ok = await EX.horarios( s, o.ids );
   } catch ( e ) {
