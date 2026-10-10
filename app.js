@@ -7208,10 +7208,14 @@ function showExportWizard() {
           </label>
         </div>
       </details>
-      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 4 · Resumen</p>
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 4 · Vista previa</p>
+      <div class="rounded-xl border border-gray-200 dark:border-gray-600 overflow-x-auto mb-4">
+        <div id="exPreview" class="p-3 min-w-[320px]"></div>
+      </div>
+      <p class="text-xs font-bold ex-step uppercase mb-3">Paso 5 · Resumen</p>
       <div id="exSummary" class="text-sm text-gray-600 bg-blue-50 dark:bg-gray-700 border-l-4 border-blue-400 p-2.5 rounded mb-4"></div>
       <button data-action="export-run" class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition font-semibold">
-        <i class="fas fa-download mr-2"></i>Paso 5 · Exportar Excel
+        <i class="fas fa-download mr-2"></i>Paso 6 · Exportar Excel
       </button>
     </div>
   `;
@@ -7347,6 +7351,47 @@ function exReadStyle() {
   };
 }
 
+// Vista previa viva: mini tabla con la apariencia actual (se actualiza
+// con cada ajuste, antes del resumen)
+function exPreviewHTML() {
+  const s = exReadStyle();
+  const hb = s.hbold !== false ? 'bold' : 'normal';
+  const bb = s.bbold === true ? 'bold' : 'normal';
+  const bd = s.borders ? '1px solid #111' : '1px solid transparent';
+  const font = `font-family:'${s.font}',sans-serif`;
+  const th = ( t ) => `<th style="background:${s.header};color:${s.hcolor};font-weight:${hb};${font};padding:6px 10px;border:${bd};text-align:center;white-space:nowrap;">${t}</th>`;
+  const td = ( t, align = 'left' ) => `<td style="background:${s.bg};color:${s.bcolor};font-weight:${bb};${font};padding:6px 10px;border:${bd};text-align:${align};">${t}</td>`;
+  const table = ( inner ) => `<table style="border-collapse:collapse;width:100%;font-size:12px;">${inner}</table>`;
+
+  if ( exType === 'pagos' ) {
+    return table(
+      `<tr><td colspan="3" style="background:${s.header};color:${s.hcolor};font-weight:${hb};${font};padding:6px 10px;border:${bd};text-align:center;">INTERBANK</td></tr>` +
+      `<tr>${[ 'Fecha', 'Descripción', 'Monto' ].map( th ).join( '' )}</tr>` +
+      `<tr>${[ td( '01/10' ), td( 'Cuota 1' ), td( 'S/ 100', 'right' ) ].join( '' )}</tr>` +
+      `<tr>${[ td( '01/11' ), td( 'Cuota 2' ), td( 'S/ 100', 'right' ) ].join( '' )}</tr>`
+    );
+  }
+  if ( exType === 'festividades' ) {
+    return table(
+      `<tr>${[ 'Título', 'Descripción', 'Fecha' ].map( th ).join( '' )}</tr>` +
+      `<tr>${[ td( 'Cumpleaños Ana' ), td( 'Fiesta sorpresa' ), td( '15/09' ) ].join( '' )}</tr>` +
+      `<tr><td colspan="3" style="background:${s.bg};color:${s.bcolor};${font};padding:6px 10px;border:${bd};">Nota: ___</td></tr>`
+    );
+  }
+  if ( exType === 'horarios' ) {
+    return table(
+      `<tr>${[ 'Hora', 'Lunes', 'Martes' ].map( th ).join( '' )}</tr>` +
+      `<tr>${[ td( '09:00', 'center' ), td( 'Daily<br>09:00–10:00', 'center' ), td( '', 'center' ) ].join( '' )}</tr>` +
+      `<tr>${[ td( '11:00', 'center' ), td( '', 'center' ), td( 'Reunión cliente<br>11:00–12:30', 'center' ) ].join( '' )}</tr>`
+    );
+  }
+  return table(
+    `<tr>${[ 'Fecha', 'Título', 'Estado' ].map( th ).join( '' )}</tr>` +
+    `<tr>${[ td( '28/09' ), td( 'Reunión equipo' ), td( 'Pendiente' ) ].join( '' )}</tr>` +
+    `<tr>${[ td( '29/09' ), td( 'Clase inglés' ), td( 'Completada' ) ].join( '' )}</tr>`
+  );
+}
+
 function exRefreshSummary() {
   const box = document.getElementById( 'exSummary' );
   if ( !box ) return;
@@ -7359,6 +7404,8 @@ function exRefreshSummary() {
   else if ( exType === 'festividades' ) detalle = `Festividades: ${!o.ids ? 'todas' : o.ids.length + ' seleccionada(s)'}`;
   else detalle = `Horarios: ${( o.ids || [] ).length} seleccionado(s), matriz semanal`;
   box.innerHTML = `<strong>${EX_TYPES[ exType ].label}</strong> · ${detalle}<br>Tema ${exTheme === 'personalizado' ? 'personalizado' : EX_THEMES[ exTheme ].nombre} · Cabecera <span class="font-mono">${s.header}</span> · Fondo <span class="font-mono">${s.bg}</span>${s.bgSuavizado ? ' (suavizado)' : ''} · Letra ${s.font} (auto contraste)${s.hbold ? ', N cabecera' : ''}${s.bbold ? ', N cuerpo' : ''} · Bordes: ${s.borders ? 'sí' : 'no'}`;
+  const pv = document.getElementById( 'exPreview' );
+  if ( pv ) pv.innerHTML = exPreviewHTML();
 }
 
 async function runExportWizard() {
