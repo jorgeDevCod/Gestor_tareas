@@ -7200,6 +7200,20 @@ function showExportWizard() {
             ${exColorField( 'header', 'Color de cabecera', '#1e3a5f', 'elegante' )}
             ${exColorField( 'bg', 'Color de fondo', '#e9edf3', 'pastel' )}
           </div>
+          <div id="exTitleBgRow" class="hidden flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-600 px-2.5 py-2" data-excolor="titlebg" data-paleta="elegante">
+            <span id="ex-titlebg-prev" class="w-7 h-7 rounded-full border-2 border-white shadow-md shrink-0" style="background:#1e3a5f" title="Vista previa"></span>
+            <span class="text-xs font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap">Fondo título</span>
+            <select class="ex-paleta-sel flex-1 min-w-0 px-1.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs dark:bg-gray-900" title="Lista de paletas">
+              ${Object.entries( EX_PALETTE_NAMES ).map( ( [ k, n ] ) => `<option value="${k}">${n}</option>` ).join( '' )}
+            </select>
+            <input id="ex-titlebg-hex" value="#1e3a5f" maxlength="7" autocomplete="off"
+                   class="w-20 px-1.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-xs font-mono dark:bg-gray-900" title="Hexadecimal">
+            <button data-action="hsv-open" data-key="titlebg"
+                    class="w-9 h-9 rounded-lg shrink-0 border border-black/10 shadow-sm transition hover:scale-105 active:scale-95 flex items-center justify-center text-white"
+                    style="background: conic-gradient(from 0deg, #f87171, #fbbf24, #34d399, #60a5fa, #a78bfa, #f87171)" title="Personalizar">
+              <i class="fas fa-sliders-h text-xs drop-shadow"></i>
+            </button>
+          </div>
           <p class="text-[11px] text-gray-500">La letra se ajusta sola por contraste para que siempre se lea bien.</p>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
             <label class="flex items-center gap-2 cursor-pointer col-span-2">
@@ -7267,6 +7281,8 @@ function renderExportOptions() {
   const box = document.getElementById( 'exOptions' );
   if ( !box ) return;
   paintExTypeCards();
+  // Fondo de título: solo relevante en pagos (fila fusionada por tabla)
+  document.getElementById( 'exTitleBgRow' )?.classList.toggle( 'hidden', exType !== 'pagos' );
   if ( exType === 'tareas' ) {
     box.innerHTML = `
       <label class="flex items-center gap-2 text-sm cursor-pointer mb-2">
@@ -7296,11 +7312,6 @@ function renderExportOptions() {
                 <input type="checkbox" class="ex-pago-check w-4 h-4 rounded text-green-600" value="${r.id}"> ${r.title}
               </label>` ).join( '' )}
           </div>
-        </div>
-        <div class="rounded-lg border border-gray-200 dark:border-gray-600 p-2.5">
-          <p class="font-medium mb-2">Fondo del título de cada tabla:</p>
-          ${exColorField( 'titlebg', 'Color de fondo del título', '#1e3a5f', 'elegante' )}
-          <p class="text-[11px] text-gray-500 mt-2">Independiente del color de cabecera.</p>
         </div>
       </div>`;
   } else if ( exType === 'festividades' ) {
