@@ -130,12 +130,21 @@ const EX = ( () => {
   }
 
   // ---------- PAGOS (tablas lado a lado, 2 columnas de separación) ----------
-  async function pagos( style, ids ) {
+  // custom: { pagoId: { title, headers: [h0,h1,h2] } } con valores efectivos
+  async function pagos( style, ids, custom ) {
     const list = Object.values( reminders ).filter( ( r ) => r && r.kind === 'pago' && ( !ids || ids.includes( r.id ) ) );
     if ( list.length === 0 ) {
       showNotification( 'No hay pagos para exportar', 'info' );
       return false;
     }
+    const viewOf = ( r ) => {
+      const c = ( custom || {} )[ r.id ] || {};
+      const hs = Array.isArray( c.headers ) ? c.headers : [];
+      return {
+        title: String( c.title || '' ).trim() || r.title,
+        headers: [ hs[ 0 ]?.trim() || 'Fecha', hs[ 1 ]?.trim() || 'Descripción', hs[ 2 ]?.trim() || 'Monto' ],
+      };
+    };
     const wb = newWb();
     const ws = wb.addWorksheet( 'Pagos' );
     const withDesc = list.some( ( r ) => ( r.cuotas || [] ).some( ( c ) => ( r.description || '' ).trim() !== '' ) );
@@ -146,17 +155,18 @@ const EX = ( () => {
     let col = 1;
     let maxRow = 1;
     list.forEach( ( r ) => {
+      const view = viewOf( r );
       const cuotas = [ ...( r.cuotas || [] ) ].sort( ( a, b ) => ( a.fecha < b.fecha ? -1 : 1 ) );
       let row = 1;
       // Título fusionado en la primera fila del grupo
       ws.mergeCells( row, col, row, col + W - 1 );
       const titleCell = ws.getRow( row ).getCell( col );
-      titleCell.value = r.title;
+      titleCell.value = view.title;
       paint( titleCell, { ...headStyle( style ), size: 13 } );
       if ( style.borders ) borderAll( titleCell );
       row++;
-      // Cabecera
-      headers.forEach( ( h, i ) => {
+      // Cabecera (personalizable por tabla; respeta el ancho del grupo)
+      view.headers.slice( 0, W ).forEach( ( h, i ) => {
         const cell = ws.getRow( row ).getCell( col + i );
         cell.value = h;
         paint( cell, headStyle( style ) );
