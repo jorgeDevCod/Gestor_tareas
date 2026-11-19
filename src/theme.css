@@ -144,6 +144,111 @@
   background-color: #26313f !important;
 }
 
+/* ---------- Vista semanal (rejilla por horas) ---------- */
+.week-grid {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  /* clip (no scroll container) para que la columna de horas quede sticky
+     respecto al wrapper con overflow-x-auto */
+  overflow: clip;
+}
+
+.week-slot {
+  min-height: 56px;
+}
+
+.week-cell-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.week-slot:hover .week-cell-actions,
+.week-slot:focus-within .week-cell-actions {
+  opacity: 1;
+}
+
+.week-cell-btn {
+  width: 20px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.dark .week-cell-btn {
+  background: rgba(31, 41, 55, 0.9);
+}
+
+.wk-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.wk-pill-none {
+  border: 1px dashed rgba(107, 114, 128, 0.55);
+  border-left-width: 3px;
+  border-left-style: solid;
+}
+
+.wk-pill .truncate {
+  min-width: 0;
+}
+
+.wk-time {
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.wk-dot {
+  flex-shrink: 0;
+  font-size: 9px;
+}
+
+@media (max-width: 1023px) {
+  .week-cell-actions {
+    opacity: 1;
+  }
+
+  .week-cell-btn {
+    width: 22px;
+    height: 20px;
+    font-size: 10px;
+  }
+}
+
+.dark .week-grid {
+  border-color: var(--border-dark);
+}
+
+.dark .week-slot.week-today {
+  background-color: rgba(20, 83, 45, 0.35) !important;
+}
+
+.dark .week-head.week-today {
+  background-color: rgba(20, 83, 45, 0.45) !important;
+}
+
+.dark .week-corner,
+.dark .week-hours {
+  background-color: var(--bg-card);
+  color: #9aa8b8;
+}
+
+.dark .week-slot {
+  border-color: var(--border-dark) !important;
+}
+
 /* ---------- Panel y tarjetas de tarea ---------- */
 .dark .panel-task-item {
   background-color: var(--bg-soft) !important;

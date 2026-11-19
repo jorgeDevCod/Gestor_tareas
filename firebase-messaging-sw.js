@@ -29,7 +29,7 @@ const firebaseConfig = {
 // El init real (initializeApp + messaging) ocurre en initFirebaseSW() de
 // forma asíncrona para no tumbar el registro si gstatic falla.
 
-const CACHE_VERSION = 'v5.7';
+const CACHE_VERSION = 'v5.8';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
@@ -212,7 +212,7 @@ async function checkReminderNotifications( today ) {
                         const key = `rem-${r.id}-${c.fecha}`;
                         if ( !( await wasNotificationSent( key ) ) ) {
                             await showNotification( {
-                                title: `💰 Vence hoy: ${r.title}`,
+                                title: `Vence hoy: ${r.title}`,
                                 body: `${c.etiqueta} por S/ ${c.monto}`,
                                 tag: key,
                                 requireInteraction: false,
@@ -226,7 +226,7 @@ async function checkReminderNotifications( today ) {
                         const key = `rem-${r.id}-${c.fecha}-late`;
                         if ( days >= 1 && !( await wasNotificationSent( key ) ) ) {
                             await showNotification( {
-                                title: `⚠️ Pago atrasado: ${r.title}`,
+                                title: `Pago atrasado: ${r.title}`,
                                 body: `${c.etiqueta} lleva ${days} día(s) de retraso`,
                                 tag: key,
                                 requireInteraction: false,
@@ -243,7 +243,7 @@ async function checkReminderNotifications( today ) {
                         const key = `rem-${r.id}-${d}`;
                         if ( !( await wasNotificationSent( key ) ) ) {
                             await showNotification( {
-                                title: `🎉 Hoy: ${r.title}`,
+                                title: `Hoy: ${r.title}`,
                                 body: r.description || 'Festividad programada para hoy',
                                 tag: key,
                                 requireInteraction: false,
@@ -257,7 +257,7 @@ async function checkReminderNotifications( today ) {
                         const key = `rem-${r.id}-${d}-late`;
                         if ( days >= 1 && !( await wasNotificationSent( key ) ) ) {
                             await showNotification( {
-                                title: `⚠️ Festividad pasada: ${r.title}`,
+                                title: `Festividad pasada: ${r.title}`,
                                 body: `${days} día(s) de retraso`,
                                 tag: key,
                                 requireInteraction: false,
@@ -422,7 +422,7 @@ self.addEventListener( 'install', ( event ) => {
 } );
 
 self.addEventListener( 'activate', ( event ) => {
-    console.log( '🚀 SW v8.6 activándose...' );
+    console.log( '🚀 SW v8.7 activándose...' );
     event.waitUntil(
         Promise.all( [
             caches.keys().then( keys =>
@@ -666,7 +666,7 @@ async function checkTaskNotifications() {
                 currentTimeInMinutes < taskTimeInMinutes - 3 ) {
 
                 await showNotification( {
-                    title: `⏰ Próximamente: ${task.title}`,
+                    title: `Próximamente: ${task.title}`,
                     body: `Comienza en 5 minutos (${task.time})`,
                     tag: reminderKey,
                     requireInteraction: false,
@@ -686,7 +686,7 @@ async function checkTaskNotifications() {
                 currentTimeInMinutes < taskTimeInMinutes + 2 ) {
 
                 await showNotification( {
-                    title: `🔔 Es hora de: ${task.title}`,
+                    title: `Es hora de: ${task.title}`,
                     body: `Programada para ${task.time}`,
                     tag: startKey,
                     requireInteraction: true,
@@ -705,7 +705,7 @@ async function checkTaskNotifications() {
                 currentTimeInMinutes >= taskTimeInMinutes + 30 ) {
 
                 await showNotification( {
-                    title: `⚠️ Tarea Retrasada: ${task.title}`,
+                    title: `Tarea retrasada: ${task.title}`,
                     body: 'Han pasado 30+ minutos desde la hora programada',
                     tag: lateKey,
                     requireInteraction: false,

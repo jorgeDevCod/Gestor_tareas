@@ -220,9 +220,9 @@ async function scheduleForTask( uid, docId, task, userTz, tokens = [] ) {
     const now = Date.now();
     const at = ( mins ) => new Date( zonedTimeToUtc( task.date, task.time, tz ).getTime() + mins * 60000 );
     const jobs = [
-        [ '5min', -5, 15 * 60000, { title: `⏰ Recordatorio: ${task.title}`, body: `Tu tarea inicia en 5 minutos (${task.time})`, type: 'task-reminder' } ],
-        [ 'start', 0, 15 * 60000, { title: `🔔 Es hora de: ${task.title}`, body: `Tu tarea programada para ${task.time}`, type: 'task-start', requiresAction: 'true' } ],
-        [ 'late', 30, 60 * 60000, { title: `⚠️ Tarea Retrasada: ${task.title}`, body: 'Han pasado 30 minutos desde la hora programada', type: 'task-late' } ],
+        [ '5min', -5, 15 * 60000, { title: `Recordatorio: ${task.title}`, body: `Tu tarea inicia en 5 minutos (${task.time})`, type: 'task-reminder' } ],
+        [ 'start', 0, 15 * 60000, { title: `Es hora de: ${task.title}`, body: `Tu tarea programada para ${task.time}`, type: 'task-start', requiresAction: 'true' } ],
+        [ 'late', 30, 60 * 60000, { title: `Tarea retrasada: ${task.title}`, body: 'Han pasado 30 minutos desde la hora programada', type: 'task-late' } ],
     ];
     for ( const [ kind, offset, grace, text ] of jobs ) {
         const atDate = at( offset );
@@ -257,8 +257,8 @@ async function scheduleForReminder( uid, rem, userTz ) {
     if ( !rem ) return;
     const tz = userTz || 'America/Lima';
     const dates = rem.kind === 'pago'
-        ? ( rem.cuotas || [] ).map( ( c ) => ( { fecha: c.fecha, title: `💰 Vence hoy: ${rem.title}`, body: `${c.etiqueta} por S/ ${c.monto}`, type: 'task-reminder' } ) )
-        : ( rem.dates || [] ).map( ( d ) => ( { fecha: d, title: rem.kind === 'festividad' ? `🎉 Hoy: ${rem.title}` : `🔔 ${rem.title}`, body: rem.description || '', type: 'task-reminder' } ) );
+        ? ( rem.cuotas || [] ).map( ( c ) => ( { fecha: c.fecha, title: `Vence hoy: ${rem.title}`, body: `${c.etiqueta} por S/ ${c.monto}`, type: 'task-reminder' } ) )
+        : ( rem.dates || [] ).map( ( d ) => ( { fecha: d, title: rem.kind === 'festividad' ? `Hoy: ${rem.title}` : `${rem.title}`, body: rem.description || '', type: 'task-reminder' } ) );
     const first = dates.filter( ( x ) => x.fecha ).sort( ( a, b ) => ( a.fecha < b.fecha ? -1 : 1 ) )[ 0 ];
     if ( !first ) return;
     // Aviso el mismo día 09:00 + primer día de retraso 09:00
@@ -272,7 +272,7 @@ async function scheduleForReminder( uid, rem, userTz ) {
     const lateDay = new Date( dueAt.getTime() + 24 * 3600 * 1000 );
     await enqueueAlert( uid, names[ 1 ], lateDay, {
         uid, kind: 'rem-late', docId: rem.id, dateStr: first.fecha, taskId: '',
-        title: `⚠️ Atrasado: ${rem.title}`, body: 'Ya pasó su fecha programada',
+        title: `Atrasado: ${rem.title}`, body: 'Ya pasó su fecha programada',
         type: 'task-late', tag: `rem-${rem.id}-${first.fecha}-late`,
         notAfter: lateDay.getTime() + 2 * 3600 * 1000,
     } );

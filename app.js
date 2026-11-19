@@ -30,6 +30,14 @@ function reminderLabel( r ) {
   return REMINDER_LABELS[ r.kind ] || 'Recordatorio';
 }
 let currentDate = new Date();
+// Vista del calendario: 'month' (rejilla mensual) | 'week' (rejilla semanal por horas)
+let calendarView = ( () => {
+  try { return localStorage.getItem( 'calendarView' ) === 'week' ? 'week' : 'month'; } catch ( e ) { return 'month'; }
+} )();
+const WEEK_HOUR_START = 6;
+const WEEK_HOUR_END = 22;
+// Actividades sin hora se muestran en la primera franja útil (07:00) del día
+const WEEK_UNTIMED_HOUR = 7;
 let notificationsEnabled = false;
 let draggedTask = null;
 let draggedFromDate = null;
@@ -1017,7 +1025,7 @@ async function processSyncQueue() {
     updateSyncIndicator( "success" );
 
     if ( processedCount > 0 ) {
-      showNotification( `✅ ${processedCount} cambios sincronizados`, "success" );
+      showNotification( `${processedCount} cambios sincronizados`, "success" );
     }
 
   } catch ( error ) {
@@ -2077,7 +2085,7 @@ window.addEventListener( 'online', () => {
       googleSignInBtn.parentNode.replaceChild( newBtn, googleSignInBtn );
       newBtn.addEventListener( 'click', signInWithGoogle );
 
-      showNotification( '🌐 Conexión restaurada - Puedes iniciar sesión', 'success' );
+      showNotification( 'Conexión restaurada - Puedes iniciar sesión', 'success' );
     }
   }
 } );
@@ -2098,7 +2106,7 @@ window.addEventListener( 'offline', () => {
       googleSignInBtn.title = '🔌 Solo se puede ingresar con conexión a internet';
       googleSignInBtn.innerHTML = '<i class="fas fa-wifi-slash mr-2"></i>🔴 Sin conexión - Login deshabilitado';
 
-      showNotification( '🔴 Sin conexión - Login deshabilitado', 'error' );
+      showNotification( 'Sin conexión - Login deshabilitado', 'error' );
     }
   }
 } );
@@ -2800,6 +2808,32 @@ document.addEventListener( 'click', ( e ) => {
       e.stopPropagation();
       showDayTasksModal( date );
       break;
+    case 'calendar-view':
+      setCalendarView( el.dataset.view );
+      break;
+    case 'week-item':
+      showDayTasksModal( date );
+      break;
+    case 'week-add':
+      if ( date ) showQuickAddTask( isDatePast( date ) ? getTodayString() : date );
+      break;
+    case 'week-cell-edit':
+      showWeekCellActionsModal( date, el.dataset.hour, 'edit' );
+      break;
+    case 'week-cell-delete':
+      showWeekCellActionsModal( date, el.dataset.hour, 'delete' );
+      break;
+    case 'week-item-action': {
+      const isReminder = !!el.dataset.reminderId;
+      const entry = isReminder
+        ? { kind: 'reminder', item: { reminderId: el.dataset.reminderId } }
+        : { kind: 'task', task: { id } };
+      runWeekItemAction( entry, date, el.dataset.mode );
+      break;
+    }
+    case 'smart-nav':
+      smartNavGo();
+      break;
     case 'goto-task':
       closeAllModals();
       goToTask( date, id );
@@ -3050,7 +3084,7 @@ function setupEventListeners() {
     closeLoginModal: closeLoginModal,
     resetFormBtn: resetForm,
     clearAllBtn: clearAll,
-    // NOTA: formToggleBtn / showFormBtn / fabAddTask NO van aquí:
+    // NOTA: la cabecera "Nueva Tarea" (formHeadingToggle) / showFormBtn / fabAddTask NO van aquí:
     // los gestiona la delegación global [data-action] (un solo listener
     // a nivel document, inmune a doble cableado).
   };
@@ -3104,6 +3138,9 @@ function setupEventListeners() {
   wireStartTimeValidation( { dateId: 'taskDate', startId: 'taskTime', endId: 'taskEndTime' } );
 
   eventListenersConfigured = true;
+  updateRemindersViewButton();
+  initSmartNav();
+  updateCalendarViewButtons();
   console.log( 'Event listeners configurados completamente' );
 }
 
@@ -3268,7 +3305,7 @@ function showLoginModal() {
         // Prevenir clicks
         newBtn.addEventListener( 'click', ( e ) => {
           e.preventDefault();
-          showNotification( '🔌 Necesitas conexión a internet para iniciar sesión', 'error' );
+          showNotification( 'Necesitas conexión a internet para iniciar sesión', 'error' );
         } );
 
         console.log( '🔴 Botón de login DESHABILITADO (offline)' );
@@ -3863,6 +3900,15 @@ function renderCalendar() {
 
   if ( !calendar || !monthYear ) return;
 
+  updateCalendarViewButtons();
+
+  if ( calendarView === 'week' ) {
+    renderWeekCalendar( calendar, monthYear );
+    return;
+  }
+
+  calendar.className = "grid grid-cols-7 gap-2";
+  calendar.dataset.view = "month";
   calendar.innerHTML = "";
   monthYear.textContent = currentDate
     .toLocaleDateString( "es-ES", {
@@ -3908,11 +3954,226 @@ function renderCalendar() {
       currentDate.getMonth(),
       day
     );
-    const dateStr = date.toISOString().split( "T" )[ 0 ];
+    const dateStr = toDateStr( date );
     const dayTasks = tasks[ dateStr ] || [];
 
     calendar.appendChild( createDayElement( day, dateStr, dayTasks ) );
   }
+}
+
+// ===== VISTA SEMANAL TIPO CALENDARIO =====
+function setCalendarView( view ) {
+  calendarView = view === "week" ? "week" : "month";
+  try { localStorage.setItem( "calendarView", calendarView ); } catch ( e ) { /* sin storage */ }
+  renderCalendar();
+}
+
+function updateCalendarViewButtons() {
+  const monthBtn = document.getElementById( "viewMonthBtn" );
+  const weekBtn = document.getElementById( "viewWeekBtn" );
+  const monthActive = calendarView === "month";
+  if ( monthBtn ) {
+    monthBtn.setAttribute( "aria-pressed", String( monthActive ) );
+    monthBtn.className = `px-2.5 py-2 text-xs font-semibold transition ${monthActive
+        ? "bg-teal-600 text-white"
+        : "bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"}`;
+  }
+  if ( weekBtn ) {
+    weekBtn.setAttribute( "aria-pressed", String( !monthActive ) );
+    weekBtn.className = `px-2.5 py-2 text-xs font-semibold border-l border-gray-200 transition dark:border-gray-600 ${!monthActive
+        ? "bg-teal-600 text-white"
+        : "bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"}`;
+  }
+}
+
+function weekStartOf( date ) {
+  const d = new Date( date.getFullYear(), date.getMonth(), date.getDate() );
+  d.setDate( d.getDate() - d.getDay() );
+  return d;
+}
+
+// Hora (0-23) a la que pertenece una actividad; sin hora cae en la primera franja
+function taskHourSlot( task ) {
+  if ( !task || !task.time ) return WEEK_UNTIMED_HOUR;
+  const h = parseInt( String( task.time ).slice( 0, 2 ), 10 );
+  return Number.isFinite( h ) ? h : WEEK_UNTIMED_HOUR;
+}
+
+// Actividades de una casilla (día + hora). Las sin hora viven en 07:00.
+function weekSlotItems( dateStr, hour ) {
+  const out = [];
+  if ( !calendarShowOnlyReminders ) {
+    sortTasksByPriority( [ ...( tasks[ dateStr ] || [] ) ] ).forEach( ( task ) => {
+      if ( taskHourSlot( task ) !== hour ) return;
+      out.push( { kind: "task", task, untimed: !task.time, time: task.time || "" } );
+    } );
+  }
+  if ( hour === WEEK_UNTIMED_HOUR ) {
+    getRemindersForDate( dateStr ).forEach( ( item ) => {
+      out.push( { kind: "reminder", item, untimed: true, time: "" } );
+    } );
+  }
+  return out;
+}
+
+function weekItemPill( entry, dateStr ) {
+  if ( entry.kind === "task" ) {
+    const t = entry.task;
+    const priority = PRIORITY_LEVELS[ t.priority ] || PRIORITY_LEVELS[ 3 ];
+    const state = TASK_STATES[ t.state ] || TASK_STATES.pending;
+    const cls = t.kind === "horario" ? "bg-teal-100 text-teal-900" : state.class;
+    return `<div class="wk-pill ${cls}${entry.untimed ? " wk-pill-none" : ""} border-l-4"
+                 data-action="week-item" data-date="${dateStr}" data-id="${t.id}"
+                 style="border-left-color:${priority.color}"
+                 title="${t.title} · ${entry.untimed ? "sin hora" : t.time}">
+      <span class="wk-time">${entry.untimed ? "sin hora" : t.time}</span><span class="truncate">${t.title}</span>
+    </div>`;
+  }
+  const style = REMINDER_PILL[ entry.item.kind ] || REMINDER_PILL.pago;
+  const late = reminderOverdueDays( entry.item.kind, dateStr );
+  return `<div class="wk-pill ${late > 0 ? "bg-red-500 text-white" : style.cls} wk-pill-none border-l-4"
+               data-action="week-item" data-date="${dateStr}" data-reminder-id="${entry.item.reminderId}"
+               style="border-left-color:${late > 0 ? "#b91c1c" : style.border}"
+               title="${entry.item.title} · ${reminderLabel( reminders[ entry.item.reminderId ] )}${late > 0 ? ` · atrasada ${late}d` : ""}">
+    <span class="wk-dot"><i class="fas ${late > 0 ? "fa-exclamation-triangle" : style.icon}"></i></span><span class="truncate">${entry.item.title}</span>
+  </div>`;
+}
+
+function renderWeekCalendar( calendar, monthYear ) {
+  const start = weekStartOf( currentDate );
+  const dowNames = [ "Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb" ];
+  const days = [];
+  for ( let i = 0; i < 7; i++ ) {
+    const d = new Date( start.getFullYear(), start.getMonth(), start.getDate() + i );
+    days.push( { d, dateStr: toDateStr( d ), dow: dowNames[ i ] } );
+  }
+  const end = days[ 6 ].d;
+
+  const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+  const label = sameMonth
+    ? `${start.getDate()} – ${end.getDate()} ${end.toLocaleDateString( "es-ES", { month: "long" } )} ${end.getFullYear()}`
+    : `${start.getDate()} ${start.toLocaleDateString( "es-ES", { month: "short" } )} – ${end.getDate()} ${end.toLocaleDateString( "es-ES", { month: "short" } )} ${end.getFullYear()}`;
+  monthYear.textContent = label.replace( /^\w/, ( c ) => c.toUpperCase() );
+
+  // Rango horario adaptable: base 06–22, se amplía si hay horas fuera
+  let lo = WEEK_HOUR_START;
+  let hi = WEEK_HOUR_END;
+  days.forEach( ( { dateStr } ) => {
+    ( tasks[ dateStr ] || [] ).forEach( ( t ) => {
+      if ( !t.time ) return;
+      const h = parseInt( String( t.time ).slice( 0, 2 ), 10 );
+      if ( !Number.isFinite( h ) ) return;
+      if ( h < lo ) lo = h;
+      if ( h > hi ) hi = h;
+    } );
+  } );
+  lo = Math.max( 0, lo );
+  hi = Math.min( 23, hi );
+
+  const todayStr = getTodayString();
+  const hourLabel = ( h ) => String( h ).padStart( 2, "0" ) + ":00";
+
+  let html = `<div class="week-corner sticky left-0 z-20 px-2 py-2 text-[11px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
+  days.forEach( ( { d, dateStr, dow } ) => {
+    const isToday = dateStr === todayStr;
+    html += `<div class="week-head px-1 py-1.5 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
+      <div class="text-[10px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}</div>
+      <div class="text-base font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
+    </div>`;
+  } );
+
+  for ( let h = lo; h <= hi; h++ ) {
+    html += `<div class="week-hours sticky left-0 z-10 px-2 py-1 text-[11px] font-semibold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-100 dark:border-gray-700">${hourLabel( h )}</div>`;
+    days.forEach( ( { dateStr } ) => {
+      const isToday = dateStr === todayStr;
+      const items = weekSlotItems( dateStr, h );
+      html += `<div class="week-slot calendar-day group relative px-1 py-1 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
+                    data-action="week-add" data-date="${dateStr}" data-hour="${h}">
+        <div class="flex items-start gap-1">
+          <div class="flex-1 min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
+          <div class="week-cell-actions flex flex-col gap-0.5 shrink-0">
+            <button type="button" data-action="week-cell-edit" data-date="${dateStr}" data-hour="${h}"
+                    class="week-cell-btn text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900" title="Editar actividad de esta casilla">
+              <i class="fas fa-pen"></i>
+            </button>
+            <button type="button" data-action="week-cell-delete" data-date="${dateStr}" data-hour="${h}"
+                    class="week-cell-btn text-red-600 hover:bg-red-100 dark:hover:bg-red-900" title="Eliminar actividad de esta casilla">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      </div>`;
+    } );
+  }
+
+  calendar.className = "week-grid grid grid-cols-[56px_repeat(7,minmax(104px,1fr))] min-w-[820px] text-xs";
+  calendar.dataset.view = "week";
+  calendar.innerHTML = html;
+}
+
+function runWeekItemAction( entry, dateStr, mode ) {
+  closeAllModals();
+  if ( entry.kind === "task" ) {
+    if ( mode === "delete" ) quickDeleteTask( dateStr, entry.task.id );
+    else quickEditTaskAdvanced( dateStr, entry.task.id );
+    return;
+  }
+  if ( mode === "delete" ) deleteReminder( entry.item.reminderId );
+  else editReminder( entry.item.reminderId );
+}
+
+// Pregunta cuál actividad editar/eliminar dentro de una casilla semanal
+function showWeekCellActionsModal( dateStr, hourKey, mode ) {
+  const hour = Number( hourKey );
+  const items = weekSlotItems( dateStr, hour );
+  if ( items.length === 0 ) {
+    showNotification( "No hay actividades en esta casilla", "info" );
+    return;
+  }
+  if ( items.length === 1 ) {
+    runWeekItemAction( items[ 0 ], dateStr, mode );
+    return;
+  }
+
+  closeAllModals();
+  const date = new Date( dateStr + "T12:00:00" );
+  const label = date.toLocaleDateString( "es-ES", {
+    weekday: "long", day: "numeric", month: "long",
+  } );
+  const modal = document.createElement( "div" );
+  modal.id = "weekCellActionsModal";
+  modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
+  modal.innerHTML = `
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full p-4 max-h-[80vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-3">
+        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">
+          <i class="fas ${mode === "delete" ? "fa-trash text-red-500" : "fa-pen text-blue-500"} mr-2"></i>${mode === "delete" ? "Eliminar" : "Editar"} actividad
+        </h3>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">${label} · ${String( hour ).padStart( 2, "0" )}:00 — elige la actividad</p>
+      <div class="space-y-2">
+        ${items.map( ( entry ) => {
+          const isTask = entry.kind === "task";
+          const title = isTask ? entry.task.title : entry.item.title;
+          const sub = isTask
+            ? `${entry.untimed ? "sin hora" : entry.task.time} · ${( TASK_STATES[ entry.task.state ] || TASK_STATES.pending ).label}`
+            : `${reminderLabel( reminders[ entry.item.reminderId ] )}${entry.item.subtitle ? " · " + entry.item.subtitle : ""}`;
+          const attrs = isTask
+            ? `data-id="${entry.task.id}"`
+            : `data-reminder-id="${entry.item.reminderId}"`;
+          return `<button type="button" data-action="week-item-action" data-mode="${mode}" data-date="${dateStr}" ${attrs}
+                    class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 px-3 py-2 transition">
+            <span class="block text-sm font-medium text-gray-800 dark:text-gray-100 break-words">${title}</span>
+            <span class="block text-[11px] text-gray-500 dark:text-gray-400">${sub}</span>
+          </button>`;
+        } ).join( "" ) }
+      </div>
+    </div>`;
+  document.body.appendChild( modal );
+  modal.addEventListener( "click", ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
 }
 
 // ===== Recordatorios en calendario/panel: pills y tarjetas =====
@@ -5700,7 +5961,7 @@ function notifyRemindersOnEntry() {
       } );
     } else if ( r.kind === 'festividad' ) {
       ( r.dates || [] ).forEach( ( d ) => {
-        if ( d === today ) msgs.push( `Hoy: ${r.title} 🎉` );
+        if ( d === today ) msgs.push( `Hoy: ${r.title}` );
         else if ( d < today ) msgs.push( `${r.title}: ${diffDaysStr( d, today )} día(s) de retraso` );
       } );
     }
@@ -5709,7 +5970,7 @@ function notifyRemindersOnEntry() {
 
   if ( msgs.length === 0 ) return;
   const msg = msgs.slice( 0, 3 ).join( ' • ' ) + ( msgs.length > 3 ? ` (+${msgs.length - 3} más)` : '' );
-  showInAppNotification( '🔔 Recordatorios', msg, 'warning' );
+  showInAppNotification( 'Recordatorios', msg, 'warning' );
   entryAlert( msgs.some( ( m ) => m.includes( 'etrasa' ) ) ? 'task-late' : 'task-reminder' );
 }
 
@@ -5727,11 +5988,11 @@ function notifyOverdueOnEntry() {
     ? `Tarea atrasada: "${overdue[ 0 ].title}"`
     : `Tienes ${overdue.length} tareas atrasadas sin iniciar`;
 
-  showInAppNotification( '⚠️ Tareas atrasadas', msg, 'warning' );
+  showInAppNotification( 'Tareas atrasadas', msg, 'warning' );
   entryAlert( 'task-late' );
 
   if ( notificationsEnabled && 'Notification' in window && Notification.permission === 'granted' ) {
-    showDesktopNotificationPWA( '⚠️ Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );
+    showDesktopNotificationPWA( 'Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );
   }
 }
 
@@ -5977,20 +6238,28 @@ let isFormSidebarOpen = true;
 // Filtro de calendario: solo recordatorios (oculta tareas comunes)
 let calendarShowOnlyReminders = false;
 
+// Estilos completos por estado: evita hover residual (blanco sobre blanco)
+const REMINDERS_BTN_STYLES = {
+  filtered: 'h-9 px-3 rounded-full bg-teal-600 text-white border border-teal-600 hover:bg-teal-700 transition flex items-center gap-1.5 text-xs font-semibold focus-visible:ring-2 focus-visible:ring-teal-400 dark:bg-teal-600 dark:hover:bg-teal-700',
+  all: 'h-9 px-3 rounded-full bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition flex items-center gap-1.5 text-xs font-semibold focus-visible:ring-2 focus-visible:ring-purple-300 dark:bg-purple-900/40 dark:text-purple-200 dark:border-purple-800 dark:hover:bg-purple-900/70',
+};
+
+function updateRemindersViewButton() {
+  const btn = document.getElementById( 'remindersViewBtn' );
+  if ( !btn ) return;
+  const filtered = calendarShowOnlyReminders;
+  btn.className = filtered ? REMINDERS_BTN_STYLES.filtered : REMINDERS_BTN_STYLES.all;
+  btn.setAttribute( 'aria-pressed', String( filtered ) );
+  btn.title = filtered ? 'Mostrar todas las actividades' : 'Ver solo recordatorios';
+  const icon = document.getElementById( 'remindersViewIcon' );
+  if ( icon ) icon.className = filtered ? 'fas fa-bell' : 'fas fa-list-check';
+  const label = document.getElementById( 'remindersViewLabel' );
+  if ( label ) label.textContent = filtered ? 'Recordatorios' : 'Mostrar tareas';
+}
+
 function toggleRemindersView() {
   calendarShowOnlyReminders = !calendarShowOnlyReminders;
-  const btn = document.getElementById( 'remindersViewBtn' );
-  const icon = document.getElementById( 'remindersViewIcon' );
-  if ( btn ) {
-    btn.title = calendarShowOnlyReminders ? 'Ver todo el calendario' : 'Ver solo recordatorios';
-    btn.classList.toggle( 'bg-teal-600', calendarShowOnlyReminders );
-    btn.classList.toggle( 'text-white', calendarShowOnlyReminders );
-    btn.classList.toggle( 'border-teal-600', calendarShowOnlyReminders );
-    btn.classList.toggle( 'bg-purple-50', !calendarShowOnlyReminders );
-    btn.classList.toggle( 'text-purple-600', !calendarShowOnlyReminders );
-    btn.classList.toggle( 'border-purple-200', !calendarShowOnlyReminders );
-  }
-  if ( icon ) icon.className = calendarShowOnlyReminders ? 'fas fa-calendar-day' : 'fas fa-bell';
+  updateRemindersViewButton();
   renderCalendar();
   showNotification(
     calendarShowOnlyReminders ? 'Mostrando solo recordatorios' : 'Mostrando calendario completo',
@@ -6002,8 +6271,8 @@ function toggleTaskForm( forceOpen ) {
   const wantOpen = typeof forceOpen === 'boolean' ? forceOpen : !isFormSidebarOpen;
   const formColumn = document.getElementById( 'formColumn' );
   const calendarColumn = document.getElementById( 'calendarColumn' );
-  const toggleIcon = document.getElementById( 'formToggleIcon' );
-  const toggleBtn = document.getElementById( 'formToggleBtn' );
+  const headingIcon = document.getElementById( 'formHeadingIcon' );
+  const headingBtn = document.getElementById( 'formHeadingToggle' );
   const showFormBtn = document.getElementById( 'showFormBtn' );
   const fab = document.getElementById( 'fabAddTask' );
 
@@ -6013,8 +6282,8 @@ function toggleTaskForm( forceOpen ) {
     formColumn?.classList.remove( 'hidden' );
     calendarColumn?.classList.remove( 'lg:col-span-3' );
     calendarColumn?.classList.add( 'lg:col-span-2' );
-    if ( toggleIcon ) toggleIcon.className = 'fas fa-chevron-up text-sm';
-    toggleBtn?.setAttribute( 'title', 'Ocultar formulario' );
+    if ( headingIcon ) headingIcon.className = 'fas fa-chevron-up text-base text-green-600';
+    headingBtn?.setAttribute( 'title', 'Ocultar formulario' );
     showFormBtn?.classList.add( 'hidden' );
     if ( fab ) { fab.classList.add( 'hidden' ); fab.classList.remove( 'flex' ); }
     renderCalendar();
@@ -6022,12 +6291,60 @@ function toggleTaskForm( forceOpen ) {
     formColumn?.classList.add( 'hidden' );
     calendarColumn?.classList.remove( 'lg:col-span-2' );
     calendarColumn?.classList.add( 'lg:col-span-3' );
-    if ( toggleIcon ) toggleIcon.className = 'fas fa-chevron-down text-sm';
-    toggleBtn?.setAttribute( 'title', 'Crear tarea' );
+    if ( headingIcon ) headingIcon.className = 'fas fa-chevron-down text-base text-green-600';
+    headingBtn?.setAttribute( 'title', 'Mostrar formulario' );
     showFormBtn?.classList.remove( 'hidden' );
     if ( fab ) { fab.classList.remove( 'hidden' ); fab.classList.add( 'flex' ); }
     renderCalendar();
   }
+}
+
+// ===== FAB inteligente: Ver actividades / Ir al formulario =====
+let smartNavMode = 'agenda';
+let smartNavObserver = null;
+
+const safeScrollIntoView = ( el, opts ) => {
+  if ( el && typeof el.scrollIntoView === 'function' ) el.scrollIntoView( opts );
+};
+
+function setSmartNavMode( mode ) {
+  smartNavMode = mode === 'form' ? 'form' : 'agenda';
+  const label = document.getElementById( 'fabSmartNavLabel' );
+  const icon = document.getElementById( 'fabSmartNavIcon' );
+  const btn = document.getElementById( 'fabSmartNav' );
+  if ( label ) label.textContent = smartNavMode === 'form' ? 'Ir al formulario' : 'Ver actividades';
+  if ( icon ) icon.className = smartNavMode === 'form' ? 'fas fa-arrow-up' : 'fas fa-list-check';
+  if ( btn ) btn.title = smartNavMode === 'form' ? 'Subir al formulario de tareas' : 'Ver actividades de hoy';
+}
+
+function initSmartNav() {
+  setSmartNavMode( 'agenda' );
+  const panel = document.getElementById( 'dailyTaskPanel' );
+  if ( !panel || typeof IntersectionObserver === 'undefined' ) return;
+  if ( smartNavObserver ) smartNavObserver.disconnect();
+  smartNavObserver = new IntersectionObserver( ( entries ) => {
+    setSmartNavMode( entries[ 0 ].isIntersecting ? 'form' : 'agenda' );
+  }, { threshold: 0.2 } );
+  smartNavObserver.observe( panel );
+}
+
+function smartNavGo() {
+  if ( smartNavMode === 'form' ) {
+    toggleTaskForm( true );
+    setTimeout( () => {
+      safeScrollIntoView( document.getElementById( 'formCard' ) || document.getElementById( 'formColumn' ), {
+        behavior: 'smooth', block: 'start',
+      } );
+    }, 80 );
+    return;
+  }
+  const today = getTodayString();
+  const date = new Date( today + 'T12:00:00' );
+  showDailyTaskPanel( today, date.getDate() );
+  setTimeout( () => {
+    safeScrollIntoView( document.getElementById( 'dailyTaskPanel' ), { behavior: 'smooth', block: 'start' } );
+    safeScrollIntoView( document.querySelector( '.week-today' ), { behavior: 'smooth', block: 'nearest', inline: 'center' } );
+  }, 150 );
 }
 
 // Abre el modal de creación (usado por el FAB en todos los dispositivos)
@@ -8483,7 +8800,11 @@ function undoDelete() {
 }
 
 function changeMonth( delta ) {
-  currentDate.setMonth( currentDate.getMonth() + delta );
+  if ( calendarView === 'week' ) {
+    currentDate.setDate( currentDate.getDate() + delta * 7 );
+  } else {
+    currentDate.setMonth( currentDate.getMonth() + delta );
+  }
   renderCalendar();
   updateProgress();
 }
@@ -9881,7 +10202,7 @@ function updateTimerDisplay( taskId, endTime ) {
     // Notificación
     if ( notificationsEnabled ) {
       showDesktopNotificationPWA(
-        '⏰ Tiempo agotado',
+        'Tiempo agotado',
         `La tarea ha excedido su tiempo programado`,
         `${taskId}-timeout`,
         true,
