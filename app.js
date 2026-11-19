@@ -12,7 +12,7 @@ const firebaseConfig = {
 let tasks = {};
 // Huella de build visible (consola + diagnóstico): permite saber qué
 // código corre realmente en cada dispositivo.
-const APP_BUILD = '2026-10-06-pushfix-v1';
+const APP_BUILD = '2026-11-19-weekview-v2';
 // ===== MÓDULO RECORDATORIOS (pagos / festividades / horarios) =====
 // kind: 'pago' | 'festividad' | 'horario'. Las fechas efectivas van en
 // `dates[]` (pago: una por cuota; festividad/horario: ocurrencias).
@@ -273,7 +273,7 @@ function handleInstallClick() {
 let selectedDateForPanel = getTodayString();
 
 function showDesktopNotificationPWA( title, message, tag, requiresAction = false, notificationType = 'default' ) {
-  if ( !notificationsEnabled || Notification.permission !== 'granted' ) {
+  if ( !notificationsEnabled || notificationPermission() !== 'granted' ) {
     console.log( '❌ Notificaciones PWA no habilitadas' );
     showInAppNotification( title, message, 'info' ); // Fallback visual
     return false;
@@ -1407,7 +1407,7 @@ async function initFirebase() {
       // Si hay permiso pero no hay token FCM, el push es imposible:
       // reintentar obtenerlo (pudo fallar por SW no listo, red, etc.)
       console.log( '🔑 FCM token:', fcmToken ? 'OK' : 'AUSENTE (push imposible)' );
-      if ( !fcmToken && messaging && 'Notification' in window && Notification.permission === 'granted' ) {
+      if ( !fcmToken && messaging && 'Notification' in window && notificationPermission() === 'granted' ) {
         console.log( '🔑 Reintentando obtener token FCM...' );
         setTimeout( () => {
           requestFCMToken().catch( () => {} );
@@ -1643,7 +1643,7 @@ async function requestFCMToken() {
     }
 
     // Verificar permisos de notificación
-    if ( Notification.permission !== 'granted' ) {
+    if ( notificationPermission() !== 'granted' ) {
       console.log( '📢 Solicitando permisos de notificación...' );
       const permission = await Notification.requestPermission();
 
@@ -1709,7 +1709,7 @@ async function promptForNotifications() {
 
   if ( !currentUser || currentUser.isOffline ) return;
 
-  const permission = Notification.permission;
+  const permission = notificationPermission();
   const lastPrompt = localStorage.getItem( 'last_notification_prompt' );
   const now = Date.now();
 
@@ -1827,7 +1827,7 @@ async function saveFCMToken( token ) {
 async function pushDiagnostics() {
   const out = {
     build: ( typeof APP_BUILD !== 'undefined' ) ? APP_BUILD : 'desconocido',
-    permiso: ( 'Notification' in window ) ? Notification.permission : 'sin-soporte',
+    permiso: ( 'Notification' in window ) ? notificationPermission() : 'sin-soporte',
     tokenFCM: fcmToken ? fcmToken.slice( 0, 20 ) + '...' : 'AUSENTE',
     sesionApp: currentUser ? ( currentUser.email || 'logueado' ) : 'SIN SESIÓN (push imposible)',
     colaPendiente: ( typeof syncQueue !== 'undefined' ) ? syncQueue.size : '?',
@@ -1907,7 +1907,7 @@ function setupFCMListeners() {
       alertTask( data?.type || 'default' );
 
       // Si es PWA o navegador con permisos, mostrar también notificación del sistema
-      if ( Notification.permission === 'granted' ) {
+      if ( notificationPermission() === 'granted' ) {
         showDesktopNotificationPWA(
           title,
           body,
@@ -2173,7 +2173,7 @@ function hideOfflineMessage() {
 function savePermissions() {
   const permissions = {
     notifications: {
-      permission: Notification.permission,
+      permission: notificationPermission(),
       enabled: notificationsEnabled,
       timestamp: Date.now()
     }
@@ -2194,7 +2194,7 @@ function loadPermissions() {
       const permissions = JSON.parse( stored );
 
       // Solo restaurar si los permisos del navegador coinciden
-      if ( Notification.permission === 'granted' &&
+      if ( notificationPermission() === 'granted' &&
         permissions.notifications?.permission === 'granted' ) {
 
         notificationsEnabled = permissions.notifications.enabled !== false; // Default true
@@ -2204,7 +2204,7 @@ function loadPermissions() {
     }
 
     // Si no hay permisos guardados pero el navegador los tiene, usar defaults
-    if ( Notification.permission === 'granted' ) {
+    if ( notificationPermission() === 'granted' ) {
       notificationsEnabled = true;
       savePermissions(); // Guardar para próxima vez
     }
@@ -2212,7 +2212,7 @@ function loadPermissions() {
   } catch ( error ) {
     console.error( 'Error cargando permisos:', error );
     // Valores por defecto en caso de error
-    notificationsEnabled = ( Notification.permission === 'granted' );
+    notificationsEnabled = ( notificationPermission() === 'granted' );
   }
 
   return false;
@@ -2227,7 +2227,7 @@ function initNotifications() {
   // Cargar permisos guardados
   loadPermissions();
 
-  if ( Notification.permission === "granted" ) {
+  if ( notificationPermission() === "granted" ) {
     if ( typeof notificationsEnabled === 'undefined' ) {
       notificationsEnabled = true;
     }
@@ -2242,7 +2242,7 @@ function initNotifications() {
       console.log( 'Service Worker notificado para verificación' );
     }
 
-  } else if ( Notification.permission === "default" ) {
+  } else if ( notificationPermission() === "default" ) {
     const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
       window.navigator.standalone === true;
 
@@ -2262,7 +2262,7 @@ function setupNetworkListeners() {
 
   // NUEVO: Cuando la PWA vuelve del background, verificar notificaciones
   document.addEventListener( 'visibilitychange', () => {
-    if ( !document.hidden && notificationsEnabled && Notification.permission === 'granted' ) {
+    if ( !document.hidden && notificationsEnabled && notificationPermission() === 'granted' ) {
       console.log( '📱 PWA volvió del background - sincronizando notificaciones' );
 
     }
@@ -2467,10 +2467,17 @@ function updateSyncIndicator( status ) {
 
 function hideLoadingScreen() {
   const loadingScreen = document.getElementById( "loadingScreen" );
+  if ( !loadingScreen ) return;
   loadingScreen.style.opacity = "0";
   setTimeout( () => {
     loadingScreen.style.display = "none";
   }, 300 );
+}
+
+// Permiso de notificaciones sin asumir que la API existe (iOS embebido,
+// navegadores restringidos). Evita que un ReferenceError bloquee el arranque.
+function notificationPermission() {
+  return typeof Notification !== 'undefined' ? Notification.permission : 'denied';
 }
 
 // Manejar resultado de Google Sign-In
@@ -3144,9 +3151,12 @@ function setupEventListeners() {
   console.log( 'Event listeners configurados completamente' );
 }
 
-// Fallback para navegadores que ya tienen DOM listo
+// Fallback para navegadores que ya tienen DOM listo. Se difiere con
+// setTimeout(0): un script con defer se evalúa en readyState
+// "interactive", y ejecutar aquí en el acto tocaría constantes declaradas
+// más abajo (TDZ) → ReferenceError y la app quedaba cargando para siempre.
 if ( document.readyState === 'complete' || document.readyState === 'interactive' ) {
-  setupEventListeners();
+  setTimeout( setupEventListeners, 0 );
 }
 
 // Configurar características específicas de PWA
@@ -5991,7 +6001,7 @@ function notifyOverdueOnEntry() {
   showInAppNotification( 'Tareas atrasadas', msg, 'warning' );
   entryAlert( 'task-late' );
 
-  if ( notificationsEnabled && 'Notification' in window && Notification.permission === 'granted' ) {
+  if ( notificationsEnabled && 'Notification' in window && notificationPermission() === 'granted' ) {
     showDesktopNotificationPWA( 'Tareas atrasadas', msg, `overdue-entry-${today}`, false, 'task-late' );
   }
 }
@@ -8972,7 +8982,7 @@ function toggleNotifications() {
     return;
   }
 
-  if ( Notification.permission === "granted" ) {
+  if ( notificationPermission() === "granted" ) {
     // Si falta el token, el click reintenta registrarlo en vez de alternar
     if ( !fcmToken && currentUser && !currentUser.isOffline && messaging ) {
       showNotification( "Registrando push...", "info" );
@@ -8997,7 +9007,7 @@ function toggleNotifications() {
     } else {
       showNotification( "Notificaciones desactivadas", "info" );
     }
-  } else if ( Notification.permission === "default" ) {
+  } else if ( notificationPermission() === "default" ) {
     requestNotificationPermissionWithVibration();
   } else {
     showNotification(
@@ -9052,7 +9062,7 @@ function requestNotificationPermissionWithVibration() {
 
 // Función para revisar notificaciones cuando la PWA vuelve del background
 function onPageVisibilityChange() {
-  if ( !document.hidden && notificationsEnabled && Notification.permission === "granted" ) {
+  if ( !document.hidden && notificationsEnabled && notificationPermission() === "granted" ) {
     console.log( "📱 PWA volvió del background - revisando notificaciones" );
   }
 }
@@ -9064,7 +9074,7 @@ function updateNotificationButton() {
   const btn = document.getElementById( "notificationsBtn" );
   if ( !btn ) return;
 
-  const hasPermission = Notification.permission === "granted";
+  const hasPermission = notificationPermission() === "granted";
   const baseClasses =
     "text-white px-3 py-2 rounded-lg transition duration-300 text-xs md:text-sm font-normal md:font-bold";
 
@@ -9837,20 +9847,32 @@ document.addEventListener( "DOMContentLoaded", async function () {
   isOnline = navigator.onLine;
   setupNetworkListeners();
 
-  loadTasks();
-  loadPermissions();
+  // Red de seguridad: pase lo que pase, la pantalla de carga se retira.
+  setTimeout( hideLoadingScreen, 6000 );
 
-  renderCalendar();
-  updateProgress();
-  setupEventListeners();
-  setupDragAndDrop();
-  setupTaskTooltips();
-  setupDateInput();
+  const bootStep = ( name, fn ) => {
+    try {
+      return fn();
+    } catch ( error ) {
+      console.error( `❌ Error inicializando ${name}:`, error );
+      return null;
+    }
+  };
 
-  initNotifications();
+  bootStep( 'tareas locales', loadTasks );
+  bootStep( 'permisos', loadPermissions );
+
+  bootStep( 'calendario', renderCalendar );
+  bootStep( 'progreso', updateProgress );
+  bootStep( 'event listeners', setupEventListeners );
+  bootStep( 'drag and drop', setupDragAndDrop );
+  bootStep( 'tooltips', setupTaskTooltips );
+  bootStep( 'fecha', setupDateInput );
+
+  bootStep( 'notificaciones', initNotifications );
 
   // Inicializar tema
-  initThemeToggle();
+  bootStep( 'tema', initThemeToggle );
 
   // ✅ Mostrar panel hoy después de 500ms
   setTimeout( () => {
@@ -9858,14 +9880,20 @@ document.addEventListener( "DOMContentLoaded", async function () {
     initializeTodayPanel();
   }, 500 );
 
-  // ✅ Firebase solo si HAY conexión
+  // ✅ Firebase solo si HAY conexión (initFirebase ya no lanza: cae a offline)
   if ( navigator.onLine ) {
     console.log( '🔥 Inicializando Firebase...' );
-    await initFirebase();
+    try {
+      await initFirebase();
+    } catch ( error ) {
+      console.error( '❌ Error inesperado en Firebase:', error );
+      initOfflineMode();
+    }
   } else {
     console.log( '📴 Sin conexión inicial - modo offline' );
     initOfflineMode();
   }
+  hideLoadingScreen();
 
   setTimeout( () => {
     handleServiceWorkerMessages();
@@ -9987,7 +10015,7 @@ function setupAuthListeners() {
         }
 
         // Configurar FCM si está disponible
-        if ( messaging && Notification.permission === 'granted' ) {
+        if ( messaging && notificationPermission() === 'granted' ) {
           setTimeout( async () => {
             try {
               const token = await requestFCMToken();
