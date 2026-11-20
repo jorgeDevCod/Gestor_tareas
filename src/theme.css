@@ -146,13 +146,28 @@
 
 /* ---------- Vista semanal (rejilla por horas, compacta) ---------- */
 .week-scroll {
+  min-width: 0;
+  max-width: 100%;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
+  overscroll-behavior: contain;
+}
+
+/* Solo en semana: alto acotado al viewport con scroll interno (horas y días) */
+.week-scroll.week-mode {
+  max-height: 58vh;
+  overflow: auto;
+}
+
+@media (min-width: 640px) {
+  .week-scroll.week-mode {
+    max-height: 70vh;
+  }
 }
 
 .week-scroll::-webkit-scrollbar {
   height: 5px;
+  width: 5px;
 }
 
 .week-scroll::-webkit-scrollbar-thumb {
@@ -163,45 +178,17 @@
 .week-grid {
   border: 1px solid #e5e7eb;
   border-radius: 0.5rem;
-  /* clip (no scroll container) para que la columna de horas quede sticky
-     respecto al wrapper con overflow-x-auto */
-  overflow: clip;
 }
 
 .week-slot {
   min-height: 28px;
 }
 
-.week-cell-actions {
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.week-slot:hover .week-cell-actions,
-.week-slot:focus-within .week-cell-actions {
-  opacity: 1;
-}
-
-.week-cell-btn {
-  width: 16px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.25rem;
-  font-size: 8px;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.dark .week-cell-btn {
-  background: rgba(31, 41, 55, 0.92);
-}
-
 .wk-pill {
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 0 3px;
+  padding: 0 2px 0 3px;
   border-radius: 3px;
   font-size: 9px;
   line-height: 1.2;
@@ -226,20 +213,47 @@
   flex-shrink: 0;
 }
 
+.wk-time-min {
+  font-size: 8px;
+  font-weight: 700;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
 .wk-dot {
   flex-shrink: 0;
   font-size: 8px;
 }
 
-/* Móvil/tablet: casillas más bajas y acciones siempre accesibles */
-@media (max-width: 1023px) {
-  .week-cell-actions {
-    opacity: 0.9;
-  }
+.wk-eye {
+  flex-shrink: 0;
+  width: 13px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 8px;
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.35);
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
 
-  .week-slot-content {
-    padding-right: 15px;
-  }
+.wk-pill:hover .wk-eye {
+  opacity: 1;
+}
+
+.wk-eye:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.dark .wk-eye {
+  background: rgba(31, 41, 55, 0.4);
+}
+
+.dark .wk-eye:hover {
+  background: rgba(31, 41, 55, 0.8);
 }
 
 @media (min-width: 640px) {
@@ -248,15 +262,15 @@
   }
 
   .wk-pill {
-    padding: 1px 4px;
+    padding: 1px 2px 1px 4px;
     font-size: 10px;
     gap: 4px;
   }
-}
 
-@media (min-width: 1024px) {
-  .week-slot-content {
-    padding-right: 0;
+  .wk-eye {
+    width: 16px;
+    height: 15px;
+    font-size: 9px;
   }
 }
 

@@ -12,7 +12,7 @@ const firebaseConfig = {
 let tasks = {};
 // Huella de build visible (consola + diagnóstico): permite saber qué
 // código corre realmente en cada dispositivo.
-const APP_BUILD = '2026-11-19-weekview-v2';
+const APP_BUILD = '2026-11-19-weekview-v3';
 // ===== MÓDULO RECORDATORIOS (pagos / festividades / horarios) =====
 // kind: 'pago' | 'festividad' | 'horario'. Las fechas efectivas van en
 // `dates[]` (pago: una por cuota; festividad/horario: ocurrencias).
@@ -2818,26 +2818,25 @@ document.addEventListener( 'click', ( e ) => {
     case 'calendar-view':
       setCalendarView( el.dataset.view );
       break;
-    case 'week-item':
-      showDayTasksModal( date );
+    case 'week-item-view':
+      showWeekActivityModal( date, {
+        taskId: el.dataset.reminderId ? null : ( id || null ),
+        reminderId: el.dataset.reminderId || null,
+      } );
       break;
     case 'week-add':
       if ( date ) showQuickAddTask( isDatePast( date ) ? getTodayString() : date );
       break;
-    case 'week-cell-edit':
-      showWeekCellActionsModal( date, el.dataset.hour, 'edit' );
+    case 'week-activity-edit':
+      closeAllModals();
+      if ( el.dataset.reminderId ) editReminder( el.dataset.reminderId );
+      else quickEditTaskAdvanced( date, id );
       break;
-    case 'week-cell-delete':
-      showWeekCellActionsModal( date, el.dataset.hour, 'delete' );
+    case 'week-activity-delete':
+      closeAllModals();
+      if ( el.dataset.reminderId ) deleteReminder( el.dataset.reminderId );
+      else quickDeleteTask( date, id );
       break;
-    case 'week-item-action': {
-      const isReminder = !!el.dataset.reminderId;
-      const entry = isReminder
-        ? { kind: 'reminder', item: { reminderId: el.dataset.reminderId } }
-        : { kind: 'task', task: { id } };
-      runWeekItemAction( entry, date, el.dataset.mode );
-      break;
-    }
     case 'smart-nav':
       smartNavGo();
       break;
@@ -3919,6 +3918,7 @@ function renderCalendar() {
 
   calendar.className = "grid grid-cols-7 gap-2";
   calendar.dataset.view = "month";
+  calendar.parentElement?.classList.remove( "week-mode" );
   calendar.innerHTML = "";
   monthYear.textContent = currentDate
     .toLocaleDateString( "es-ES", {
@@ -4027,25 +4027,33 @@ function weekSlotItems( dateStr, hour ) {
 }
 
 function weekItemPill( entry, dateStr ) {
+  const eye = ( attrs ) => `<button type="button" class="wk-eye" data-action="week-item-view" data-date="${dateStr}" ${attrs} title="Ver actividad" aria-label="Ver actividad">
+      <i class="fas fa-eye"></i>
+    </button>`;
   if ( entry.kind === "task" ) {
     const t = entry.task;
     const priority = PRIORITY_LEVELS[ t.priority ] || PRIORITY_LEVELS[ 3 ];
     const state = TASK_STATES[ t.state ] || TASK_STATES.pending;
     const cls = t.kind === "horario" ? "bg-teal-100 text-teal-900" : state.class;
+    // En móvil la hora ya la da la fila: solo minutos distintos de :00
+    const shortTime = t.time ? ( t.time.endsWith( ":00" ) ? "" : ":" + t.time.slice( 3 ) ) : "";
+    const timeHtml = entry.untimed
+      ? `<span class="wk-time-min sm:hidden"><i class="fas fa-clock"></i></span><span class="wk-time hidden sm:inline">sin hora</span>`
+      : `<span class="wk-time-min sm:hidden">${shortTime}</span><span class="wk-time hidden sm:inline">${t.time}</span>`;
     return `<div class="wk-pill ${cls}${entry.untimed ? " wk-pill-none" : ""} border-l-4"
-                 data-action="week-item" data-date="${dateStr}" data-id="${t.id}"
+                 data-action="week-item-view" data-date="${dateStr}" data-id="${t.id}"
                  style="border-left-color:${priority.color}"
                  title="${t.title} · ${entry.untimed ? "sin hora" : t.time}">
-      <span class="wk-time">${entry.untimed ? "sin hora" : t.time}</span><span class="truncate">${t.title}</span>
+      ${timeHtml}<span class="truncate">${t.title}</span>${eye( `data-id="${t.id}"` )}
     </div>`;
   }
   const style = REMINDER_PILL[ entry.item.kind ] || REMINDER_PILL.pago;
   const late = reminderOverdueDays( entry.item.kind, dateStr );
   return `<div class="wk-pill ${late > 0 ? "bg-red-500 text-white" : style.cls} wk-pill-none border-l-4"
-               data-action="week-item" data-date="${dateStr}" data-reminder-id="${entry.item.reminderId}"
+               data-action="week-item-view" data-date="${dateStr}" data-reminder-id="${entry.item.reminderId}"
                style="border-left-color:${late > 0 ? "#b91c1c" : style.border}"
                title="${entry.item.title} · ${reminderLabel( reminders[ entry.item.reminderId ] )}${late > 0 ? ` · atrasada ${late}d` : ""}">
-    <span class="wk-dot"><i class="fas ${late > 0 ? "fa-exclamation-triangle" : style.icon}"></i></span><span class="truncate">${entry.item.title}</span>
+    <span class="wk-dot"><i class="fas ${late > 0 ? "fa-exclamation-triangle" : style.icon}"></i></span><span class="truncate">${entry.item.title}</span>${eye( `data-reminder-id="${entry.item.reminderId}"` )}
   </div>`;
 }
 
@@ -4083,10 +4091,10 @@ function renderWeekCalendar( calendar, monthYear ) {
   const todayStr = getTodayString();
   const hourLabel = ( h ) => String( h ).padStart( 2, "0" ) + ":00";
 
-  let html = `<div class="week-corner sticky left-0 z-20 px-1.5 py-1.5 text-[10px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
+  let html = `<div class="week-corner sticky top-0 left-0 z-30 px-1.5 py-1.5 text-[10px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
   days.forEach( ( { d, dateStr, dow } ) => {
     const isToday = dateStr === todayStr;
-    html += `<div class="week-head px-0.5 py-1 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
+    html += `<div class="week-head sticky top-0 z-20 px-0.5 py-1 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
       <div class="text-[9px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}</div>
       <div class="text-sm font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
     </div>`;
@@ -4097,85 +4105,104 @@ function renderWeekCalendar( calendar, monthYear ) {
     days.forEach( ( { dateStr } ) => {
       const isToday = dateStr === todayStr;
       const items = weekSlotItems( dateStr, h );
-      html += `<div class="week-slot calendar-day group relative px-0.5 py-0.5 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
+      html += `<div class="week-slot calendar-day relative px-0.5 py-0.5 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
                     data-action="week-add" data-date="${dateStr}" data-hour="${h}">
-        <div class="week-slot-content min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
-        <div class="week-cell-actions absolute top-0.5 right-0.5 flex flex-col gap-0.5">
-          <button type="button" data-action="week-cell-edit" data-date="${dateStr}" data-hour="${h}"
-                  class="week-cell-btn text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900" title="Editar actividad de esta casilla">
-            <i class="fas fa-pen"></i>
-          </button>
-          <button type="button" data-action="week-cell-delete" data-date="${dateStr}" data-hour="${h}"
-                  class="week-cell-btn text-red-600 hover:bg-red-100 dark:hover:bg-red-900" title="Eliminar actividad de esta casilla">
-            <i class="fas fa-trash"></i>
-          </button>
-        </div>
+        <div class="min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
       </div>`;
     } );
   }
 
-  calendar.className = "week-grid grid grid-cols-[40px_repeat(7,minmax(80px,1fr))] w-full min-w-[600px] text-[10px] sm:text-xs";
+  calendar.className = "week-grid grid grid-cols-[32px_repeat(7,66px)] sm:grid-cols-[40px_repeat(7,minmax(0,1fr))] w-max min-w-full sm:w-full text-[10px] sm:text-xs";
   calendar.dataset.view = "week";
   calendar.innerHTML = html;
+  calendar.parentElement?.classList.add( "week-mode" );
 }
 
-function runWeekItemAction( entry, dateStr, mode ) {
-  closeAllModals();
-  if ( entry.kind === "task" ) {
-    if ( mode === "delete" ) quickDeleteTask( dateStr, entry.task.id );
-    else quickEditTaskAdvanced( dateStr, entry.task.id );
-    return;
-  }
-  if ( mode === "delete" ) deleteReminder( entry.item.reminderId );
-  else editReminder( entry.item.reminderId );
-}
-
-// Pregunta cuál actividad editar/eliminar dentro de una casilla semanal
-function showWeekCellActionsModal( dateStr, hourKey, mode ) {
-  const hour = Number( hourKey );
-  const items = weekSlotItems( dateStr, hour );
-  if ( items.length === 0 ) {
-    showNotification( "No hay actividades en esta casilla", "info" );
-    return;
-  }
-  if ( items.length === 1 ) {
-    runWeekItemAction( items[ 0 ], dateStr, mode );
+// Modal de detalle completo de una actividad de la vista semanal
+function showWeekActivityModal( dateStr, { taskId = null, reminderId = null } = {} ) {
+  const task = taskId ? ( tasks[ dateStr ] || [] ).find( ( t ) => t.id === taskId ) : null;
+  const remItem = reminderId ? getRemindersForDate( dateStr ).find( ( i ) => i.reminderId === reminderId ) : null;
+  if ( !task && !remItem ) {
+    showNotification( "Actividad no encontrada", "error" );
     return;
   }
 
   closeAllModals();
   const date = new Date( dateStr + "T12:00:00" );
-  const label = date.toLocaleDateString( "es-ES", {
-    weekday: "long", day: "numeric", month: "long",
+  const dateLabel = date.toLocaleDateString( "es-ES", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
   } );
+
+  let title;
+  let typeLabel;
+  let icon;
+  let rows;
+  let actionAttrs;
+
+  if ( task ) {
+    const state = TASK_STATES[ task.state ] || TASK_STATES.pending;
+    const priority = PRIORITY_LEVELS[ task.priority ] || PRIORITY_LEVELS[ 3 ];
+    const mins = task.endTime ? computeMinutesFromRange( task.time, task.endTime ) : ( task.duration || null );
+    title = task.title;
+    typeLabel = task.kind === "horario" ? ( task.subkind === "clase" ? "Clase / estudio" : "Reunión" ) : "Tarea";
+    icon = task.kind === "horario" ? "fa-calendar-check" : state.icon;
+    rows = [
+      [ "Fecha", dateLabel ],
+      [ "Hora", task.time ? ( task.endTime ? `${task.time} – ${task.endTime}` : task.time ) : "Sin hora" ],
+      mins ? [ "Duración", formatMinutes( mins ) ] : null,
+      [ "Prioridad", priority.label ],
+      [ "Estado", state.label ],
+      task.description ? [ "Descripción", task.description ] : null,
+    ];
+    actionAttrs = `data-id="${task.id}"`;
+  } else {
+    const r = reminders[ remItem.reminderId ] || {};
+    const late = reminderOverdueDays( remItem.kind, dateStr );
+    title = remItem.title;
+    typeLabel = reminderLabel( r ) || "Recordatorio";
+    icon = ( REMINDER_PILL[ remItem.kind ] || REMINDER_PILL.pago ).icon;
+    rows = [
+      [ "Fecha", dateLabel ],
+      [ "Tipo", typeLabel ],
+      remItem.subtitle ? [ "Detalle", remItem.subtitle ] : null,
+      r.description ? [ "Descripción", r.description ] : null,
+      [ "Estado", late > 0 ? `Atrasada ${late} día(s)` : "Al día" ],
+    ];
+    actionAttrs = `data-reminder-id="${remItem.reminderId}"`;
+  }
+
   const modal = document.createElement( "div" );
-  modal.id = "weekCellActionsModal";
+  modal.id = "weekActivityModal";
   modal.className = "fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4";
   modal.innerHTML = `
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full p-4 max-h-[80vh] overflow-y-auto">
-      <div class="flex justify-between items-center mb-3">
-        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">
-          <i class="fas ${mode === "delete" ? "fa-trash text-red-500" : "fa-pen text-blue-500"} mr-2"></i>${mode === "delete" ? "Eliminar" : "Editar"} actividad
-        </h3>
-        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition"><i class="fas fa-times"></i></button>
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full p-4 max-h-[85vh] overflow-y-auto">
+      <div class="flex justify-between items-start gap-2 mb-3">
+        <div class="min-w-0">
+          <span class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300">
+            <i class="fas ${icon}"></i>${typeLabel}
+          </span>
+          <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 break-words">${title}</h3>
+        </div>
+        <button data-action="close-modals" class="text-gray-500 hover:text-gray-700 transition shrink-0" aria-label="Cerrar">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
-      <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">${label} · ${String( hour ).padStart( 2, "0" )}:00 — elige la actividad</p>
-      <div class="space-y-2">
-        ${items.map( ( entry ) => {
-          const isTask = entry.kind === "task";
-          const title = isTask ? entry.task.title : entry.item.title;
-          const sub = isTask
-            ? `${entry.untimed ? "sin hora" : entry.task.time} · ${( TASK_STATES[ entry.task.state ] || TASK_STATES.pending ).label}`
-            : `${reminderLabel( reminders[ entry.item.reminderId ] )}${entry.item.subtitle ? " · " + entry.item.subtitle : ""}`;
-          const attrs = isTask
-            ? `data-id="${entry.task.id}"`
-            : `data-reminder-id="${entry.item.reminderId}"`;
-          return `<button type="button" data-action="week-item-action" data-mode="${mode}" data-date="${dateStr}" ${attrs}
-                    class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 px-3 py-2 transition">
-            <span class="block text-sm font-medium text-gray-800 dark:text-gray-100 break-words">${title}</span>
-            <span class="block text-[11px] text-gray-500 dark:text-gray-400">${sub}</span>
-          </button>`;
-        } ).join( "" ) }
+      <div class="space-y-2 mb-4">
+        ${rows.filter( Boolean ).map( ( [ label, value ] ) => `
+          <div class="flex gap-2 text-sm">
+            <span class="w-20 shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 pt-0.5">${label}</span>
+            <span class="min-w-0 flex-1 text-gray-700 dark:text-gray-200 break-words whitespace-pre-wrap">${value}</span>
+          </div>` ).join( "" )}
+      </div>
+      <div class="flex gap-2">
+        <button type="button" data-action="week-activity-edit" data-date="${dateStr}" ${actionAttrs}
+                class="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+          <i class="fas fa-pen"></i>Editar
+        </button>
+        <button type="button" data-action="week-activity-delete" data-date="${dateStr}" ${actionAttrs}
+                class="flex-1 flex items-center justify-center gap-1.5 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition text-sm font-medium">
+          <i class="fas fa-trash"></i>Eliminar
+        </button>
       </div>
     </div>`;
   document.body.appendChild( modal );

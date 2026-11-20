@@ -29,7 +29,7 @@ const firebaseConfig = {
 // El init real (initializeApp + messaging) ocurre en initFirebaseSW() de
 // forma asíncrona para no tumbar el registro si gstatic falla.
 
-const CACHE_VERSION = 'v6.0';
+const CACHE_VERSION = 'v6.1';
 const CACHE_STATIC = `static-${CACHE_VERSION}`;
 const CACHE_DYNAMIC = `dynamic-${CACHE_VERSION}`;
 
