@@ -14,6 +14,7 @@
 
     <!-- Title (≤ 60 caracteres) -->
     <title>Gestor de Tareas Gratis | Organiza y Mejora tu Productividad</title>
+    <meta name="application-name" content="Gestor de Tareas">
 
     <!-- Meta Description (≤ 152 caracteres) -->
     <meta name="description" content="Planificador de tareas diarias con calendario visual, notificaciones inteligentes y sincronización en la nube. Organiza tu día y aumenta tu productividad. ¡Gratis y sin registro!">
@@ -54,7 +55,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="TaskSmart">
+    <meta name="apple-mobile-web-app-title" content="Gestor de Tareas">
     <link rel="apple-touch-icon" href="./images/favicon-192.png">
 
     <!-- Scripts -->
@@ -468,6 +469,9 @@
                                 <button id="viewWeekBtn" data-action="calendar-view" data-view="week" aria-pressed="false" class="px-2.5 py-2 text-xs font-semibold bg-white text-gray-600 border-l border-gray-200 hover:bg-gray-100 transition dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700">
                                     <i class="fas fa-calendar-week sm:mr-1"></i><span class="hidden sm:inline">Semana</span>
                                 </button>
+                                <button id="viewDayBtn" data-action="calendar-view" data-view="day" aria-pressed="false" title="Vista diaria" class="px-2.5 py-2 text-xs font-semibold bg-white text-gray-600 border-l border-gray-200 hover:bg-gray-100 transition dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700">
+                                    <i class="fas fa-calendar-day sm:mr-1"></i><span class="hidden sm:inline">Día</span>
+                                </button>
                             </div>
                             <button id="showFormBtn" data-action="show-form" class="hidden px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-400 dark:hover:bg-purple-500 hover:shadow-lg transition duration-200 shadow" title="Mostrar formulario de tareas">
                                 <i class="fas fa-plus"></i>
@@ -500,7 +504,7 @@
         </div>
 
         <!-- Panel de Tareas del Día -->
-        <div id="dailyTaskPanel">
+        <div id="dailyTaskPanel" class="hidden">
             <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 mt-6 border-t-4 border-indigo-500">
                 <div class="flex flex-col sm:flex-row justify-between items-center mb-4">
                     <!-- Título simple, solo texto -->

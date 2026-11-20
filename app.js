@@ -12,7 +12,7 @@ const firebaseConfig = {
 let tasks = {};
 // Huella de build visible (consola + diagnóstico): permite saber qué
 // código corre realmente en cada dispositivo.
-const APP_BUILD = '2026-11-19-weekview-v3';
+const APP_BUILD = '2026-11-20-dayview-v1';
 // ===== MÓDULO RECORDATORIOS (pagos / festividades / horarios) =====
 // kind: 'pago' | 'festividad' | 'horario'. Las fechas efectivas van en
 // `dates[]` (pago: una por cuota; festividad/horario: ocurrencias).
@@ -32,7 +32,10 @@ function reminderLabel( r ) {
 let currentDate = new Date();
 // Vista del calendario: 'month' (rejilla mensual) | 'week' (rejilla semanal por horas)
 let calendarView = ( () => {
-  try { return localStorage.getItem( 'calendarView' ) === 'week' ? 'week' : 'month'; } catch ( e ) { return 'month'; }
+  try {
+    const saved = localStorage.getItem( 'calendarView' );
+    return ( saved === 'week' || saved === 'day' ) ? saved : 'month';
+  } catch ( e ) { return 'month'; }
 } )();
 const WEEK_HOUR_START = 6;
 const WEEK_HOUR_END = 22;
@@ -2837,6 +2840,9 @@ document.addEventListener( 'click', ( e ) => {
       if ( el.dataset.reminderId ) deleteReminder( el.dataset.reminderId );
       else quickDeleteTask( date, id );
       break;
+    case 'task-check':
+      requestTaskCompletion( date, id );
+      break;
     case 'smart-nav':
       smartNavGo();
       break;
@@ -3196,10 +3202,7 @@ function initializeTodayPanel() {
   // Esperar a que las tareas estén cargadas
   setTimeout( () => {
     const todayTasks = tasks[ today ] || [];
-    const isDesktop = window.innerWidth >= 768;
-    const isPWA = window.matchMedia( '(display-mode: standalone)' ).matches ||
-      window.navigator.standalone === true ||
-      window.location.search.includes( 'pwa=true' );
+    const todayReminders = getRemindersForDate( today );
 
     const hasPendingTasks = todayTasks.some( task =>
       task.state !== 'completed'
@@ -3207,14 +3210,15 @@ function initializeTodayPanel() {
 
     console.log( `📅 Inicializando panel - Tareas hoy: ${todayTasks.length}, Pendientes: ${hasPendingTasks}` );
 
-    // SIEMPRE abrir el panel si hay tareas hoy O si es desktop
-    const shouldShowPanel = todayTasks.length > 0 || ( isDesktop && !isPWA );
+    // El panel inferior solo aparece si el día tiene actividades o recordatorios.
+    const shouldShowPanel = todayTasks.length > 0 || todayReminders.length > 0;
 
     if ( shouldShowPanel ) {
       console.log( `📱 Abriendo panel automático` );
       showDailyTaskPanel( today, todayDate.getDate() );
     } else {
-      console.log( `⏭️ Panel no abierto - No hay tareas y no es desktop` );
+      console.log( `⏭️ Panel no abierto - Sin actividades hoy` );
+      hideDailyTaskPanel();
     }
 
     // Aviso de atrasadas al ingresar (una vez por sesión)
@@ -3915,6 +3919,10 @@ function renderCalendar() {
     renderWeekCalendar( calendar, monthYear );
     return;
   }
+  if ( calendarView === 'day' ) {
+    renderDayCalendar( calendar, monthYear );
+    return;
+  }
 
   calendar.className = "grid grid-cols-7 gap-2";
   calendar.dataset.view = "month";
@@ -3973,27 +3981,28 @@ function renderCalendar() {
 
 // ===== VISTA SEMANAL TIPO CALENDARIO =====
 function setCalendarView( view ) {
-  calendarView = view === "week" ? "week" : "month";
+  const next = ( view === "week" || view === "day" ) ? view : "month";
+  // La vista diaria siempre abre en el día de hoy.
+  if ( next === "day" && calendarView !== "day" ) currentDate = new Date();
+  calendarView = next;
   try { localStorage.setItem( "calendarView", calendarView ); } catch ( e ) { /* sin storage */ }
   renderCalendar();
 }
 
 function updateCalendarViewButtons() {
-  const monthBtn = document.getElementById( "viewMonthBtn" );
-  const weekBtn = document.getElementById( "viewWeekBtn" );
-  const monthActive = calendarView === "month";
-  if ( monthBtn ) {
-    monthBtn.setAttribute( "aria-pressed", String( monthActive ) );
-    monthBtn.className = `px-2.5 py-2 text-xs font-semibold transition ${monthActive
+  const buttons = [
+    { el: document.getElementById( "viewMonthBtn" ), view: "month" },
+    { el: document.getElementById( "viewWeekBtn" ), view: "week" },
+    { el: document.getElementById( "viewDayBtn" ), view: "day" },
+  ];
+  buttons.forEach( ( { el, view } ) => {
+    if ( !el ) return;
+    const active = calendarView === view;
+    el.setAttribute( "aria-pressed", String( active ) );
+    el.className = `px-2.5 py-2 text-xs font-semibold transition ${view === "month" ? "" : "border-l border-gray-200 dark:border-gray-600 "}${active
         ? "bg-teal-600 text-white"
         : "bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"}`;
-  }
-  if ( weekBtn ) {
-    weekBtn.setAttribute( "aria-pressed", String( !monthActive ) );
-    weekBtn.className = `px-2.5 py-2 text-xs font-semibold border-l border-gray-200 transition dark:border-gray-600 ${!monthActive
-        ? "bg-teal-600 text-white"
-        : "bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"}`;
-  }
+  } );
 }
 
 function weekStartOf( date ) {
@@ -4026,7 +4035,7 @@ function weekSlotItems( dateStr, hour ) {
   return out;
 }
 
-function weekItemPill( entry, dateStr ) {
+function weekItemPill( entry, dateStr, opts = {} ) {
   const eye = ( attrs ) => `<button type="button" class="wk-eye" data-action="week-item-view" data-date="${dateStr}" ${attrs} title="Ver actividad" aria-label="Ver actividad">
       <i class="fas fa-eye"></i>
     </button>`;
@@ -4040,11 +4049,25 @@ function weekItemPill( entry, dateStr ) {
     const timeHtml = entry.untimed
       ? `<span class="wk-time-min sm:hidden"><i class="fas fa-clock"></i></span><span class="wk-time hidden sm:inline">sin hora</span>`
       : `<span class="wk-time-min sm:hidden">${shortTime}</span><span class="wk-time hidden sm:inline">${t.time}</span>`;
+    const isCompleted = t.state === "completed";
+    const isStarted = t.state === "inProgress" || t.state === "paused" || ( t.elapsedMin || 0 ) > 0;
+    const checkHtml = opts.showCheck
+      ? `<button type="button" data-action="task-check" data-date="${dateStr}" data-id="${t.id}"
+                 role="checkbox" aria-checked="${isCompleted}" aria-label="Marcar actividad como completada"
+                 title="${isCompleted ? "Actividad completada" : isStarted ? "Marcar como completada" : "Inicia la actividad para poder marcarla"}"
+                 class="wk-check ${isCompleted
+          ? "bg-green-500 border-green-600 text-white"
+          : isStarted
+            ? "bg-white border-green-400 text-green-600 dark:bg-gray-700 dark:border-green-500"
+            : "bg-gray-100 border-gray-300 text-gray-300 dark:bg-gray-700 dark:border-gray-600"}">
+            <i class="fas fa-check"></i>
+          </button>`
+      : "";
     return `<div class="wk-pill ${cls}${entry.untimed ? " wk-pill-none" : ""} border-l-4"
                  data-action="week-item-view" data-date="${dateStr}" data-id="${t.id}"
                  style="border-left-color:${priority.color}"
                  title="${t.title} · ${entry.untimed ? "sin hora" : t.time}">
-      ${timeHtml}<span class="truncate">${t.title}</span>${eye( `data-id="${t.id}"` )}
+      ${timeHtml}<span class="truncate">${t.title}</span>${eye( `data-id="${t.id}"` )}${checkHtml}
     </div>`;
   }
   const style = REMINDER_PILL[ entry.item.kind ] || REMINDER_PILL.pago;
@@ -4073,6 +4096,48 @@ function renderWeekCalendar( calendar, monthYear ) {
     : `${start.getDate()} ${start.toLocaleDateString( "es-ES", { month: "short" } )} – ${end.getDate()} ${end.toLocaleDateString( "es-ES", { month: "short" } )} ${end.getFullYear()}`;
   monthYear.textContent = label.replace( /^\w/, ( c ) => c.toUpperCase() );
 
+  paintHourGrid( calendar, days, {
+    view: "week",
+    columnsClass: "grid-cols-[32px_repeat(7,66px)] sm:grid-cols-[40px_repeat(7,minmax(0,1fr))] w-max min-w-full sm:w-full",
+  } );
+  calendar.parentElement?.classList.add( "week-mode" );
+}
+
+function renderDayCalendar( calendar, monthYear ) {
+  const d = new Date( currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() );
+  const dowNames = [ "Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb" ];
+  const dateStr = toDateStr( d );
+  const label = d.toLocaleDateString( "es-ES", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  } );
+  monthYear.textContent = label.replace( /^\w/, ( c ) => c.toUpperCase() );
+
+  paintHourGrid( calendar, [ { d, dateStr, dow: dowNames[ d.getDay() ] } ], {
+    view: "day",
+    columnsClass: "grid-cols-[36px_minmax(0,1fr)] w-full",
+  } );
+  calendar.parentElement?.classList.add( "week-mode" );
+  syncDayViewPanel( dateStr );
+}
+
+function dayHasActivities( dateStr ) {
+  return ( tasks[ dateStr ] || [] ).length > 0 || getRemindersForDate( dateStr ).length > 0;
+}
+
+function hideDailyTaskPanel() {
+  document.getElementById( "dailyTaskPanel" )?.classList.add( "hidden" );
+}
+
+// En vista diaria el panel inferior solo existe si ese día tiene actividades
+function syncDayViewPanel( dateStr ) {
+  if ( dayHasActivities( dateStr ) ) {
+    showDailyTaskPanel( dateStr, new Date( dateStr + "T12:00:00" ).getDate() );
+  } else {
+    hideDailyTaskPanel();
+  }
+}
+
+function paintHourGrid( calendar, days, opts = {} ) {
   // Rango horario adaptable: base 06–22, se amplía si hay horas fuera
   let lo = WEEK_HOUR_START;
   let hi = WEEK_HOUR_END;
@@ -4090,13 +4155,14 @@ function renderWeekCalendar( calendar, monthYear ) {
 
   const todayStr = getTodayString();
   const hourLabel = ( h ) => String( h ).padStart( 2, "0" ) + ":00";
+  const singleDay = days.length === 1;
 
   let html = `<div class="week-corner sticky top-0 left-0 z-30 px-1.5 py-1.5 text-[10px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
   days.forEach( ( { d, dateStr, dow } ) => {
     const isToday = dateStr === todayStr;
     html += `<div class="week-head sticky top-0 z-20 px-0.5 py-1 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
-      <div class="text-[9px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}</div>
-      <div class="text-sm font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
+      <div class="text-[9px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}${singleDay ? " · " + d.toLocaleDateString( "es-ES", { month: "short" } ) : ""}</div>
+      <div class="${singleDay ? "text-lg" : "text-sm"} font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
     </div>`;
   } );
 
@@ -4107,15 +4173,14 @@ function renderWeekCalendar( calendar, monthYear ) {
       const items = weekSlotItems( dateStr, h );
       html += `<div class="week-slot calendar-day relative px-0.5 py-0.5 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
                     data-action="week-add" data-date="${dateStr}" data-hour="${h}">
-        <div class="min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
+        <div class="min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr, { showCheck: singleDay } ) ).join( "" )}</div>
       </div>`;
     } );
   }
 
-  calendar.className = "week-grid grid grid-cols-[32px_repeat(7,66px)] sm:grid-cols-[40px_repeat(7,minmax(0,1fr))] w-max min-w-full sm:w-full text-[10px] sm:text-xs";
-  calendar.dataset.view = "week";
+  calendar.className = `week-grid grid ${opts.columnsClass || ""} text-[10px] sm:text-xs`;
+  calendar.dataset.view = opts.view || "week";
   calendar.innerHTML = html;
-  calendar.parentElement?.classList.add( "week-mode" );
 }
 
 // Modal de detalle completo de una actividad de la vista semanal
@@ -4417,16 +4482,7 @@ function showDailyTaskPanel( dateStr, day ) {
 
   selectedDateForPanel = dateStr;
   const dayTasks = tasks[ dateStr ] || [];
-  const date = new Date( dateStr + "T12:00:00" );
   const isPastDate = isDatePast( dateStr );
-  const isToday = dateStr === getTodayString();
-
-  const dateOptions = {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  };
 
   updatePanelDateHeader( dateStr, day, dayTasks );
 
@@ -4434,14 +4490,12 @@ function showDailyTaskPanel( dateStr, day ) {
   const remOverdue = remItems.filter( ( it ) => reminderOverdueDays( it.kind, dateStr ) > 0 ).length;
 
   if ( dayTasks.length === 0 && remItems.length === 0 ) {
-    taskList.innerHTML = `
-      <div class="text-center py-8 text-gray-500">
-        <i class="fas fa-calendar-plus text-4xl mb-3 opacity-50"></i>
-        <p>No hay tareas para este día</p>
-        ${!isPastDate ? `<p class="text-sm mt-2">${isToday ? '¡Agrega tu primera tarea de hoy!' : '¡Agrega tu primera tarea!'}</p>` : ""}
-      </div>
-    `;
-  } else {
+    // El panel solo existe cuando el día tiene actividades.
+    hideDailyTaskPanel();
+    return;
+  }
+
+  {
     const sortedTasks = sortTasksByPriority( dayTasks );
     const overdueCount = dayTasks.filter( ( t ) => isTaskOverdue( dateStr, t ) ).length;
     const totalLate = overdueCount + remOverdue;
@@ -4519,6 +4573,21 @@ function createPanelTaskElement( task, dateStr ) {
         `;
   }
 
+  // Casilla de completado: solo se puede marcar si la actividad fue iniciada
+  const isCompleted = task.state === "completed";
+  const isStarted = task.state === "inProgress" || task.state === "paused" || ( task.elapsedMin || 0 ) > 0;
+  const checkBtn = `
+      <button type="button" data-action="task-check" data-date="${dateStr}" data-id="${task.id}"
+              role="checkbox" aria-checked="${isCompleted}" aria-label="Marcar actividad como completada"
+              title="${isCompleted ? "Actividad completada" : isStarted ? "Marcar como completada" : "Inicia la actividad para poder marcarla"}"
+              class="flex items-center justify-center w-9 h-9 rounded-lg border-2 transition ${isCompleted
+      ? "bg-green-500 border-green-600 text-white cursor-default"
+      : isStarted
+        ? "bg-white border-green-400 text-green-600 hover:bg-green-50 dark:bg-gray-700 dark:border-green-500"
+        : "bg-gray-50 border-gray-300 text-gray-300 dark:bg-gray-700 dark:border-gray-600 cursor-not-allowed"}">
+          <i class="fas fa-check text-sm"></i>
+      </button>`;
+
   return `
     <div class="panel-task-item bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4 border-l-4 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 ${showLateWarning ? 'bg-orange-50 dark:bg-orange-900' : ''}"
          style="border-left-color: ${priority.color}"
@@ -4589,6 +4658,8 @@ function createPanelTaskElement( task, dateStr ) {
                             class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900 transition-colors duration-200">
                         <i class="fas fa-trash text-sm"></i>
                     </button>
+
+                    ${checkBtn}
                 </div>
             </div>
 
@@ -4657,6 +4728,45 @@ function resumeTaskWithTimer( dateStr, taskId ) {
     startTaskTimer( taskId, dateStr, task.duration );
   }
   resumeTask( dateStr, taskId );
+}
+
+// Marca completada solo si la actividad ya fue iniciada (en proceso o pausada).
+function requestTaskCompletion( dateStr, taskId ) {
+  const task = tasks[ dateStr ]?.find( t => t.id === taskId );
+  if ( !task ) return;
+  if ( task.state === 'completed' ) return;
+
+  const started = task.state === 'inProgress' || task.state === 'paused' || ( task.elapsedMin || 0 ) > 0;
+  if ( !started ) {
+    showTaskStartRequiredModal();
+    return;
+  }
+
+  changeTaskStateWithTimer( dateStr, taskId, 'completed' );
+}
+
+function showTaskStartRequiredModal() {
+  closeAllModals();
+  const modal = document.createElement( 'div' );
+  modal.id = 'taskStartRequiredModal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-xs w-full p-5 text-center">
+      <div class="mx-auto w-12 h-12 rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300 flex items-center justify-center mb-3">
+        <i class="fas fa-lock text-xl"></i>
+      </div>
+      <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-1">Actividad no iniciada</h3>
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">
+        No puedes marcar esta actividad si no has empezado. Cámbiala a <strong>En proceso</strong> para comenzarla.
+      </p>
+      <button data-action="close-modals" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+        Entendido
+      </button>
+    </div>`;
+  document.body.appendChild( modal );
+  modal.addEventListener( 'click', ( e ) => {
+    if ( e.target === modal ) closeAllModals();
+  } );
 }
 
 // Cambio de estado con tracking de retraso
@@ -4744,7 +4854,7 @@ function changeTaskStateWithLateTracking( dateStr, taskId, newState ) {
   const stateInfo = TASK_STATES[ task.state ];
   const notifType = task.completedLate ? "warning" : "success";
   showNotification(
-    task.completedLate ? `⚠️ Completada con retraso - ${stateInfo.label}` : `Tarea: ${stateInfo.label}`,
+    task.completedLate ? `Completada con retraso - ${stateInfo.label}` : `Tarea: ${stateInfo.label}`,
     notifType
   );
 }
@@ -8837,6 +8947,8 @@ function undoDelete() {
 function changeMonth( delta ) {
   if ( calendarView === 'week' ) {
     currentDate.setDate( currentDate.getDate() + delta * 7 );
+  } else if ( calendarView === 'day' ) {
+    currentDate.setDate( currentDate.getDate() + delta );
   } else {
     currentDate.setMonth( currentDate.getMonth() + delta );
   }
@@ -10207,6 +10319,10 @@ function startTaskTimer( taskId, dateStr, durationMinutes ) {
       timerElement.textContent = '⏰ ¡Tiempo agotado!';
       timerElement.className = 'timer-display timer-critical text-sm font-bold';
     }
+    // Al agotarse el tiempo la actividad queda completada (check marcado)
+    if ( task && task.state === 'inProgress' ) {
+      setTimeout( () => requestTaskCompletion( dateStr, taskId ), 0 );
+    }
     return;
   }
 
@@ -10238,19 +10354,22 @@ function stopTaskTimer( taskId ) {
 
 function updateTimerDisplay( taskId, endTime ) {
   const timerElement = document.getElementById( `timer-${taskId}` );
-  if ( !timerElement ) {
-    stopTaskTimer( taskId );
-    return;
-  }
-
   const now = Date.now();
   const remaining = endTime - now;
 
   if ( remaining <= 0 ) {
-    // Tiempo agotado
-    timerElement.textContent = '⏰ ¡Tiempo agotado!';
-    timerElement.className = 'timer-display timer-critical text-sm font-bold';
+    // Tiempo agotado: completar aunque el panel esté cerrado
+    if ( timerElement ) {
+      timerElement.textContent = '⏰ ¡Tiempo agotado!';
+      timerElement.className = 'timer-display timer-critical text-sm font-bold';
+    }
+    const timerMeta = taskTimers.get( taskId );
+    const dateStr = timerMeta?.dateStr;
     stopTaskTimer( taskId );
+
+    if ( dateStr ) {
+      setTimeout( () => requestTaskCompletion( dateStr, taskId ), 0 );
+    }
 
     // Notificación
     if ( notificationsEnabled ) {
@@ -10262,6 +10381,11 @@ function updateTimerDisplay( taskId, endTime ) {
         'task-late'
       );
     }
+    return;
+  }
+
+  if ( !timerElement ) {
+    stopTaskTimer( taskId );
     return;
   }
 

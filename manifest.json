@@ -1,6 +1,6 @@
 {
-  "name": "Calendario de Tareas",
-  "short_name": "TaskSmart",
+  "name": "Gestor de Tareas",
+  "short_name": "Gestor de Tareas",
   "id": "./",
   "start_url": "./",
   "scope": "./",
