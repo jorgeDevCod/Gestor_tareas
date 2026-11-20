@@ -144,17 +144,32 @@
   background-color: #26313f !important;
 }
 
-/* ---------- Vista semanal (rejilla por horas) ---------- */
+/* ---------- Vista semanal (rejilla por horas, compacta) ---------- */
+.week-scroll {
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.week-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.week-scroll::-webkit-scrollbar-thumb {
+  background: rgba(107, 114, 128, 0.45);
+  border-radius: 999px;
+}
+
 .week-grid {
   border: 1px solid #e5e7eb;
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   /* clip (no scroll container) para que la columna de horas quede sticky
      respecto al wrapper con overflow-x-auto */
   overflow: clip;
 }
 
 .week-slot {
-  min-height: 56px;
+  min-height: 28px;
 }
 
 .week-cell-actions {
@@ -168,28 +183,29 @@
 }
 
 .week-cell-btn {
-  width: 20px;
-  height: 18px;
+  width: 16px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 0.25rem;
-  font-size: 9px;
-  background: rgba(255, 255, 255, 0.9);
+  font-size: 8px;
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .dark .week-cell-btn {
-  background: rgba(31, 41, 55, 0.9);
+  background: rgba(31, 41, 55, 0.92);
 }
 
 .wk-pill {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  font-size: 10px;
-  line-height: 1.25;
+  gap: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 1.2;
+  min-height: 14px;
   overflow: hidden;
 }
 
@@ -204,7 +220,7 @@
 }
 
 .wk-time {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   opacity: 0.75;
   flex-shrink: 0;
@@ -212,18 +228,35 @@
 
 .wk-dot {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: 8px;
 }
 
+/* Móvil/tablet: casillas más bajas y acciones siempre accesibles */
 @media (max-width: 1023px) {
   .week-cell-actions {
-    opacity: 1;
+    opacity: 0.9;
   }
 
-  .week-cell-btn {
-    width: 22px;
-    height: 20px;
+  .week-slot-content {
+    padding-right: 15px;
+  }
+}
+
+@media (min-width: 640px) {
+  .week-slot {
+    min-height: 40px;
+  }
+
+  .wk-pill {
+    padding: 1px 4px;
     font-size: 10px;
+    gap: 4px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .week-slot-content {
+    padding-right: 0;
   }
 }
 

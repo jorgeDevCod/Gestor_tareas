@@ -4083,40 +4083,38 @@ function renderWeekCalendar( calendar, monthYear ) {
   const todayStr = getTodayString();
   const hourLabel = ( h ) => String( h ).padStart( 2, "0" ) + ":00";
 
-  let html = `<div class="week-corner sticky left-0 z-20 px-2 py-2 text-[11px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
+  let html = `<div class="week-corner sticky left-0 z-20 px-1.5 py-1.5 text-[10px] font-semibold text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-600">Hora</div>`;
   days.forEach( ( { d, dateStr, dow } ) => {
     const isToday = dateStr === todayStr;
-    html += `<div class="week-head px-1 py-1.5 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
-      <div class="text-[10px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}</div>
-      <div class="text-base font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
+    html += `<div class="week-head px-0.5 py-1 text-center border-b border-gray-200 dark:border-gray-600 ${isToday ? "week-today bg-teal-50 dark:bg-teal-900/30" : "bg-white dark:bg-gray-800"}">
+      <div class="text-[9px] font-semibold uppercase tracking-wide ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-500 dark:text-gray-400"}">${dow}</div>
+      <div class="text-sm font-bold leading-tight ${isToday ? "text-teal-700 dark:text-teal-300" : "text-gray-800 dark:text-gray-100"}">${d.getDate()}</div>
     </div>`;
   } );
 
   for ( let h = lo; h <= hi; h++ ) {
-    html += `<div class="week-hours sticky left-0 z-10 px-2 py-1 text-[11px] font-semibold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-100 dark:border-gray-700">${hourLabel( h )}</div>`;
+    html += `<div class="week-hours sticky left-0 z-10 px-1 py-0.5 text-[9px] sm:text-[10px] font-semibold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 border-b border-r border-gray-100 dark:border-gray-700">${hourLabel( h )}</div>`;
     days.forEach( ( { dateStr } ) => {
       const isToday = dateStr === todayStr;
       const items = weekSlotItems( dateStr, h );
-      html += `<div class="week-slot calendar-day group relative px-1 py-1 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
+      html += `<div class="week-slot calendar-day group relative px-0.5 py-0.5 border-b border-gray-100 dark:border-gray-700 ${isToday ? "week-today bg-teal-50/60 dark:bg-teal-900/20" : "bg-white dark:bg-gray-800"}"
                     data-action="week-add" data-date="${dateStr}" data-hour="${h}">
-        <div class="flex items-start gap-1">
-          <div class="flex-1 min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
-          <div class="week-cell-actions flex flex-col gap-0.5 shrink-0">
-            <button type="button" data-action="week-cell-edit" data-date="${dateStr}" data-hour="${h}"
-                    class="week-cell-btn text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900" title="Editar actividad de esta casilla">
-              <i class="fas fa-pen"></i>
-            </button>
-            <button type="button" data-action="week-cell-delete" data-date="${dateStr}" data-hour="${h}"
-                    class="week-cell-btn text-red-600 hover:bg-red-100 dark:hover:bg-red-900" title="Eliminar actividad de esta casilla">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
+        <div class="week-slot-content min-w-0 space-y-0.5">${items.map( ( it ) => weekItemPill( it, dateStr ) ).join( "" )}</div>
+        <div class="week-cell-actions absolute top-0.5 right-0.5 flex flex-col gap-0.5">
+          <button type="button" data-action="week-cell-edit" data-date="${dateStr}" data-hour="${h}"
+                  class="week-cell-btn text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900" title="Editar actividad de esta casilla">
+            <i class="fas fa-pen"></i>
+          </button>
+          <button type="button" data-action="week-cell-delete" data-date="${dateStr}" data-hour="${h}"
+                  class="week-cell-btn text-red-600 hover:bg-red-100 dark:hover:bg-red-900" title="Eliminar actividad de esta casilla">
+            <i class="fas fa-trash"></i>
+          </button>
         </div>
       </div>`;
     } );
   }
 
-  calendar.className = "week-grid grid grid-cols-[56px_repeat(7,minmax(104px,1fr))] min-w-[820px] text-xs";
+  calendar.className = "week-grid grid grid-cols-[40px_repeat(7,minmax(80px,1fr))] w-full min-w-[600px] text-[10px] sm:text-xs";
   calendar.dataset.view = "week";
   calendar.innerHTML = html;
 }
